@@ -1,0 +1,67 @@
+.excalidraw {
+  .app-sidebar-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    padding: 1rem;
+    min-height: 100%;
+    background:
+      radial-gradient(circle at top right, rgba(25, 113, 194, 0.12), transparent 42%),
+      linear-gradient(180deg, rgba(232, 89, 12, 0.06), transparent 28%),
+      var(--sidebar-bg-color);
+
+    &--guide {
+      background:
+        radial-gradient(circle at top left, rgba(232, 89, 12, 0.12), transparent 40%),
+        linear-gradient(180deg, rgba(25, 113, 194, 0.06), transparent 30%),
+        var(--sidebar-bg-color);
+    }
+
+    &__eyebrow {
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--color-primary);
+    }
+
+    &__title {
+      margin: 0;
+      font-size: 1.15rem;
+      line-height: 1.2;
+      color: var(--text-primary-color);
+    }
+
+    &__text {
+      margin: 0;
+      font-size: 0.92rem;
+      line-height: 1.55;
+      color: var(--text-secondary-color);
+    }
+
+    &__list {
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    &__item {
+      padding: 0.8rem 0.9rem;
+      border-radius: 0.9rem;
+      border: 1px solid var(--default-border-color);
+      background-color: rgba(255, 255, 255, 0.55);
+      color: var(--text-primary-color);
+      font-size: 0.88rem;
+      line-height: 1.45;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+    }
+  }
+
+  &.theme--dark {
+    .app-sidebar-panel {
+      &__item {
+        background-color: rgba(32, 34, 41, 0.88);
+        box-shadow: none;
+      }
+    }
+  }
+}
