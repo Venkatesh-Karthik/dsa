@@ -337,6 +337,12 @@ export class MockTeachingProvider implements TeachingProvider {
     ];
   }
 
+  async generateTeachingLesson(
+    request: TeachingRequest,
+  ): Promise<TeachingResponse> {
+    return this.generateTeachingResponse(request);
+  }
+
   async generateTeachingResponse(
     request: TeachingRequest,
   ): Promise<TeachingResponse> {

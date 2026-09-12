@@ -313,4 +313,59 @@ describe("Frontend AI Service (requestTeachingExplanation)", () => {
       requestTeachingExplanation({ prompt: "Explain floating window" }),
     ).rejects.toThrow("Visual DSL schema");
   });
+
+  it("transmits requestId and X-Request-Id header on teaching requests", async () => {
+    let capturedHeaders: any;
+    let capturedBody: any;
+
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, options) => {
+      capturedHeaders = options.headers;
+      capturedBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({
+          message: "AVL Tree rotations explained.",
+          topic: "AVL Tree",
+          visual_actions: [],
+        }),
+      };
+    });
+
+    const testRequestId = `COGNORA-TEACH-TEST-12345`;
+    const result = await requestTeachingExplanation({
+      prompt: "Explain AVL tree rotations",
+      requestId: testRequestId,
+      userAction: "prompt_submit",
+    });
+
+    expect(result.topic).toBe("AVL Tree");
+    expect(capturedHeaders["X-Request-Id"]).toBe(testRequestId);
+    expect(capturedBody.requestId).toBe(testRequestId);
+    expect(capturedBody.userAction).toBe("prompt_submit");
+  });
+
+  it("aborts in-flight request when AbortSignal is cancelled without invoking fallback", async () => {
+    const controller = new AbortController();
+
+    globalThis.fetch = vi.fn().mockImplementation(async (_url, options) => {
+      return new Promise((_, reject) => {
+        if (options.signal) {
+          options.signal.addEventListener("abort", () => {
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }
+      });
+    });
+
+    const promise = requestTeachingExplanation(
+      { prompt: "Explain merge sort" },
+      { signal: controller.signal, fallbackToLocalMock: true },
+    );
+
+    controller.abort();
+
+    await expect(promise).rejects.toThrow();
+  });
 });

@@ -3,9 +3,11 @@ import { MainMenu } from "@excalidraw/excalidraw/index";
 import React from "react";
 
 import { isDevEnv } from "@excalidraw/common";
+
 import type { Theme } from "@excalidraw/element/types";
 
 import { LanguageList } from "../app-language/LanguageList";
+
 import { saveDebugState } from "./DebugCanvas";
 import { CognoraMark } from "./CognoraLogo";
 
@@ -53,7 +55,8 @@ export const AppMainMenu: React.FC<{
             gap: "10px",
             color: "var(--text-secondary, #6b7280)",
             fontSize: "12px",
-            borderTop: "1px solid var(--default-border-color, rgba(0, 0, 0, 0.06))",
+            borderTop:
+              "1px solid var(--default-border-color, rgba(0, 0, 0, 0.06))",
             marginTop: "4px",
           }}
         >
@@ -68,7 +71,12 @@ export const AppMainMenu: React.FC<{
             >
               Cognora
             </div>
-            <div style={{ fontSize: "11px", color: "var(--color-primary, #4f46e5)" }}>
+            <div
+              style={{
+                fontSize: "11px",
+                color: "var(--color-primary, #4f46e5)",
+              }}
+            >
               Learn by seeing
             </div>
           </div>

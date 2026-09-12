@@ -3,6 +3,8 @@
  * Computes coordinates and bounds for various data structures without external dependencies.
  */
 
+import type { SceneGraph } from "./scene-graph";
+
 // ==========================================
 // Types
 // ==========================================
@@ -281,14 +283,15 @@ export function computeGraphLayout(
   let maxY = -Infinity;
 
   if (n <= GRAPH_LAYOUT.MAX_CIRCLE_NODES) {
-    // Circle Layout
-    const cx = origin.x + GRAPH_LAYOUT.CIRCLE_RADIUS;
-    const cy = origin.y + GRAPH_LAYOUT.CIRCLE_RADIUS;
+    // Circle Layout: dynamically size radius to prevent overlaps
+    const dynamicRadius = Math.max(GRAPH_LAYOUT.CIRCLE_RADIUS, (n * GRAPH_LAYOUT.NODE_DIAMETER * 1.5) / (2 * Math.PI));
+    const cx = origin.x + dynamicRadius;
+    const cy = origin.y + dynamicRadius;
 
     for (let i = 0; i < n; i++) {
       const angle = (2 * Math.PI * i) / n - (Math.PI / 2); // Start top, go clockwise
-      const x = cx + GRAPH_LAYOUT.CIRCLE_RADIUS * Math.cos(angle) - GRAPH_LAYOUT.NODE_RADIUS;
-      const y = cy + GRAPH_LAYOUT.CIRCLE_RADIUS * Math.sin(angle) - GRAPH_LAYOUT.NODE_RADIUS;
+      const x = cx + dynamicRadius * Math.cos(angle) - GRAPH_LAYOUT.NODE_RADIUS;
+      const y = cy + dynamicRadius * Math.sin(angle) - GRAPH_LAYOUT.NODE_RADIUS;
       positions.set(nodes[i].id, { x, y });
 
       minX = Math.min(minX, x);
@@ -395,6 +398,179 @@ export function doRectsOverlap(a: LayoutBounds, b: LayoutBounds): boolean {
     a.y < b.y + b.height &&
     a.y + a.height > b.y
   );
+}
+
+/**
+ * Checks if two bounding boxes overlap with an additional clearance margin.
+ */
+export function doRectsOverlapWithMargin(
+  a: LayoutBounds,
+  b: LayoutBounds,
+  marginX = 0,
+  marginY = 0,
+): boolean {
+  return (
+    a.x < b.x + b.width + marginX &&
+    a.x + a.width + marginX > b.x &&
+    a.y < b.y + b.height + marginY &&
+    a.y + a.height + marginY > b.y
+  );
+}
+
+export interface SceneLayoutNode {
+  id: string;
+  bounds: LayoutBounds;
+  relativeTo?: string;
+  placement?: "below" | "above" | "right_of" | "left_of";
+}
+
+export function estimateTextDimensions(
+  text: string,
+  fontSize = 16,
+): { width: number; height: number; lineCount: number } {
+  if (!text) {
+    return { width: 0, height: 0, lineCount: 0 };
+  }
+  const lines = text.split("\n");
+  const lineCount = lines.length;
+  const maxLineLength = Math.max(...lines.map((l) => l.length));
+  const charWidth = fontSize * 0.65;
+  const lineHeight = fontSize * 1.5;
+  const width = Math.ceil(maxLineLength * charWidth);
+  const height = Math.ceil(lineCount * lineHeight);
+  return { width, height, lineCount };
+}
+
+export function computeContainerDimensions(
+  text: string,
+  baseWidth: number,
+  baseHeight: number,
+  padding = 20,
+): { width: number; height: number } {
+  const textDims = estimateTextDimensions(text);
+  const width = Math.max(baseWidth, textDims.width + padding * 2);
+  const height = Math.max(baseHeight, textDims.height + padding * 2);
+  return { width, height };
+}
+
+export class PlacementSlotTracker {
+  private slots = new Map<string, LayoutBounds>();
+
+  getNextPlacementBounds(
+    anchorId: string,
+    placement: "below" | "above" | "right_of" | "left_of",
+    anchorBounds: LayoutBounds,
+  ): LayoutBounds {
+    const key = `${anchorId}-${placement}`;
+    const recorded = this.slots.get(key);
+    if (!recorded) {
+      return { ...anchorBounds };
+    }
+    return { ...recorded };
+  }
+
+  record(
+    anchorId: string,
+    placement: "below" | "above" | "right_of" | "left_of",
+    itemBounds: LayoutBounds,
+  ): void {
+    const key = `${anchorId}-${placement}`;
+    const existing = this.slots.get(key);
+    if (!existing) {
+      const envelopeY = itemBounds.y >= 0 ? Math.min(itemBounds.y, itemBounds.y - 120) : itemBounds.y;
+      this.slots.set(key, {
+        x: itemBounds.x,
+        y: envelopeY,
+        width: itemBounds.width,
+        height: itemBounds.y + itemBounds.height - envelopeY,
+      });
+    } else {
+      const topY = Math.min(existing.y, itemBounds.y);
+      const bottomY = Math.max(existing.y + existing.height, itemBounds.y + itemBounds.height);
+      existing.y = topY;
+      existing.height = bottomY - topY;
+    }
+  }
+}
+
+export function resolveSceneCollisions(
+  nodes: SceneLayoutNode[],
+  options?: { minGapY?: number },
+): {
+  nodes: SceneLayoutNode[];
+  totalShifts: number;
+  shifts: Map<string, { dx: number; dy: number }>;
+} {
+  const minGapY = options?.minGapY ?? 30;
+  const cloned: SceneLayoutNode[] = nodes.map((n) => ({
+    ...n,
+    bounds: { ...n.bounds },
+  }));
+  let totalShifts = 0;
+  const shiftMap = new Map<string, { dx: number; dy: number }>();
+  for (const n of nodes) {
+    shiftMap.set(n.id, { dx: 0, dy: 0 });
+  }
+
+  const childrenMap = new Map<string, string[]>();
+  for (const n of cloned) {
+    if (n.relativeTo) {
+      const list = childrenMap.get(n.relativeTo) ?? [];
+      list.push(n.id);
+      childrenMap.set(n.relativeTo, list);
+    }
+  }
+
+  const shiftNodeAndDescendants = (nodeId: string, dy: number) => {
+    const node = cloned.find((n) => n.id === nodeId);
+    if (!node) return;
+    node.bounds.y += dy;
+    totalShifts += Math.abs(dy);
+    const curr = shiftMap.get(nodeId) ?? { dx: 0, dy: 0 };
+    shiftMap.set(nodeId, { dx: curr.dx, dy: curr.dy + dy });
+    const children = childrenMap.get(nodeId) ?? [];
+    for (const childId of children) {
+      shiftNodeAndDescendants(childId, dy);
+    }
+  };
+
+  for (let iter = 0; iter < 20; iter++) {
+    let hadCollision = false;
+    for (let i = 0; i < cloned.length; i++) {
+      for (let j = 0; j < cloned.length; j++) {
+        if (i === j) continue;
+        const a = cloned[i];
+        const b = cloned[j];
+        if (b.relativeTo === a.id && !doRectsOverlap(a.bounds, b.bounds)) {
+          continue;
+        }
+        if (doRectsOverlapWithMargin(a.bounds, b.bounds, 0, minGapY)) {
+          // If b is placed below a or b.y >= a.y
+          if (b.bounds.y >= a.bounds.y) {
+            const requiredY = a.bounds.y + a.bounds.height + minGapY;
+            const shiftY = requiredY - b.bounds.y;
+            if (shiftY > 0) {
+              hadCollision = true;
+              shiftNodeAndDescendants(b.id, shiftY);
+            }
+          }
+        }
+      }
+    }
+    if (!hadCollision) break;
+  }
+
+  return { nodes: cloned, totalShifts, shifts: shiftMap };
+}
+
+export function balanceElementPositions(
+  elements: { id: string; x: number; y: number; width: number; height: number }[],
+): Map<string, LayoutPoint> {
+  const positions = new Map<string, LayoutPoint>();
+  for (const el of elements) {
+    positions.set(el.id, { x: el.x, y: el.y });
+  }
+  return positions;
 }
 
 /**
@@ -537,4 +713,578 @@ export function computeStepVerticalLayout(
       height: Math.max(0, maxY - minY),
     },
   };
+}
+
+/**
+ * Universal layout computation for any canonical SceneGraph.
+ * Dynamically identifies structure (Tree, Array, Graph, Linked List, Stack, or Generic Concept)
+ * and computes deterministic positions with layout stability across transformations.
+ */
+export function computeSceneGraphLayout(
+  graph: SceneGraph,
+  origin: LayoutPoint = { x: 100, y: 100 },
+  previousLayout?: Map<string, LayoutPoint>,
+): { positions: Map<string, LayoutPoint>; bounds: LayoutBounds } {
+  const positions = new Map<string, LayoutPoint>();
+  const entityList = Array.from(graph.entities.values());
+
+  if (entityList.length === 0) {
+    return {
+      positions,
+      bounds: { x: origin.x, y: origin.y, width: 0, height: 0 },
+    };
+  }
+
+  const conceptType = graph.metadata?.conceptType;
+  const isTree =
+    conceptType === "tree" ||
+    entityList.some((e) => e.primitiveType === "TreeNode");
+  const isArray =
+    conceptType === "array" ||
+    entityList.some((e) => e.primitiveType === "ArrayCell");
+  const isLinkedList =
+    conceptType === "linked_list" ||
+    entityList.some((e) => e.primitiveType === "LinkedListNode");
+  const isStack =
+    conceptType === "stack" ||
+    entityList.some((e) => e.primitiveType === "StackFrame");
+  const isGraph =
+    conceptType === "graph" ||
+    entityList.some((e) => e.primitiveType === "GraphNode");
+
+  if (isTree) {
+    // 1. Build tree structure from entities & relationships
+    const treeNodes = entityList.filter((e) => e.primitiveType === "TreeNode");
+    const childSet = new Set<string>();
+
+    const treeInputs: TreeNodeInput[] = treeNodes.map((entity) => {
+      let left: string | undefined = entity.properties?.left as string | undefined;
+      let right: string | undefined = entity.properties?.right as string | undefined;
+      let children: string[] | undefined = entity.properties?.children as string[] | undefined;
+
+      // Extract from relationships if not explicitly on properties
+      for (const rel of graph.relationships.values()) {
+        if (rel.sourceEntityId === entity.id) {
+          childSet.add(rel.targetEntityId);
+          if (rel.type === "leftOf") {
+            left = rel.targetEntityId;
+          } else if (rel.type === "rightOf") {
+            right = rel.targetEntityId;
+          } else if (rel.type === "parentOf") {
+            children = children ? [...children, rel.targetEntityId] : [rel.targetEntityId];
+          }
+        }
+      }
+
+      return {
+        id: entity.id,
+        value:
+          typeof entity.value === "string" || typeof entity.value === "number"
+            ? entity.value
+            : String(entity.value ?? entity.label ?? ""),
+        left,
+        right,
+        children,
+      };
+    });
+
+    // Identify root
+    let rootId = graph.metadata?.rootEntityId;
+    if (!rootId || !treeNodes.some((n) => n.id === rootId)) {
+      // Pick first node with in-degree 0 among tree relationships
+      const potentialRoot = treeNodes.find((n) => !childSet.has(n.id));
+      rootId = potentialRoot ? potentialRoot.id : treeNodes[0].id;
+    }
+
+    const rawLayout = computeTreeLayout(treeInputs, rootId, origin);
+
+    // Apply layout stability: align center of mass with previous state
+    let shiftX = 0;
+    let shiftY = 0;
+
+    if (previousLayout && previousLayout.size > 0) {
+      let prevSumX = 0;
+      let prevSumY = 0;
+      let matchCount = 0;
+
+      for (const node of treeNodes) {
+        const prev = previousLayout.get(node.id);
+        if (prev) {
+          prevSumX += prev.x;
+          prevSumY += prev.y;
+          matchCount++;
+        }
+      }
+
+      if (matchCount > 0) {
+        const prevCenterX = prevSumX / matchCount;
+        const prevCenterY = prevSumY / matchCount;
+
+        let currSumX = 0;
+        let currSumY = 0;
+        for (const node of treeNodes) {
+          const curr = rawLayout.positions.get(node.id);
+          if (curr) {
+            currSumX += curr.x;
+            currSumY += curr.y;
+          }
+        }
+        const currCenterX = currSumX / treeNodes.length;
+        const currCenterY = currSumY / treeNodes.length;
+
+        shiftX = prevCenterX - currCenterX;
+        shiftY = prevCenterY - currCenterY;
+      }
+    }
+
+    for (const [id, pos] of rawLayout.positions) {
+      positions.set(id, { x: pos.x + shiftX, y: pos.y + shiftY });
+    }
+
+    const bounds: LayoutBounds = {
+      x: rawLayout.bounds.x + shiftX,
+      y: rawLayout.bounds.y + shiftY,
+      width: rawLayout.bounds.width,
+      height: rawLayout.bounds.height,
+    };
+
+    // Position any annotations or auxiliary entities alongside the tree
+    const annotations = entityList.filter(
+      (e) => e.primitiveType === "Annotation" || e.primitiveType === "Callout",
+    );
+    for (const ann of annotations) {
+      const targetId = ann.properties?.targetEntityId as string | undefined;
+      const targetPos = targetId ? positions.get(targetId) : null;
+      if (targetPos) {
+        positions.set(ann.id, {
+          x: targetPos.x + 90,
+          y: targetPos.y - 10,
+        });
+      } else {
+        positions.set(ann.id, {
+          x: bounds.x + bounds.width + 40,
+          y: bounds.y + 10,
+        });
+      }
+    }
+
+    // Run collision resolution across all positioned items
+    const collisionBoxes: CollisionBox[] = [];
+    for (const entity of entityList) {
+      const pos = positions.get(entity.id);
+      if (!pos) continue;
+      const isAnn =
+        entity.primitiveType === "Annotation" || entity.primitiveType === "Callout";
+      collisionBoxes.push({
+        id: entity.id,
+        x: pos.x,
+        y: pos.y,
+        width: isAnn ? 180 : 70,
+        height: isAnn ? 60 : 70,
+        fixed: !isAnn,
+        priority: isAnn ? 1 : 10,
+      });
+    }
+    const resolvedPos = resolveLayoutCollisions(collisionBoxes, 20);
+    for (const [id, pos] of resolvedPos) {
+      positions.set(id, pos);
+    }
+
+    return { positions, bounds };
+  }
+
+  if (isArray) {
+    const cells = entityList.filter((e) => e.primitiveType === "ArrayCell");
+    cells.sort((a, b) => {
+      const idxA = (a.properties?.index as number) ?? 0;
+      const idxB = (b.properties?.index as number) ?? 0;
+      return idxA - idxB;
+    });
+
+    const startX = previousLayout?.get(cells[0].id)?.x ?? origin.x;
+    const startY = previousLayout?.get(cells[0].id)?.y ?? origin.y;
+    const cellW = 60;
+    const cellH = 40;
+    const gap = 2;
+
+    for (let i = 0; i < cells.length; i++) {
+      positions.set(cells[i].id, {
+        x: startX + i * (cellW + gap),
+        y: startY,
+      });
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: startX,
+        y: startY,
+        width: cells.length * (cellW + gap),
+        height: cellH,
+      },
+    };
+  }
+
+  if (isLinkedList) {
+    const nodes = entityList.filter((e) => e.primitiveType === "LinkedListNode");
+    const startX = previousLayout?.get(nodes[0].id)?.x ?? origin.x;
+    const startY = previousLayout?.get(nodes[0].id)?.y ?? origin.y;
+    const nodeW = 80;
+    const gap = 60;
+
+    for (let i = 0; i < nodes.length; i++) {
+      positions.set(nodes[i].id, {
+        x: startX + i * (nodeW + gap),
+        y: startY,
+      });
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: startX,
+        y: startY,
+        width: nodes.length * (nodeW + gap),
+        height: 60,
+      },
+    };
+  }
+
+  if (isStack) {
+    const frames = entityList.filter((e) => e.primitiveType === "StackFrame");
+    const startX = previousLayout?.get(frames[0].id)?.x ?? origin.x;
+    const startY = previousLayout?.get(frames[0].id)?.y ?? origin.y;
+    const frameH = 40;
+    const gap = 8;
+
+    for (let i = 0; i < frames.length; i++) {
+      positions.set(frames[i].id, {
+        x: startX,
+        y: startY + i * (frameH + gap),
+      });
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: startX,
+        y: startY,
+        width: 140,
+        height: frames.length * (frameH + gap),
+      },
+    };
+  }
+
+  if (isGraph) {
+    const graphNodes = entityList.filter((e) => e.primitiveType === "GraphNode");
+    const graphEdges = Array.from(graph.relationships.values()).map((r) => ({
+      from: r.sourceEntityId,
+      to: r.targetEntityId,
+      weight: r.properties?.weight as number | undefined,
+      label: r.label,
+      directed: r.properties?.directed !== false,
+    }));
+
+    const result = computeGraphLayout(
+      graphNodes.map((n) => ({ id: n.id, label: n.label ?? String(n.value ?? "") })),
+      graphEdges,
+      origin,
+    );
+
+    return result;
+  }
+
+  // 6. Generic / Arbitrary Concept Layout (Flow, Pipeline, Cycle, or Network)
+  // Handles completely arbitrary subjects (e.g. Refrigerator, Photosynthesis, HTTP, SQL)
+  const inDegrees = new Map<string, number>();
+  const outDegrees = new Map<string, number>();
+
+  for (const entity of entityList) {
+    inDegrees.set(entity.id, 0);
+    outDegrees.set(entity.id, 0);
+  }
+
+  for (const rel of graph.relationships.values()) {
+    inDegrees.set(rel.targetEntityId, (inDegrees.get(rel.targetEntityId) ?? 0) + 1);
+    outDegrees.set(rel.sourceEntityId, (outDegrees.get(rel.sourceEntityId) ?? 0) + 1);
+  }
+
+  // Check for 4-node or closed cycle (e.g. Refrigerator compressor -> condenser -> expansion -> evaporator)
+  const isLoop =
+    entityList.length >= 3 &&
+    entityList.length <= 6 &&
+    Array.from(inDegrees.values()).every((d) => d >= 1) &&
+    Array.from(outDegrees.values()).every((d) => d >= 1);
+
+  if (isLoop) {
+    // Layout in a clear cycle / 2x2 perimeter loop
+    const n = entityList.length;
+    const radius = 140;
+    const cx = origin.x + radius;
+    const cy = origin.y + radius;
+
+    for (let i = 0; i < n; i++) {
+      const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+      const x = cx + radius * Math.cos(angle) - 60;
+      const y = cy + radius * Math.sin(angle) - 30;
+      positions.set(entityList[i].id, { x, y });
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: origin.x,
+        y: origin.y,
+        width: radius * 2 + 120,
+        height: radius * 2 + 60,
+      },
+    };
+  }
+
+  // Linear / Topological Rank Pipeline (Input -> Process -> Output)
+  const ranks = new Map<string, number>();
+  for (const entity of entityList) {
+    if ((inDegrees.get(entity.id) ?? 0) === 0) {
+      ranks.set(entity.id, 0);
+    }
+  }
+
+  // Propagate ranks along outgoing relationships
+  for (let iter = 0; iter < entityList.length; iter++) {
+    for (const rel of graph.relationships.values()) {
+      const srcRank = ranks.get(rel.sourceEntityId);
+      if (srcRank != null) {
+        const currTargetRank = ranks.get(rel.targetEntityId) ?? 0;
+        ranks.set(rel.targetEntityId, Math.max(currTargetRank, srcRank + 1));
+      }
+    }
+  }
+
+  // Group by rank
+  const rankGroups = new Map<number, string[]>();
+  for (const entity of entityList) {
+    const rank = ranks.get(entity.id) ?? 0;
+    const group = rankGroups.get(rank) ?? [];
+    group.push(entity.id);
+    rankGroups.set(rank, group);
+  }
+
+  const colWidth = 220;
+  const rowHeight = 110;
+  let maxX = origin.x;
+  let maxY = origin.y;
+
+  for (const [rank, ids] of rankGroups.entries()) {
+    const x = origin.x + rank * colWidth;
+    for (let row = 0; row < ids.length; row++) {
+      const id = ids[row];
+      // Layout stability: if entity had previous position and rank is unchanged, prefer stable position
+      const prevPos = previousLayout?.get(id);
+      const y = origin.y + row * rowHeight;
+      const finalX = prevPos && Math.abs(prevPos.x - x) < 30 ? prevPos.x : x;
+      const finalY = prevPos && Math.abs(prevPos.y - y) < 30 ? prevPos.y : y;
+
+      positions.set(id, { x: finalX, y: finalY });
+      maxX = Math.max(maxX, finalX + 140);
+      maxY = Math.max(maxY, finalY + 70);
+    }
+  }
+
+  return {
+    positions,
+    bounds: {
+      x: origin.x,
+      y: origin.y,
+      width: Math.max(140, maxX - origin.x),
+      height: Math.max(70, maxY - origin.y),
+    },
+  };
+}
+
+// ==========================================
+// Text Measurement & Collision Types
+// ==========================================
+
+export interface TextMeasurement {
+  width: number;
+  height: number;
+  lines: string[];
+  lineHeight: number;
+}
+
+export interface CollisionBox {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  priority?: number;
+  fixed?: boolean;
+}
+
+/**
+ * Wraps text into lines with word boundaries respecting maxCharsPerLine.
+ */
+export function wrapText(text: string, maxCharsPerLine = 36): string[] {
+  if (!text) return [];
+  const rawLines = text.split("\n");
+  const result: string[] = [];
+
+  for (const rawLine of rawLines) {
+    if (rawLine.length <= maxCharsPerLine) {
+      result.push(rawLine);
+      continue;
+    }
+    const words = rawLine.split(" ");
+    let currentLine = "";
+
+    for (const word of words) {
+      if (!currentLine) {
+        currentLine = word;
+      } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
+        currentLine += " " + word;
+      } else {
+        result.push(currentLine);
+        currentLine = word;
+      }
+    }
+    if (currentLine) {
+      result.push(currentLine);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Estimates text dimensions based on font size and character width.
+ */
+export function measureTextBounds(
+  text: string,
+  fontSize = 14,
+  maxCharWidth = 36,
+): TextMeasurement {
+  const lines = wrapText(text, maxCharWidth);
+  const approxCharWidth = fontSize * 0.58;
+  const lineHeight = Math.round(fontSize * 1.35);
+
+  let maxLineWidth = 0;
+  for (const line of lines) {
+    const lineW = Math.round(line.length * approxCharWidth);
+    if (lineW > maxLineWidth) {
+      maxLineWidth = lineW;
+    }
+  }
+
+  return {
+    width: Math.max(60, maxLineWidth),
+    height: Math.max(lineHeight, lines.length * lineHeight),
+    lines,
+    lineHeight,
+  };
+}
+
+/**
+ * Computes content-aware bounds for annotations / callouts so text never overflows.
+ */
+export function computeAdaptiveAnnotationBounds(
+  text: string,
+  title?: string,
+  fontSize = 14,
+): LayoutBounds {
+  const textMeasurement = measureTextBounds(text, fontSize, 40);
+  const titleMeasurement = title
+    ? measureTextBounds(title, fontSize + 2, 35)
+    : null;
+
+  const hPadding = 24; // 12px on each side
+  const vPadding = 20; // 10px on top and bottom
+
+  const contentWidth = Math.max(
+    textMeasurement.width,
+    titleMeasurement ? titleMeasurement.width : 0,
+  );
+  const contentHeight =
+    textMeasurement.height +
+    (titleMeasurement ? titleMeasurement.height + 6 : 0);
+
+  return {
+    x: 0,
+    y: 0,
+    width: Math.min(380, Math.max(120, contentWidth + hPadding)),
+    height: Math.max(48, contentHeight + vPadding),
+  };
+}
+
+/**
+ * Checks whether two axis-aligned bounding boxes collide or overlap within a margin.
+ */
+export function checkAABBCollision(
+  a: LayoutBounds,
+  b: LayoutBounds,
+  margin = 16,
+): boolean {
+  return (
+    a.x < b.x + b.width + margin &&
+    a.x + a.width + margin > b.x &&
+    a.y < b.y + b.height + margin &&
+    a.y + a.height + margin > b.y
+  );
+}
+
+/**
+ * Resolves layout collisions by shifting colliding non-fixed items with semantic clearance.
+ */
+export function resolveLayoutCollisions(
+  boxes: CollisionBox[],
+  clearance = 20,
+): Map<string, LayoutPoint> {
+  const resolved = new Map<string, LayoutPoint>();
+  const currentBoxes = boxes.map((b) => ({ ...b }));
+
+  // Sort boxes by priority (higher priority/fixed stays first)
+  currentBoxes.sort((a, b) => {
+    if (a.fixed && !b.fixed) return -1;
+    if (!a.fixed && b.fixed) return 1;
+    return (b.priority ?? 0) - (a.priority ?? 0);
+  });
+
+  const maxPasses = 5;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    let hadCollision = false;
+
+    for (let i = 0; i < currentBoxes.length; i++) {
+      for (let j = i + 1; j < currentBoxes.length; j++) {
+        const boxA = currentBoxes[i];
+        const boxB = currentBoxes[j];
+
+        if (checkAABBCollision(boxA, boxB, clearance)) {
+          hadCollision = true;
+          // Target box is non-fixed
+          const targetBox = boxB.fixed && !boxA.fixed ? boxA : boxB;
+          const anchorBox = targetBox === boxB ? boxA : boxB;
+
+          // Displace primarily vertically downwards or horizontally to the right
+          const overlapY =
+            anchorBox.y + anchorBox.height + clearance - targetBox.y;
+          const overlapX =
+            anchorBox.x + anchorBox.width + clearance - targetBox.x;
+
+          if (Math.abs(overlapY) <= Math.abs(overlapX)) {
+            targetBox.y = anchorBox.y + anchorBox.height + clearance;
+          } else {
+            targetBox.x = anchorBox.x + anchorBox.width + clearance;
+          }
+        }
+      }
+    }
+
+    if (!hadCollision) break;
+  }
+
+  for (const b of currentBoxes) {
+    resolved.set(b.id, { x: b.x, y: b.y });
+  }
+
+  return resolved;
 }

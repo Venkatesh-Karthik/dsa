@@ -50,9 +50,23 @@ export type ElementSemanticRole =
   | "label"
   | "annotation"
   | "step-badge"
+  | "title"
+  | "heading"
+  | "endpoint"
+  | "process"
   | "generic";
 
 export type ArrowDirection = "forward" | "backward" | "bidirectional" | "none";
+
+export type ConnectorRole =
+  | "relationship"
+  | "directed"
+  | "undirected"
+  | "hierarchy"
+  | "flow"
+  | "pointer"
+  | "reference"
+  | "generic";
 
 export type HighlightEmphasis = "glow" | "badge" | "focus" | "pulse" | "subtle";
 
@@ -128,6 +142,7 @@ export interface CreateArrowAction {
   to: string;
   label?: string;
   direction?: ArrowDirection;
+  role?: ConnectorRole;
   style?: BaseStyleOptions & {
     elbowed?: boolean;
   };
@@ -191,7 +206,7 @@ export interface TreeNodeDef {
   /** IDs of child nodes (for general trees) */
   children?: string[];
   /** Optional semantic highlight */
-  highlight?: ArrayElementHighlight;
+  highlight?: ArrayElementHighlight | SemanticColor;
 }
 
 /** Definition of a graph node */
@@ -200,8 +215,13 @@ export interface GraphNodeDef {
   id: string;
   /** Display label */
   label: string;
+  /** Optional value / distance / cost displayed below or next to the label */
+  value?: string | number;
+  /** Optional absolute or layout coordinates */
+  x?: number;
+  y?: number;
   /** Optional semantic highlight */
-  highlight?: ArrayElementHighlight;
+  highlight?: ArrayElementHighlight | SemanticColor;
 }
 
 /** Definition of a graph edge */
@@ -275,6 +295,8 @@ export interface CreateLinkedListAction {
   elements: ArrayElement[];  // reuse existing ArrayElement type
   variant?: "singly" | "doubly";
   label?: string;
+  x?: number;
+  y?: number;
   style?: Pick<BaseStyleOptions, "color">;
 }
 
@@ -283,6 +305,18 @@ export interface CreateStackAction {
   id: string;
   elements: ArrayElement[];  // top element is index 0
   label?: string;
+  x?: number;
+  y?: number;
+  style?: Pick<BaseStyleOptions, "color">;
+}
+
+export interface CreateQueueAction {
+  type: "create_queue";
+  id: string;
+  elements: ArrayElement[];
+  label?: string;
+  x?: number;
+  y?: number;
   style?: Pick<BaseStyleOptions, "color">;
 }
 
@@ -292,6 +326,8 @@ export interface CreateTreeAction {
   nodes: TreeNodeDef[];
   root: string;  // ID of root node
   label?: string;
+  x?: number;
+  y?: number;
   style?: Pick<BaseStyleOptions, "color">;
 }
 
@@ -302,6 +338,8 @@ export interface CreateGraphAction {
   edges: GraphEdgeDef[];
   directed?: boolean;
   label?: string;
+  x?: number;
+  y?: number;
   style?: Pick<BaseStyleOptions, "color">;
 }
 
@@ -313,6 +351,8 @@ export interface CreateMatrixAction {
   colHeaders?: string[];
   highlights?: MatrixCellHighlight[];
   label?: string;
+  x?: number;
+  y?: number;
   style?: Pick<BaseStyleOptions, "color">;
 }
 
@@ -352,6 +392,7 @@ export type VisualAction =
   | AnnotatePointerAction
   | CreateLinkedListAction
   | CreateStackAction
+  | CreateQueueAction
   | CreateTreeAction
   | CreateGraphAction
   | CreateMatrixAction
@@ -427,6 +468,90 @@ export interface TeachingLesson {
   steps: TeachingStep[];
 }
 
+export interface CodeContext {
+  language: string;
+  code: string;
+  highlightLines?: number[];
+  variables?: Record<string, string | number>;
+  callStack?: string[];
+  explanation?: string;
+  problem_summary?: string;
+  functionName?: string;
+}
+
+export interface UpdateOperation {
+  type: "update";
+  target: string;
+  label?: string;
+  value?: string | number;
+  style?: BaseStyleOptions;
+}
+
+export interface ConnectOperation {
+  type: "connect";
+  id?: string;
+  from: string;
+  to: string;
+  label?: string;
+  direction?: ArrowDirection;
+  role?: ConnectorRole;
+  style?: BaseStyleOptions;
+}
+
+export interface DisconnectOperation {
+  type: "disconnect";
+  target?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface UnhighlightOperation {
+  type: "unhighlight";
+  target: string;
+}
+
+export interface ReorderOperation {
+  type: "reorder";
+  target: string;
+  swapWith?: string;
+  newIndex?: number;
+}
+
+export interface GroupOperation {
+  type: "group";
+  id: string;
+  targets: string[];
+  label?: string;
+  style?: BaseStyleOptions;
+}
+
+export interface UngroupOperation {
+  type: "ungroup";
+  target: string;
+}
+
+export type TransformationOperation =
+  | VisualAction
+  | UpdateOperation
+  | ConnectOperation
+  | DisconnectOperation
+  | UnhighlightOperation
+  | ReorderOperation
+  | GroupOperation
+  | UngroupOperation;
+
+export interface Transformation {
+  id: string;
+  title: string;
+  explanation: string;
+  operations: TransformationOperation[];
+  visual_actions?: VisualAction[];
+  codeContext?: CodeContext;
+  calculations?: string;
+  insight?: string;
+  highlights?: ArrayElementHighlight[] | string[];
+}
+
 export interface TeachingResponse {
   /** High-level summary explanation from the AI tutor */
   message: string;
@@ -436,6 +561,8 @@ export interface TeachingResponse {
   steps?: TeachingStep[];
   /** Optional structured multi-step lesson */
   lesson?: TeachingLesson;
+  /** Optional structured visual transformation lesson */
+  visualLesson?: VisualLesson;
   /** Optional topic or concept name */
   topic?: string;
   /** High-level step-by-step textual explanation points */
@@ -444,3 +571,15 @@ export interface TeachingResponse {
   domain?: DataStructureMetadata;
 }
 
+export interface VisualLesson {
+  id: string;
+  title: string;
+  topic?: string;
+  concept?: string;
+  domain?: DataStructureMetadata;
+  capabilities?: string[];
+  initialScene: VisualAction[];
+  transformations: Transformation[];
+  codeContexts?: Record<string, CodeContext> | CodeContext[];
+  steps?: TeachingStep[];
+}

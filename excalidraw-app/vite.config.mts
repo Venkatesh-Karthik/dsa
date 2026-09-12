@@ -15,15 +15,58 @@ import { aiTeachingBackendPlugin } from "./ai/backend/vite-plugin";
 export default defineConfig(({ mode }) => {
   // To load .env variables for client bundle (VITE_ prefix only)
   const envVars = loadEnv(mode, `../`);
-  // Load server-only environment variables (e.g. FEATHERLESS_API_KEY) into process.env
-  const serverEnvVars = loadEnv(mode, `../`, "");
-  if (serverEnvVars.FEATHERLESS_API_KEY && !process.env.FEATHERLESS_API_KEY) {
-    process.env.FEATHERLESS_API_KEY = serverEnvVars.FEATHERLESS_API_KEY;
+  // Load server-only environment variables (e.g. FEATHERLESS_API_KEY) from both root and app directories
+  const rootEnvVars = loadEnv(mode, `../`, "");
+  const localEnvVars = loadEnv(mode, __dirname, "");
+  const combinedEnv = { ...rootEnvVars, ...localEnvVars };
+
+  if (combinedEnv.OPENROUTER_API_KEY && !process.env.OPENROUTER_API_KEY) {
+    process.env.OPENROUTER_API_KEY = combinedEnv.OPENROUTER_API_KEY;
   }
-  if (serverEnvVars.FEATHERLESS_MODEL && !process.env.FEATHERLESS_MODEL) {
-    process.env.FEATHERLESS_MODEL = serverEnvVars.FEATHERLESS_MODEL;
+  if (combinedEnv.OPENROUTER_MODEL && !process.env.OPENROUTER_MODEL) {
+    process.env.OPENROUTER_MODEL = combinedEnv.OPENROUTER_MODEL;
+  } else if (!process.env.OPENROUTER_MODEL) {
+    process.env.OPENROUTER_MODEL = "z-ai/glm-5.3-flash";
+  }
+  if (combinedEnv.COGNORA_TEACH_MAX_TOKENS && !process.env.COGNORA_TEACH_MAX_TOKENS) {
+    process.env.COGNORA_TEACH_MAX_TOKENS = combinedEnv.COGNORA_TEACH_MAX_TOKENS;
+  }
+  if (combinedEnv.OPENROUTER_MAX_TOKENS && !process.env.OPENROUTER_MAX_TOKENS) {
+    process.env.OPENROUTER_MAX_TOKENS = combinedEnv.OPENROUTER_MAX_TOKENS;
+  }
+  if (combinedEnv.NVIDIA_API_KEY && !process.env.NVIDIA_API_KEY) {
+    process.env.NVIDIA_API_KEY = combinedEnv.NVIDIA_API_KEY;
+  }
+  if (combinedEnv.NVIDIA_MODEL && !process.env.NVIDIA_MODEL) {
+    process.env.NVIDIA_MODEL = combinedEnv.NVIDIA_MODEL;
+  } else if (!process.env.NVIDIA_MODEL) {
+    process.env.NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+  }
+  if (combinedEnv.NVIDIA_BASE_URL && !process.env.NVIDIA_BASE_URL) {
+    process.env.NVIDIA_BASE_URL = combinedEnv.NVIDIA_BASE_URL;
+  }
+  if (combinedEnv.COGNORA_PRIMARY_PROVIDER && !process.env.COGNORA_PRIMARY_PROVIDER) {
+    process.env.COGNORA_PRIMARY_PROVIDER = combinedEnv.COGNORA_PRIMARY_PROVIDER;
+  }
+  if (combinedEnv.COGNORA_FALLBACK_PROVIDER && !process.env.COGNORA_FALLBACK_PROVIDER) {
+    process.env.COGNORA_FALLBACK_PROVIDER = combinedEnv.COGNORA_FALLBACK_PROVIDER;
+  }
+  if (combinedEnv.COGNORA_MAX_TOKENS && !process.env.COGNORA_MAX_TOKENS) {
+    process.env.COGNORA_MAX_TOKENS = combinedEnv.COGNORA_MAX_TOKENS;
+  }
+  if (combinedEnv.COGNORA_MAX_OUTPUT_TOKENS && !process.env.COGNORA_MAX_OUTPUT_TOKENS) {
+    process.env.COGNORA_MAX_OUTPUT_TOKENS = combinedEnv.COGNORA_MAX_OUTPUT_TOKENS;
+  }
+  if (combinedEnv.FEATHERLESS_API_KEY && !process.env.FEATHERLESS_API_KEY) {
+    process.env.FEATHERLESS_API_KEY = combinedEnv.FEATHERLESS_API_KEY;
+  }
+  if (combinedEnv.AI_PROVIDER && !process.env.AI_PROVIDER) {
+    process.env.AI_PROVIDER = combinedEnv.AI_PROVIDER;
+  }
+  if (combinedEnv.FEATHERLESS_MODEL && !process.env.FEATHERLESS_MODEL) {
+    process.env.FEATHERLESS_MODEL = combinedEnv.FEATHERLESS_MODEL;
   } else if (!process.env.FEATHERLESS_MODEL) {
-    process.env.FEATHERLESS_MODEL = "Qwen/Qwen2.5-7B-Instruct";
+    process.env.FEATHERLESS_MODEL = "zai-org/GLM-5.3-Flash";
   }
   // https://vitejs.dev/config/
   return {

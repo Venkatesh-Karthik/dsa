@@ -5,14 +5,20 @@
     gap: 0.9rem;
     padding: 1rem;
     min-height: 100%;
-    background:
-      radial-gradient(circle at top right, rgba(25, 113, 194, 0.12), transparent 42%),
+    background: radial-gradient(
+        circle at top right,
+        rgba(25, 113, 194, 0.12),
+        transparent 42%
+      ),
       linear-gradient(180deg, rgba(232, 89, 12, 0.06), transparent 28%),
       var(--sidebar-bg-color);
 
     &--guide {
-      background:
-        radial-gradient(circle at top left, rgba(232, 89, 12, 0.12), transparent 40%),
+      background: radial-gradient(
+          circle at top left,
+          rgba(232, 89, 12, 0.12),
+          transparent 40%
+        ),
         linear-gradient(180deg, rgba(25, 113, 194, 0.06), transparent 30%),
         var(--sidebar-bg-color);
     }

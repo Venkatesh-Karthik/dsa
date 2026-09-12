@@ -1,5 +1,6 @@
 import { WelcomeScreen } from "@excalidraw/excalidraw/index";
 import React from "react";
+
 import { CognoraMark } from "./CognoraLogo";
 
 export const AppWelcomeScreen: React.FC<{

@@ -13,6 +13,7 @@ import type {
   TeachingResponse,
   TeachingErrorResponse,
 } from "./teaching-contract";
+import { TeachingServiceError } from "./teaching-contract";
 
 const TEACHING_API_ENDPOINT = "/api/ai/teach";
 
@@ -22,6 +23,8 @@ const localFallbackProvider = new MockTeachingProvider({ simulateDelayMs: 0 });
 export interface RequestTeachingOptions {
   /** Enable automatic offline fallback to local mock provider if network/backend fails */
   fallbackToLocalMock?: boolean;
+  /** Optional AbortSignal to cancel in-flight request */
+  signal?: AbortSignal;
 }
 
 /**
@@ -32,30 +35,54 @@ export async function requestTeachingExplanation(
   options?: RequestTeachingOptions,
 ): Promise<TeachingResponse> {
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (request.requestId) {
+      headers["X-Request-Id"] = request.requestId;
+    }
+
     const response = await fetch(TEACHING_API_ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(request),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
       let errorMessage = `AI teaching service returned status ${response.status} (${response.statusText})`;
+      let errorCode: string | undefined;
+      let errorDetails: unknown | undefined;
+
       try {
         const errorData = (await response.json()) as TeachingErrorResponse;
         if (errorData.error) {
           errorMessage = errorData.error;
         }
+        if (errorData.code) {
+          errorCode = errorData.code;
+        }
+        if (errorData.details) {
+          errorDetails = errorData.details;
+        }
       } catch {
         // Body was not JSON, retain HTTP status message
       }
-      throw new Error(errorMessage);
+
+      throw new TeachingServiceError(errorMessage, {
+        statusCode: response.status,
+        code: errorCode,
+        details: errorDetails,
+      });
     }
 
     const data = (await response.json()) as TeachingResponse;
     return data;
   } catch (error: unknown) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+
     if (options?.fallbackToLocalMock) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -63,6 +90,10 @@ export async function requestTeachingExplanation(
         error,
       );
       return localFallbackProvider.generateTeachingResponse(request);
+    }
+
+    if (error instanceof TeachingServiceError) {
+      throw error;
     }
 
     const message =

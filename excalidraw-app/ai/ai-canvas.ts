@@ -15,7 +15,7 @@
  * 6. Fault-tolerant: Gracefully handles errors without crashing Excalidraw.
  */
 
-import { CaptureUpdateAction } from "@excalidraw/element";
+import { CaptureUpdateAction, syncInvalidIndices } from "@excalidraw/element";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
@@ -62,6 +62,7 @@ export interface ApplyVisualActionsResult {
 export function focusOnElements(
   excalidrawAPI: ExcalidrawImperativeAPI,
   elements: readonly ExcalidrawElement[],
+  fit: "contain" | "scale-down" = "scale-down",
 ) {
   if (!elements.length || excalidrawAPI.isDestroyed) {
     return;
@@ -70,7 +71,7 @@ export function focusOnElements(
   try {
     excalidrawAPI.setViewport({
       target: elements,
-      fit: "contain",
+      fit,
       animation: true,
     });
   } catch (err) {
@@ -270,9 +271,10 @@ export function applyVisualActions(
     // Append newly rendered elements
     updatedElements.push(...renderResult.elements);
 
-    // 4. Update the scene with IMMEDIATE undo/redo capture
+    // 4. Update the scene with IMMEDIATE undo/redo capture and synchronized indices
+    const syncedElements = syncInvalidIndices(updatedElements);
     excalidrawAPI.updateScene({
-      elements: updatedElements,
+      elements: syncedElements,
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });
 
@@ -612,9 +614,10 @@ export function renderVerticalLesson(
 
   updatedElements.push(...allRenderedElements);
 
-  // Single atomic update to Excalidraw scene participated in history
+  // Single atomic update to Excalidraw scene participated in history with synchronized indices
+  const syncedElements = syncInvalidIndices(updatedElements);
   excalidrawAPI.updateScene({
-    elements: updatedElements,
+    elements: syncedElements,
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
 
@@ -797,7 +800,7 @@ export function appendLessonStep(
 
   const currentElements = excalidrawAPI.getSceneElementsIncludingDeleted();
   excalidrawAPI.updateScene({
-    elements: [...currentElements, ...newElementsToAdd],
+    elements: syncInvalidIndices([...currentElements, ...newElementsToAdd]),
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
 

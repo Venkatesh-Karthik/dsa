@@ -235,7 +235,7 @@ describe("AI Canvas Integration Layer", () => {
     expect(mockAPI.setViewport).toHaveBeenCalledTimes(1);
     expect(mockAPI.setViewport).toHaveBeenCalledWith({
       target: result.insertedElements,
-      fit: "contain",
+      fit: "scale-down",
       animation: true,
     });
   });
