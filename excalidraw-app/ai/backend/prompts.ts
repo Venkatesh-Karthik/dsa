@@ -51,12 +51,13 @@ PEDAGOGICAL THINKING & EXECUTION PRINCIPLES
    - Match the user's requested scope: If the user asks for a specific operation (e.g. "Explain an AVL right rotation"), focus strictly on that operation (Right / LL rotation). Do NOT dump all 4 rotations, insertion, deletion, or comparison unless asked.
    - For broader questions (e.g. "Explain all AVL rotations"): cover LL, RR, LR, RL.
    - A transformation is a meaningful educational event (e.g. 1. Show imbalance, 2. Perform rotation, 3. Show balanced result).
-   - Provide 2 to 5 meaningful macro-transformations.
+   - Provide as many meaningful macro-transformations as conceptually required by the topic. Do NOT force a fixed number.
    - EVERY TRANSFORMATION MUST CHANGE THE SCENE (previousState != nextState). The final state must achieve the teaching goal and must differ from the initial state!
 4. TREE COMPLEXITY & DEPTH INVARIANTS:
    - MINIMUM MEANINGFUL TREE DEPTH: For ANY tree question, the initial tree MUST have a depth of at least 2 levels (at least 3 nodes: root, child, grandchild, e.g. root 30, left 20, left 10) unless the user explicitly asks for a trivial single-node example.
    - REQUESTED COMPLEXITY OVERRIDES MINIMUM: If the user requests a specific height (e.g. "height 5 tree"), generate a tree matching that requested depth.
    - AVL ROTATION STRUCTURAL CORRECTNESS: A right rotation around node 30 with pivot 20 MUST restructure the tree so node 20 becomes the root, node 10 is the left child, and node 30 is the right child. Node IDs must be preserved across transformations!
+   - NO GENERIC FALLBACK PLACEHOLDERS: Generate meaningful semantic visualizations based on the user's question. Do NOT generate generic placeholder components (e.g. "Component 1", "Component 2"). Do NOT fake success with meaningless placeholders.
 5. BFS & GRAPH TRAVERSAL INVARIANTS:
    - For BFS, transformations MUST show the algorithm actually evolving:
      * Start state: graph with start node (e.g. A) enqueued.
@@ -131,7 +132,7 @@ CRITICAL COLOR & STYLE CONSTRAINTS
 OUTPUT FORMAT
 ==================================================
 Respond with a single valid JSON object with NO markdown formatting, NO backticks, and NO conversational filler.
-For conceptual lessons, always provide 6 to 8 progressive steps in "steps":
+For conceptual lessons, always provide as many progressive steps as conceptually required in "steps":
 {
   "topic": "<concept title>",
   "message": "<clear overview or direct answer>",
@@ -367,7 +368,7 @@ export function formatExpansionPrompt(
 ): string {
   return `Your previous response for "${prompt}" was too compressed (only ${currentStepCount} step generated).
 
-In Cognora, conceptual teaching requests MUST be taught as a progressive multi-step visual lesson with 6 to 8 steps (minimum ${targetMinSteps} steps).
+In Cognora, conceptual teaching requests MUST be taught as a progressive multi-step visual lesson.
 
 CRITICAL PEDAGOGICAL EXPANSION REQUIREMENTS:
 1. Progressive Construction:
@@ -377,7 +378,7 @@ CRITICAL PEDAGOGICAL EXPANSION REQUIREMENTS:
    - Every step must have a clear visual delta (new elements, updated pointers, changed highlights, or partition changes).
    - Do NOT repeat the exact same diagram across steps with only text changes.
 3. Step Structure:
-   - Generate ${targetMinSteps} to 8 sequential steps in "steps": [ { "id": "step-1", ... }, { "id": "step-2", ... }, ... ].
+   - Generate sequential steps in "steps": [ { "id": "step-1", ... }, { "id": "step-2", ... }, ... ].
    - Include accurate calculations, insights, and pedagogical explanations for each step.
 4. Schema & Style:
    - Use only valid SemanticColor ("default", "primary", "secondary", "accent", "neutral", "success", "warning", "danger", "info").
@@ -472,9 +473,10 @@ SCENE ARCHITECTURE — ONE CANVAS, ONE SCENE:
 - Each "transformation.operations" contains ONLY delta operations modifying the persistent scene.
 - The learner navigates via Next / Previous / Play — the SAME canvas transforms locally like a video.
 - NO step cards, NO step diagrams, NO separate step regions.
-- Provide 2 to 5 progressive transformations.
+- Provide as many progressive transformations as conceptually required.
 - EVERY TRANSFORMATION MUST CHANGE THE SCENE: previousState != nextState. Never output an empty or duplicate transformation.
 - FINAL STATE MUST ACHIEVE THE TEACHING GOAL: initial and final states must differ!
+- NO GENERIC FALLBACK PLACEHOLDERS: Generate meaningful semantic visualizations based on the user's question. Do NOT generate generic placeholder components (e.g. "Component 1", "Component 2"). Do NOT fake success with meaningless placeholders.
 
 SCOPE MATCHING:
 - Answer the specific question asked: If asked for "Explain an AVL right rotation", focus strictly on the right rotation (LL case). Do NOT teach all 4 rotations unless explicitly requested.

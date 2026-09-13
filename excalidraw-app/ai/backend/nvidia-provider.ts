@@ -40,7 +40,29 @@ import {
 } from "./prompts";
 import { validateLessonQuality } from "./lesson-validator";
 import { enrichCodingResponse } from "./coding-solver";
-import { safeParseJson } from "./openrouter-provider";
+export function safeParseJson(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (match) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e) {
+        throw new Error("Failed to parse JSON even after markdown extraction");
+      }
+    }
+    const matchFallback = text.match(/```\s*([\s\S]*?)\s*```/);
+    if (matchFallback) {
+      try {
+        return JSON.parse(matchFallback[1]);
+      } catch (e) {
+        throw new Error("Failed to parse JSON from generic markdown block");
+      }
+    }
+    throw new Error("No JSON found in response");
+  }
+}
 
 import type { AIProvider } from "./ai-provider";
 import type { TeachingProvider } from "./teaching-provider";
@@ -55,10 +77,10 @@ export const NVIDIA_REPAIR_TIMEOUT_MS = 60000;
 export function resolveNvidiaMaxTokens(): number {
   if (typeof process !== "undefined") {
     const raw =
+      process.env?.NVIDIA_MAX_TOKENS ||
       process.env?.COGNORA_MAX_OUTPUT_TOKENS ||
       process.env?.COGNORA_MAX_TOKENS ||
-      process.env?.COGNORA_TEACH_MAX_TOKENS ||
-      process.env?.NVIDIA_MAX_TOKENS;
+      process.env?.COGNORA_TEACH_MAX_TOKENS;
     if (raw) {
       const parsed = parseInt(raw, 10);
       if (!Number.isNaN(parsed) && parsed > 0) {
@@ -115,6 +137,8 @@ export function deterministicJsonRepair(raw: string): string {
  * Safely handles string escapes, quotes containing braces, and nested structures.
  */
 export function extractBalancedJson(text: string): unknown | null {
+  let firstValidFallback: unknown | null = null;
+
   for (let start = 0; start < text.length; start++) {
     if (text[start] !== "{") {
       continue;
@@ -149,16 +173,42 @@ export function extractBalancedJson(text: string): unknown | null {
           depth--;
           if (depth === 0) {
             const candidate = text.slice(start, i + 1).trim();
-            // 1. Direct parse attempt
-            try {
-              return safeParseJson(candidate);
-            } catch {
-              // 2. Deterministic local repair attempt
+            const tryParse = (raw: string): unknown | null => {
               try {
-                const repaired = deterministicJsonRepair(candidate);
-                return safeParseJson(repaired);
+                return safeParseJson(raw);
               } catch {
-                // Continue scanning
+                try {
+                  return safeParseJson(deterministicJsonRepair(raw));
+                } catch {
+                  return null;
+                }
+              }
+            };
+
+            const parsed = tryParse(candidate);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              const p = parsed as Record<string, unknown>;
+              if (
+                p.visualLesson ||
+                p.visual_lesson ||
+                p.steps ||
+                p.visual_actions ||
+                p.topic
+              ) {
+                return parsed;
+              }
+
+              const isInnerVisualAction =
+                typeof p.type === "string" &&
+                (p.type.startsWith("create_") ||
+                  p.type === "highlight" ||
+                  p.type === "delete" ||
+                  p.type === "move" ||
+                  p.type === "resize") &&
+                p.id;
+
+              if (!isInnerVisualAction && !firstValidFallback) {
+                firstValidFallback = parsed;
               }
             }
           }
@@ -167,7 +217,81 @@ export function extractBalancedJson(text: string): unknown | null {
     }
   }
 
-  return null;
+  return firstValidFallback;
+}
+
+/**
+ * Recovers valid JSON from model responses that were truncated by token limits.
+ * Closes unescaped quotes, arrays, and objects in reverse order.
+ */
+export function closeTruncatedJson(raw: string): string {
+  let str = raw.trim();
+  if (!str.startsWith("{")) {
+    const firstBrace = str.indexOf("{");
+    if (firstBrace === -1) return str;
+    str = str.slice(firstBrace);
+  }
+
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === "\\") {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+  }
+
+  if (inString) {
+    str += '"';
+  }
+
+  str = str.replace(/,\s*$/, "");
+  str = str.replace(/:\s*$/, ': ""');
+  str = str.replace(/"[^"]*"\s*:\s*$/, "");
+  str = str.replace(/,\s*$/, "");
+
+  const finalStack: string[] = [];
+  inString = false;
+  escape = false;
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === "\\") {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (char === "{" || char === "[") {
+        finalStack.push(char === "{" ? "}" : "]");
+      } else if (char === "}" || char === "]") {
+        if (finalStack.length > 0 && finalStack[finalStack.length - 1] === char) {
+          finalStack.pop();
+        }
+      }
+    }
+  }
+
+  while (finalStack.length > 0) {
+    str += finalStack.pop();
+  }
+
+  return str;
 }
 
 /**
@@ -175,8 +299,9 @@ export function extractBalancedJson(text: string): unknown | null {
  * Handles:
  * 1. Pure JSON
  * 2. Markdown code fences (```json ... ```)
- * 3. Balanced-brace JSON embedded in text or surrounded by commentary
- * 4. Minor local repairs (trailing commas, whitespace)
+ * 3. Truncated JSON closing repair
+ * 4. Balanced-brace JSON embedded in text or surrounded by commentary
+ * 5. Minor local repairs (trailing commas, whitespace)
  */
 export function extractJsonFromText(rawText: string): unknown | null {
   const cleaned = stripReasoningTags(rawText).trim();
@@ -186,7 +311,8 @@ export function extractJsonFromText(rawText: string): unknown | null {
 
   // 1. Direct JSON check
   try {
-    return safeParseJson(cleaned);
+    const parsed = safeParseJson(cleaned);
+    if (parsed) return parsed;
   } catch {
     // Continue
   }
@@ -194,7 +320,8 @@ export function extractJsonFromText(rawText: string): unknown | null {
   // 2. Direct parse after deterministic repair
   try {
     const repaired = deterministicJsonRepair(cleaned);
-    return safeParseJson(repaired);
+    const parsed = safeParseJson(repaired);
+    if (parsed) return parsed;
   } catch {
     // Continue
   }
@@ -214,7 +341,24 @@ export function extractJsonFromText(rawText: string): unknown | null {
     }
   }
 
-  // 4. Robust balanced brace extraction
+  // 4. Attempt truncated JSON closing repair for outer lesson object
+  if (
+    cleaned.includes("visualLesson") ||
+    cleaned.includes("topic") ||
+    cleaned.includes("initialScene")
+  ) {
+    try {
+      const closed = closeTruncatedJson(cleaned);
+      const parsed = safeParseJson(deterministicJsonRepair(closed));
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+    } catch {
+      // Continue
+    }
+  }
+
+  // 5. Robust balanced brace extraction
   const balancedResult = extractBalancedJson(cleaned);
   if (balancedResult !== null) {
     return balancedResult;
@@ -517,29 +661,8 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
 
     if (rawResponse.status === 503) {
       console.warn(
-        `[COGNORA][AI][NVIDIA] Service overloaded (HTTP 503) on requestId=${requestId}. Retrying once after 2000ms...`,
+        `[COGNORA][AI][NVIDIA] Service overloaded (HTTP 503) on requestId=${requestId}. Failing fast to fallback provider.`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const retryController = new AbortController();
-      const retryTimeoutId = setTimeout(() => retryController.abort(), timeoutMs);
-      try {
-        const retryRes = await this.fetchFn(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify(bodyObj),
-          signal: retryController.signal,
-        });
-        if (retryRes.ok) {
-          rawResponse = retryRes;
-        }
-      } catch {
-        // keep original response
-      } finally {
-        clearTimeout(retryTimeoutId);
-      }
     }
 
     if (!rawResponse.ok) {

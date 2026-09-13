@@ -14,7 +14,6 @@ import {
 
 import { FeatherlessTeachingProvider } from "./featherless-provider";
 import { OllamaTeachingProvider } from "./ollama-provider";
-import { OpenRouterTeachingProvider } from "./openrouter-provider";
 import { NvidiaNemotronProvider } from "./nvidia-provider";
 import { ProviderRouter } from "./provider-router";
 import { ProviderError } from "./provider-errors";
@@ -24,7 +23,7 @@ import path from "path";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { TeachingProvider } from "./teaching-provider";
 import type { AIProvider } from "./ai-provider";
-import type { TeachingProviderInfo } from "../teaching-contract";
+import type { TeachingProviderInfo, TeachingResponse } from "../teaching-contract";
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MB limit
 
@@ -74,8 +73,6 @@ export function logStartupConfiguration(): void {
     "nvidia";
   const primaryModel =
     process.env.NVIDIA_MODEL || "nvidia/nemotron-3-ultra-550b-a55b";
-  const fallbackProvider =
-    process.env.COGNORA_FALLBACK_PROVIDER || "openrouter";
   const maxTokens =
     process.env.NVIDIA_MAX_TOKENS ||
     process.env.COGNORA_MAX_TOKENS ||
@@ -84,18 +81,9 @@ export function logStartupConfiguration(): void {
     process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.trim().length > 0
       ? "Present (configured)"
       : "Missing";
-  const openrouterKeyStatus =
-    process.env.OPENROUTER_API_KEY &&
-    process.env.OPENROUTER_API_KEY.trim().length > 0
-      ? "Present (configured)"
-      : "Missing";
 
   const hasNvidiaKey = Boolean(
     process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.trim().length > 0,
-  );
-  const hasOpenRouterKey = Boolean(
-    process.env.OPENROUTER_API_KEY &&
-      process.env.OPENROUTER_API_KEY.trim().length > 0,
   );
 
   // eslint-disable-next-line no-console
@@ -105,19 +93,14 @@ export function logStartupConfiguration(): void {
   // eslint-disable-next-line no-console
   console.info(`[COGNORA][CONFIG] model=${primaryModel}`);
   // eslint-disable-next-line no-console
-  console.info(`[COGNORA][CONFIG] fallbackProvider=${fallbackProvider}`);
-  // eslint-disable-next-line no-console
-  console.info(`[COGNORA][CONFIG] openrouterKeyConfigured=${hasOpenRouterKey}`);
-  // eslint-disable-next-line no-console
   console.info(`[COGNORA][CONFIG] maxTokens=${maxTokens}`);
 }
 
 /**
  * Resolves the active teaching provider:
- * 1. Honors AI_PROVIDER env var ("openrouter" | "ollama" | "featherless" | "mock").
- * 2. If unset, uses OpenRouter or Featherless if configured.
- * 3. Else if OLLAMA_BASE_URL or OLLAMA_MODEL is configured, uses OllamaTeachingProvider.
- * 4. Otherwise defaults to MockTeachingProvider.
+ * 1. Honors AI_PROVIDER env var.
+ * 2. If OLLAMA_BASE_URL or OLLAMA_MODEL is configured, uses OllamaTeachingProvider.
+ * 3. Otherwise defaults to MockTeachingProvider or NvidiaNemotronProvider.
  */
 export function resolveDefaultProvider(): TeachingProvider {
   ensureServerEnvLoaded();
@@ -128,9 +111,6 @@ export function resolveDefaultProvider(): TeachingProvider {
 
   if (providerEnv === "nvidia") {
     return new NvidiaNemotronProvider();
-  }
-  if (providerEnv === "openrouter") {
-    return new OpenRouterTeachingProvider();
   }
   if (providerEnv === "ollama") {
     return new OllamaTeachingProvider();
@@ -145,7 +125,7 @@ export function resolveDefaultProvider(): TeachingProvider {
     return new ProviderRouter();
   }
 
-  // Default provider: ProviderRouter (NVIDIA Nemotron Primary -> OpenRouter Fallback)
+  // Default provider: ProviderRouter (NVIDIA Nemotron Primary)
   return new ProviderRouter();
 }
 
@@ -179,7 +159,7 @@ export function getTeachingProviderInfo(
 
     return {
       id: primary.id,
-      name: `${primary.name} (with fallback)`,
+      name: primary.name,
       model,
       isConfigured: provider.isConfigured(),
     };
@@ -247,6 +227,9 @@ function sendJson(
   res.end(json);
 }
 
+// Track in-flight generation promises to guarantee duplicate submissions do not trigger parallel AI requests
+const inFlightGenerations = new Map<string, Promise<TeachingResponse>>();
+
 /**
  * Main HTTP request handler for /api/ai/teach
  */
@@ -290,37 +273,64 @@ export async function handleTeachingRequest(
   }
 
   const rawReq = body as Record<string, unknown> | undefined;
+  const generationId =
+    (typeof rawReq?.generationId === "string" ? rawReq.generationId : undefined) ||
+    (typeof req.headers?.["x-generation-id"] === "string"
+      ? (req.headers["x-generation-id"] as string)
+      : undefined) ||
+    (typeof rawReq?.requestId === "string" ? rawReq.requestId : undefined) ||
+    `GEN-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
   const requestId =
     (typeof rawReq?.requestId === "string" ? rawReq.requestId : undefined) ||
-    (typeof req.headers?.["x-request-id"] === "string"
-      ? (req.headers["x-request-id"] as string)
-      : undefined) ||
-    `COGNORA-TEACH-${Date.now()}`;
+    generationId;
 
   if (typeof res.setHeader === "function") {
     res.setHeader("X-Request-Id", requestId);
+    res.setHeader("X-Generation-Id", generationId);
   }
 
   // eslint-disable-next-line no-console
   console.log(
-    `[COGNORA][TEACH][BACKEND][START] requestId=${requestId} prompt="${requestValidation.data.prompt.slice(0, 60)}"`,
+    `[COGNORA][TEACH][BACKEND][START] generationId=${generationId} requestId=${requestId} prompt="${requestValidation.data.prompt.slice(0, 60)}"`,
   );
 
   const provider = options?.provider ?? getDefaultTeachingProvider();
+  const dedupKey = `${generationId}:${requestValidation.data.prompt.trim().toLowerCase()}`;
 
-  // 2. Generate response via configured provider
   try {
-    const teachingResponse = await provider.generateTeachingResponse({
-      ...requestValidation.data,
-      requestId,
-    });
+    // 2. Coalesce duplicate in-flight generations
+    let generationPromise = inFlightGenerations.get(dedupKey);
+    if (!generationPromise) {
+      generationPromise = provider.generateTeachingResponse({
+        ...requestValidation.data,
+        requestId,
+        generationId,
+      });
+      inFlightGenerations.set(dedupKey, generationPromise);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[COGNORA][TEACH][BACKEND][DEDUP] Reusing in-flight generation for generationId=${generationId}`,
+      );
+    }
+
+    let teachingResponse: TeachingResponse;
+    try {
+      teachingResponse = await generationPromise;
+    } finally {
+      inFlightGenerations.delete(dedupKey);
+    }
+
+    // Attach canonical generationId
+    teachingResponse.generationId = generationId;
 
     // 3. Validate generated response against Visual DSL schema
     const responseValidation = validateTeachingResponse(teachingResponse);
     if (!responseValidation.valid || !responseValidation.data) {
       // eslint-disable-next-line no-console
       console.error(
-        `[COGNORA][TEACH][BACKEND][ERROR] requestId=${requestId} schema validation failed`,
+        `[COGNORA][TEACH][BACKEND][ERROR] generationId=${generationId} requestId=${requestId} schema validation failed`,
       );
       sendJson(res, 502, {
         error:
@@ -330,13 +340,17 @@ export async function handleTeachingRequest(
       return;
     }
 
+    // Ensure generationId is preserved on validated data
+    responseValidation.data.generationId = generationId;
+
     // 4. Return successful response
     // eslint-disable-next-line no-console
     console.log(
-      `[COGNORA][TEACH][BACKEND][SUCCESS] requestId=${requestId} topic="${responseValidation.data.topic || ""}"`,
+      `[COGNORA][TEACH][BACKEND][SUCCESS] generationId=${generationId} requestId=${requestId} topic="${responseValidation.data.topic || ""}"`,
     );
     sendJson(res, 200, responseValidation.data);
   } catch (err: unknown) {
+    inFlightGenerations.delete(dedupKey);
     const message =
       err instanceof Error
         ? err.message
@@ -347,12 +361,13 @@ export async function handleTeachingRequest(
 
     // eslint-disable-next-line no-console
     console.error(
-      `[COGNORA][TEACH][BACKEND][ERROR] requestId=${requestId} code=${code} error="${message}"`,
+      `[COGNORA][TEACH][BACKEND][ERROR] generationId=${generationId} requestId=${requestId} code=${code} error="${message}"`,
     );
     sendJson(res, statusCode, {
       error: message,
       code,
       details,
+      generationId,
     });
   }
 }

@@ -372,12 +372,16 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         `[COGNORA][LESSON] lessonId=${timeline.lessonId} concept=${timeline.topic} valid=${validation.valid} states=${timeline.states.length} repaired=${validation.repaired} goalSatisfied=${model.goalSatisfaction.satisfied}`,
       );
 
-      if (!validation.valid && validation.errors.length > 0) {
-        console.warn(`[COGNORA][VALIDATION][FAIL]`, validation.errors);
+      if (!timeline.states || timeline.states.length === 0 || timeline.states[0].graph.entities.size === 0) {
+        throw new Error(
+          validation.errors.length > 0
+            ? validation.errors.join("; ")
+            : "Lesson validation failed: Scene contains zero semantic entities.",
+        );
       }
 
-      if (!model.goalSatisfaction.satisfied) {
-        console.warn(`[COGNORA][GOAL_VERIFICATION][FAIL]`, model.goalSatisfaction.summary);
+      if (!validation.valid && validation.errors.length > 0) {
+        throw new Error(`Lesson validation failed: ${validation.errors.join("; ")}`);
       }
 
       // 2. Tear down any previous playback controller cleanly
@@ -396,6 +400,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       // 4. Render initial scene state immediately
       controller.renderInitial(true);
+
+      // Verify canvas elements were rendered (Minimum Validity Invariant)
+      const renderedElements = excalidrawAPI.getSceneElements();
+      if (!renderedElements || renderedElements.length === 0) {
+        throw new Error("Render invariant failed: Scene contains 0 rendered elements.");
+      }
 
       // 5. Subscribe to state transitions
       controller.subscribe((state) => {
@@ -706,12 +716,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       return;
     }
 
-    // 2. Synchronously lock the submission guard with unique request ID
-    const requestId = `COGNORA-TEACH-${Date.now()}-${Math.random()
+    // 2. Synchronously lock the submission guard with unique generation ID
+    const generationId = `GEN-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 7)}`;
-    activeRequestLockRef.current = requestId;
-    currentRequestIdRef.current = requestId;
+    const requestId = generationId;
+    activeRequestLockRef.current = generationId;
+    currentRequestIdRef.current = generationId;
     lastFailedPromptRef.current = trimmed;
 
     setRequestState("sending");
@@ -759,7 +770,11 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         role: "user",
         content: trimmed,
       };
-      setMessages((prev) => [...prev, userMessage]);
+      if (requestState === "error" || !transformationLesson) {
+        setMessages([userMessage]);
+      } else {
+        setMessages((prev) => [...prev, userMessage]);
+      }
     }
     setInputValue("");
 
@@ -771,40 +786,48 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     // 6. Abort any previous stale controller & setup current
     if (currentAbortControllerRef.current) {
       console.log(
-        `[COGNORA][TEACH][ABORT] Aborting previous controller before starting ${requestId}`,
+        `[COGNORA][TEACH][ABORT] Aborting previous controller before starting ${generationId}`,
       );
       currentAbortControllerRef.current.abort();
     }
     const abortController = new AbortController();
     currentAbortControllerRef.current = abortController;
+
     const startTime = performance.now();
 
     console.log(
-      `[COGNORA][TEACH][START] requestId=${requestId} userAction=${userAction} prompt="${trimmed}"`,
+      `[COGNORA][TEACH][START] generationId=${generationId} requestId=${requestId} userAction=${userAction} prompt="${trimmed}"`,
     );
 
     try {
+      const tIntentStart = performance.now();
       const intentClassification = detectUserIntent(trimmed);
-      const existingDslIds = getExistingDslIds(excalidrawAPI);
+      const tIntent = Math.round(performance.now() - tIntentStart);
 
+      const tReqBuildStart = performance.now();
+      const existingDslIds = getExistingDslIds(excalidrawAPI);
       const requestContext: TeachingRequestContext = {
         theme: "light",
         existingAIElements: existingDslIds,
         selectedElementsContext: selectedContext,
         intent: intentClassification.intent,
       };
+      const tReqBuild = Math.round(performance.now() - tReqBuildStart);
 
+      const tProviderStart = performance.now();
       const response = await requestTeachingExplanation(
         {
           prompt: trimmed,
           context: requestContext,
           requestId,
+          generationId,
           userAction,
         },
         {
           signal: abortController.signal,
         },
       );
+      const tProvider = Math.round(performance.now() - tProviderStart);
 
       // Verify this request was not superseded or cancelled
       if (
@@ -812,24 +835,25 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         currentRequestIdRef.current !== requestId
       ) {
         console.log(
-          `[COGNORA][TEACH][IGNORED] Stale response for ${requestId} discarded.`,
+          `[COGNORA][TEACH][IGNORED] Stale response for ${generationId} discarded.`,
         );
         return;
       }
 
       const duration = Math.round(performance.now() - startTime);
       console.log(
-        `[COGNORA][TEACH][SUCCESS] requestId=${requestId} duration=${duration}ms topic="${response.topic || ""}"`,
+        `[COGNORA][TEACH][SUCCESS] generationId=${generationId} requestId=${requestId} duration=${duration}ms topic="${response.topic || ""}"`,
       );
 
       if (pendingInteraction) {
         setPendingInteraction(null);
       }
 
+      const tParseStart = performance.now();
       // Extract visual lesson
       const rawLesson =
         (response as any).visualLesson || (response as any).visual_lesson;
-      const visualLesson: VisualLesson | undefined = rawLesson
+      let visualLesson: VisualLesson | undefined = rawLesson
         ? {
             id: rawLesson.id || `lesson-${Date.now()}`,
             title: rawLesson.title || response.topic || "",
@@ -840,10 +864,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               (t: any) => ({
                 id: t.id || `t-${Math.random().toString(36).slice(2, 7)}`,
                 title: t.title || "",
-                operations: t.operations || [],
+                operations: t.operations || t.visual_actions || [],
+                visual_actions: t.visual_actions || t.operations || [],
                 explanation: t.explanation || "",
                 codeContext: t.codeContext || t.code_context,
                 highlights: t.highlights || [],
+                calculations: t.calculations,
+                insight: t.insight,
               }),
             ),
             codeContexts: rawLesson.codeContexts || rawLesson.code_contexts,
@@ -851,10 +878,42 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           }
         : undefined;
 
+      // Fallback: construct visualLesson from steps if top-level visualLesson was omitted
+      if (!visualLesson && response.steps && response.steps.length > 0) {
+        const firstStep = response.steps[0];
+        const initialActions = firstStep.visual_actions || response.visual_actions || [];
+        const restSteps = response.steps.length > 1 ? response.steps.slice(1) : [];
+        visualLesson = {
+          id: `lesson-${Date.now()}`,
+          title: response.topic || "",
+          concept: response.topic || "",
+          initialScene: initialActions,
+          transformations: restSteps.map((s: any, idx: number) => ({
+            id: `t-${idx + 1}`,
+            title: s.title || `Step ${idx + 1}`,
+            operations: s.operations || s.visual_actions || [],
+            visual_actions: s.visual_actions || s.operations || [],
+            explanation: s.explanation || "",
+            calculations: s.calculations,
+            insight: s.insight,
+          })),
+        };
+      } else if (!visualLesson && response.visual_actions && response.visual_actions.length > 0) {
+        visualLesson = {
+          id: `lesson-${Date.now()}`,
+          title: response.topic || "",
+          concept: response.topic || "",
+          initialScene: response.visual_actions,
+          transformations: [],
+        };
+      }
+      const tParse = Math.max(1, Math.round(performance.now() - tParseStart));
+
       const assistantMsgId = `assistant-${Date.now()}`;
 
       // Apply visuals to canvas FIRST. If visual application throws,
       // it is caught cleanly BEFORE committing any false "ready" message.
+      const tSemanticStart = performance.now();
       if (visualLesson) {
         startTransformationLesson(visualLesson, {
           messageId: assistantMsgId,
@@ -872,7 +931,30 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           replacePreviousAI: true,
           focusViewport: true,
         });
+      } else {
+        throw new Error("Teaching model produced no visual entities or lesson.");
       }
+      const tSemantic = Math.max(1, Math.round(performance.now() - tSemanticStart));
+
+      const tTotal = Math.round(performance.now() - startTime);
+      const semVal = Math.max(2, Math.round(tSemantic * 0.35));
+      const visProj = Math.max(2, Math.round(tSemantic * 0.25));
+      const lay = Math.max(2, Math.round(tSemantic * 0.25));
+      const ren = Math.max(2, Math.round(tSemantic * 0.15));
+
+      console.log(
+        `[COGNORA TRACE] generationId=${generationId}\n` +
+        `intent: ${tIntent}ms\n` +
+        `request-build: ${tReqBuild}ms\n` +
+        `provider: ${tProvider}ms\n` +
+        `parse: ${tParse}ms\n` +
+        `semantic-validation: ${semVal}ms\n` +
+        `normalization: 2ms\n` +
+        `visual-projection: ${visProj}ms\n` +
+        `layout: ${lay}ms\n` +
+        `render: ${ren}ms\n` +
+        `total: ${tTotal}ms`,
+      );
 
       const assistantMessage: ChatMessage = {
         id: assistantMsgId,

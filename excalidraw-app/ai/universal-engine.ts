@@ -39,6 +39,7 @@ import { ComparisonEngine, type SemanticComparisonReport } from "./comparison-en
 import { VisualSemanticValidator } from "./visual-semantic-validator";
 import { type VisualLesson, type VisualAction, type Transformation } from "./visual-dsl";
 import { compileAuthoritativeTimeline, type CompiledTimeline } from "./transformation-timeline";
+import { createSceneGraphFromActions } from "./scene-state";
 
 export class UniversalConceptIntelligenceEngine {
   /**
@@ -52,6 +53,10 @@ export class UniversalConceptIntelligenceEngine {
       entities?: Entity[];
       relationships?: Relationship[];
       visual_actions?: VisualAction[];
+      initialScene?: VisualAction[];
+      initial_scene?: VisualAction[];
+      visualLesson?: VisualLesson;
+      visual_lesson?: VisualLesson;
       steps?: Array<{
         title: string;
         explanation: string;
@@ -74,34 +79,66 @@ export class UniversalConceptIntelligenceEngine {
     const understanding = understandQuestion(prompt);
 
     // 2. Formalize the Problem
-    const candidateEntities: Entity[] = rawProposal?.entities || [];
-    const candidateRelationships: Relationship[] = rawProposal?.relationships || [];
+    const candidateEntities: Entity[] = [...(rawProposal?.entities || [])];
+    const candidateRelationships: Relationship[] = [...(rawProposal?.relationships || [])];
 
-    // If no explicit semantic entities were provided in raw proposal, extract them from visual actions
-    if (candidateEntities.length === 0 && rawProposal?.visual_actions) {
-      for (const act of rawProposal.visual_actions) {
-        if ("id" in act && typeof act.id === "string") {
-          const label = ("label" in act && typeof act.label === "string" ? act.label : act.id) || act.id;
-          candidateEntities.push({
-            id: act.id,
-            type: act.type.replace("create_", ""),
-            label,
-            properties: {},
-            semanticRole: "component",
-          });
+    // Identify all sources of initial visual actions
+    const initialActions: VisualAction[] =
+      rawProposal?.visual_actions ||
+      (rawProposal as any)?.initialScene ||
+      (rawProposal as any)?.initial_scene ||
+      (rawProposal as any)?.visualLesson?.initialScene ||
+      (rawProposal as any)?.visualLesson?.initial_scene ||
+      (rawProposal as any)?.steps?.[0]?.visual_actions ||
+      [];
+
+    // If no explicit semantic entities were provided in raw proposal, extract them universally from visual actions
+    if (candidateEntities.length === 0 && initialActions.length > 0) {
+      const parsedGraph = createSceneGraphFromActions(initialActions);
+      for (const ent of parsedGraph.entities.values()) {
+        candidateEntities.push({
+          id: ent.id,
+          type: ent.primitiveType || "GenericEntity",
+          label: ent.label || ent.id,
+          properties: ent.properties as any,
+          state: ent.state,
+          value: ent.value,
+          semanticRole: ent.semanticRole || "component",
+        });
+      }
+      for (const rel of parsedGraph.relationships.values()) {
+        candidateRelationships.push({
+          id: rel.id,
+          source: rel.sourceEntityId,
+          target: rel.targetEntityId,
+          type: rel.type || "connects",
+          direction: (rel.properties?.directed !== false) ? "forward" : "none",
+          label: rel.label,
+          properties: rel.properties || {},
+        });
+      }
+
+      // Universal fallback for any action with an id not captured by scene graph
+      for (const act of initialActions) {
+        if ("id" in act && typeof (act as any).id === "string") {
+          const actId = (act as any).id;
+          if (!candidateEntities.some((e) => e.id === actId)) {
+            const label =
+              ("label" in act && typeof (act as any).label === "string"
+                ? (act as any).label
+                : "text" in act && typeof (act as any).text === "string"
+                ? (act as any).text
+                : actId) || actId;
+            candidateEntities.push({
+              id: actId,
+              type: act.type.replace("create_", ""),
+              label,
+              properties: (act as any).style || {},
+              semanticRole: (act as any).role || "component",
+            });
+          }
         }
       }
-    }
-
-    // Ensure at least one baseline entity exists
-    if (candidateEntities.length === 0) {
-      candidateEntities.push({
-        id: "concept-core",
-        type: "ConceptComponent",
-        label: understanding.concept,
-        properties: {},
-        semanticRole: "focus",
-      });
     }
 
     const problem = formalizeProblem(understanding, {
@@ -128,7 +165,12 @@ export class UniversalConceptIntelligenceEngine {
     const rawTransformations: AuthoritativeTransformation[] = [];
 
     // If steps or transformations exist, map them into semantic states
-    const rawSteps = rawProposal?.steps || rawProposal?.transformations || [];
+    const rawSteps =
+      rawProposal?.steps ||
+      rawProposal?.transformations ||
+      (rawProposal as any)?.visualLesson?.transformations ||
+      (rawProposal as any)?.visual_lesson?.transformations ||
+      [];
 
     let currentState = initialSemanticState;
     for (let i = 0; i < rawSteps.length; i++) {
@@ -148,118 +190,133 @@ export class UniversalConceptIntelligenceEngine {
       // Mark affected entities from operations and visual actions
       const affectedEntities: string[] = [];
 
-      // 1. Process explicit semantic operations
-      if (s.operations && s.operations.length > 0) {
-        for (const op of s.operations) {
-          if (typeof op === "object" && op !== null) {
-            if (op.type === "update" || op.type === "update_entity" || op.type === "UPDATE_ENTITY") {
-              const tgt = op.target || op.entityId || op.id;
-              const existing = nextEntities.get(tgt);
-              if (existing) {
-                nextEntities.set(tgt, {
-                  ...existing,
-                  label: op.label ?? op.name ?? existing.label,
-                  value: op.value ?? existing.value,
-                  state: op.state ?? existing.state,
-                  properties: {
-                    ...existing.properties,
-                    ...(op.properties || {}),
-                    highlight: op.style?.color ?? op.properties?.highlight ?? existing.properties?.highlight,
-                  },
-                });
-                affectedEntities.push(tgt);
-              }
-            } else if (op.type === "connect" || op.type === "connect_relation" || op.type === "CONNECT_ENTITIES") {
-              const relId = op.id || `rel-${op.source || op.from}-${op.target || op.to}-${Math.random().toString(36).slice(2, 6)}`;
-              const src = op.source || op.from;
-              const tgt = op.target || op.to;
-              if (src && tgt) {
-                nextRels.set(relId, {
-                  id: relId,
-                  source: src,
-                  target: tgt,
-                  type: op.relationType || op.type || "connects",
-                  direction: op.direction || "forward",
-                  label: op.label,
-                  properties: op.properties ? { ...op.properties } : undefined,
-                });
-                affectedEntities.push(src, tgt);
-              }
-            } else if (op.type === "disconnect" || op.type === "disconnect_relation" || op.type === "DISCONNECT_ENTITIES") {
-              if (op.id) {
-                nextRels.delete(op.id);
-              } else if (op.source && op.target) {
-                for (const [rid, r] of nextRels.entries()) {
-                  if (r.source === op.source && r.target === op.target) {
-                    nextRels.delete(rid);
-                  }
-                }
-              }
-            } else if (op.type === "create_entity" || op.type === "ADD_ENTITY") {
-              const entId = op.id || op.entity?.id;
-              if (entId) {
-                nextEntities.set(entId, {
-                  id: entId,
-                  type: op.entityType || op.entity?.type || "GenericEntity",
-                  label: op.label || op.entity?.label || entId,
-                  value: op.value ?? op.entity?.value,
-                  properties: op.properties || op.entity?.properties || {},
-                });
-                affectedEntities.push(entId);
-              }
-            } else if (op.type === "delete_entity" || op.type === "REMOVE_ENTITY") {
-              const entId = op.entityId || op.id;
-              if (entId) {
-                nextEntities.delete(entId);
-                for (const [rid, r] of nextRels.entries()) {
-                  if (r.source === entId || r.target === entId) {
-                    nextRels.delete(rid);
-                  }
-                }
-                affectedEntities.push(entId);
+      // Combine operations and visual actions into a unified operational stream
+      const allOperations = [...(s.operations || []), ...(s.visual_actions || [])];
+      for (const op of allOperations) {
+        if (!op || typeof op !== "object") continue;
+        const opType = (op.type || "").toLowerCase();
+
+        if (
+          opType === "update" ||
+          opType === "update_entity" ||
+          opType === "update_node"
+        ) {
+          const tgt = op.target || op.entityId || op.id || (op as any).nodeId;
+          const existing = nextEntities.get(tgt);
+          if (existing) {
+            nextEntities.set(tgt, {
+              ...existing,
+              label: op.label ?? op.name ?? existing.label,
+              value: op.value ?? existing.value,
+              state: op.state ?? existing.state,
+              properties: {
+                ...existing.properties,
+                ...(op.properties || {}),
+                color: op.color ?? op.style?.color ?? existing.properties?.color,
+                highlight:
+                  op.style?.color ??
+                  op.properties?.highlight ??
+                  op.highlight ??
+                  existing.properties?.highlight,
+              },
+            });
+            affectedEntities.push(tgt);
+          }
+        } else if (opType === "highlight") {
+          const tgt = op.target || op.entityId || op.id;
+          const existing = nextEntities.get(tgt);
+          if (existing) {
+            existing.properties.highlight = op.color || op.highlight || "accent";
+            affectedEntities.push(tgt);
+          }
+        } else if (opType === "unhighlight") {
+          const tgt = op.target || op.entityId || op.id;
+          const existing = nextEntities.get(tgt);
+          if (existing) {
+            delete existing.properties.highlight;
+            affectedEntities.push(tgt);
+          }
+        } else if (
+          opType === "connect" ||
+          opType === "connect_relation" ||
+          opType === "connect_entities" ||
+          opType === "create_arrow" ||
+          opType === "create_edge"
+        ) {
+          const src = op.source || op.from;
+          const tgt = op.target || op.to;
+          if (src && tgt) {
+            const relId =
+              op.id || `rel-${src}-${tgt}-${Math.random().toString(36).slice(2, 6)}`;
+            nextRels.set(relId, {
+              id: relId,
+              source: src,
+              target: tgt,
+              type: op.relationType || op.role || op.type || "connects",
+              direction:
+                op.direction === "none" || op.directed === false
+                  ? "none"
+                  : op.direction || "forward",
+              label: op.label,
+              properties: {
+                ...(op.properties || {}),
+                color: op.color || op.style?.color,
+                highlight: op.highlight,
+              },
+            });
+            affectedEntities.push(src, tgt);
+          }
+        } else if (
+          opType === "disconnect" ||
+          opType === "disconnect_relation" ||
+          opType === "disconnect_entities" ||
+          opType === "delete_edge"
+        ) {
+          if (op.id) {
+            nextRels.delete(op.id);
+          } else if (op.source && op.target) {
+            for (const [rid, r] of nextRels.entries()) {
+              if (r.source === op.source && r.target === op.target) {
+                nextRels.delete(rid);
               }
             }
           }
-        }
-      }
-
-      // 2. Process visual actions
-      if (s.visual_actions) {
-        for (const act of s.visual_actions) {
-          if (act.type === "highlight" && (act as any).target) {
-            const tgt = (act as any).target;
-            affectedEntities.push(tgt);
-            const targetEnt = nextEntities.get(tgt);
-            if (targetEnt) {
-              targetEnt.properties.highlight = (act as any).color || "accent";
+        } else if (
+          opType === "create_entity" ||
+          opType === "add_entity" ||
+          opType === "create_box" ||
+          opType === "create_circle"
+        ) {
+          const entId = op.id || op.entity?.id;
+          if (entId) {
+            nextEntities.set(entId, {
+              id: entId,
+              type:
+                op.entityType ||
+                op.entity?.type ||
+                (opType === "create_circle" ? "CircleEntity" : "GenericEntity"),
+              label: op.label || op.entity?.label || entId,
+              value: op.value ?? op.entity?.value,
+              properties: op.properties || op.entity?.properties || op.style || {},
+              semanticRole: op.role || op.semanticRole || "component",
+            });
+            affectedEntities.push(entId);
+          }
+        } else if (
+          opType === "delete_entity" ||
+          opType === "remove_entity" ||
+          opType === "delete" ||
+          opType === "delete_node"
+        ) {
+          const entId = op.entityId || op.id || op.target;
+          if (entId) {
+            nextEntities.delete(entId);
+            for (const [rid, r] of nextRels.entries()) {
+              if (r.source === entId || r.target === entId) {
+                nextRels.delete(rid);
+              }
             }
-          } else if (act.type === "update" || (act as any).type === "update_node") {
-            const tgt = (act as any).id || (act as any).target;
-            const targetEnt = nextEntities.get(tgt);
-            if (targetEnt) {
-              if ((act as any).label !== undefined) targetEnt.label = (act as any).label;
-              if ((act as any).value !== undefined) targetEnt.value = (act as any).value;
-              if ((act as any).color) targetEnt.properties.color = (act as any).color;
-              affectedEntities.push(tgt);
-            }
-          } else if (act.type === "connect" || (act as any).type === "create_edge" || (act as any).type === "create_arrow") {
-            const src = (act as any).from || (act as any).source;
-            const tgt = (act as any).to || (act as any).target;
-            if (src && tgt) {
-              const relId = (act as any).id || `rel-${src}-${tgt}`;
-              nextRels.set(relId, {
-                id: relId,
-                source: src,
-                target: tgt,
-                type: (act as any).relationType || "connects",
-                direction: "forward",
-                label: (act as any).label,
-              });
-              affectedEntities.push(src, tgt);
-            }
-          } else if (act.type === "disconnect" || (act as any).type === "delete_edge") {
-            const relId = (act as any).id;
-            if (relId) nextRels.delete(relId);
+            affectedEntities.push(entId);
           }
         }
       }
@@ -360,14 +417,15 @@ export class UniversalConceptIntelligenceEngine {
       title: understanding.concept,
       concept: understanding.concept,
       topic: understanding.concept,
-      initialScene: rawProposal?.visual_actions || [
-        {
-          type: "create_box",
-          id: candidateEntities[0].id,
-          label: candidateEntities[0].label,
-          role: (candidateEntities[0].semanticRole as any) || "component",
-        },
-      ],
+      initialScene:
+        initialActions.length > 0
+          ? initialActions
+          : candidateEntities.map((e) => ({
+              type: "create_box" as const,
+              id: e.id,
+              label: e.label,
+              role: (e.semanticRole as any) || "component",
+            })),
       transformations: model.transformations.map((t, idx) => {
         const matchingStep = rawSteps[idx];
         return {

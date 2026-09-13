@@ -360,10 +360,11 @@ function applyOperationToGraph(
     }
 
     case "connect":
+    case "create_arrow":
     case "ADD_RELATIONSHIP": {
       const rel = anyOp.relationship || anyOp;
-      const from = rel.from || rel.sourceEntityId;
-      const to = rel.to || rel.targetEntityId;
+      const from = rel.from || rel.sourceEntityId || rel.source;
+      const to = rel.to || rel.targetEntityId || rel.target;
       const relId = rel.id || `edge-${from}-${to}`;
       addRelationship(graph, {
         id: relId,

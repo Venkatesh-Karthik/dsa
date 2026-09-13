@@ -746,6 +746,40 @@ export class MockTeachingProvider implements TeachingProvider {
     return {
       message: `Here is a visual conceptual breakdown for "${request.prompt}". The visual diagram shows the core components and relational linkages.`,
       visual_actions,
+      visualLesson: {
+        id: `lesson-${Date.now()}`,
+        title: request.prompt,
+        initialScene: visual_actions,
+        transformations: [
+          {
+            id: "step-1",
+            title: "Component Interaction & Flow",
+            explanation: `Initial excitation and signaling between the core entities for "${request.prompt}".`,
+            operations: [
+              {
+                type: "highlight",
+                target: "concept-detail-a",
+                color: "primary",
+                message: "Active processing state",
+              },
+            ],
+          },
+          {
+            id: "step-2",
+            title: "Relational Transition",
+            explanation: `State propagation completes and verifies equilibrium across all components.`,
+            operations: [
+              {
+                type: "highlight",
+                target: "concept-detail-b",
+                color: "success",
+                message: "Target state reached",
+              },
+            ],
+          },
+        ],
+        capabilities: ["explain", "code", "analyze", "practice"],
+      },
       topic: request.prompt,
       explanation_steps: [
         `Understand the central concept: ${request.prompt}`,

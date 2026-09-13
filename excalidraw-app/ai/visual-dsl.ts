@@ -569,6 +569,8 @@ export interface TeachingResponse {
   explanation_steps?: string[];
   /** Optional data structure domain hint */
   domain?: DataStructureMetadata;
+  /** Unique generation ID identifying this specific generation lifecycle */
+  generationId?: string;
 }
 
 export interface VisualLesson {

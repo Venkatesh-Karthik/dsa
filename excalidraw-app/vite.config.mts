@@ -20,19 +20,8 @@ export default defineConfig(({ mode }) => {
   const localEnvVars = loadEnv(mode, __dirname, "");
   const combinedEnv = { ...rootEnvVars, ...localEnvVars };
 
-  if (combinedEnv.OPENROUTER_API_KEY && !process.env.OPENROUTER_API_KEY) {
-    process.env.OPENROUTER_API_KEY = combinedEnv.OPENROUTER_API_KEY;
-  }
-  if (combinedEnv.OPENROUTER_MODEL && !process.env.OPENROUTER_MODEL) {
-    process.env.OPENROUTER_MODEL = combinedEnv.OPENROUTER_MODEL;
-  } else if (!process.env.OPENROUTER_MODEL) {
-    process.env.OPENROUTER_MODEL = "z-ai/glm-5.3-flash";
-  }
   if (combinedEnv.COGNORA_TEACH_MAX_TOKENS && !process.env.COGNORA_TEACH_MAX_TOKENS) {
     process.env.COGNORA_TEACH_MAX_TOKENS = combinedEnv.COGNORA_TEACH_MAX_TOKENS;
-  }
-  if (combinedEnv.OPENROUTER_MAX_TOKENS && !process.env.OPENROUTER_MAX_TOKENS) {
-    process.env.OPENROUTER_MAX_TOKENS = combinedEnv.OPENROUTER_MAX_TOKENS;
   }
   if (combinedEnv.NVIDIA_API_KEY && !process.env.NVIDIA_API_KEY) {
     process.env.NVIDIA_API_KEY = combinedEnv.NVIDIA_API_KEY;
@@ -218,6 +207,7 @@ export default defineConfig(({ mode }) => {
       svgrPlugin(),
       ViteEjsPlugin(),
       VitePWA({
+        showMaximumFileSizeToCacheInBytesWarning: true,
         registerType: "autoUpdate",
         devOptions: {
           /* set this flag to true to enable in Development mode */
@@ -225,6 +215,7 @@ export default defineConfig(({ mode }) => {
         },
 
         workbox: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           // don't precache fonts, locales and separate chunks
           globIgnores: [
             "fonts.css",
@@ -286,7 +277,6 @@ export default defineConfig(({ mode }) => {
               },
             },
           ],
-          maximumFileSizeToCacheInBytes: 2.3 * 1024 ** 2, // 2.3MB
         },
         manifest: {
           short_name: "Excalidraw",

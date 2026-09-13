@@ -41,6 +41,11 @@ export async function requestTeachingExplanation(
     if (request.requestId) {
       headers["X-Request-Id"] = request.requestId;
     }
+    if (request.generationId) {
+      headers["X-Generation-Id"] = request.generationId;
+    } else if (request.requestId) {
+      headers["X-Generation-Id"] = request.requestId;
+    }
 
     const response = await fetch(TEACHING_API_ENDPOINT, {
       method: "POST",

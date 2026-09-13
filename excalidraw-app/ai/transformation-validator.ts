@@ -581,6 +581,15 @@ export function validateTransformationTimeline(
   const initialGraph = timeline.states[0].graph;
   if (initialGraph.entities.size === 0) {
     errors.push("Initial scene contains no semantic entities.");
+  } else if (
+    initialGraph.entities.size === 1 &&
+    timeline.states.length <= 1 &&
+    (Array.from(initialGraph.entities.values())[0].id.toLowerCase().includes("title") ||
+      Array.from(initialGraph.entities.values())[0].semanticRole === "title")
+  ) {
+    errors.push(
+      "Scene contains only a title element with no semantic model or transformations.",
+    );
   }
 
   // 2. Relationship reference integrity

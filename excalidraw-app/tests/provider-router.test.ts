@@ -50,7 +50,7 @@ describe("ProviderRouter", () => {
       expect(isRecoverableProviderError(new ProviderRateLimitError("Rate limited", "nvidia"))).toBe(true);
       expect(
         isRecoverableProviderError(
-          new ProviderCreditCapacityError("insufficient credits", { limitSource: "openrouter" }, "openrouter"),
+          new ProviderCreditCapacityError("insufficient credits", { limitSource: "nvidia" }, "nvidia"),
         ),
       ).toBe(true);
       expect(isRecoverableProviderError(new ProviderTimeoutError(35000, "nvidia"))).toBe(true);
@@ -69,226 +69,35 @@ describe("ProviderRouter", () => {
   });
 
   describe("Single Dispatch Workflow", () => {
-    it("calls primary provider only when primary succeeds", async () => {
-      const primaryMock: AIProvider = {
+    it("fails directly when primary encounters ProviderRateLimitError", async () => {
+      const { ProviderRouter } = await import("../ai/backend/provider-router");
+      const primaryMock = {
         id: "mock-primary",
         name: "Mock Primary",
         isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(PRIMARY_MOCK_RESPONSE),
+        generateTeachingLesson: vi.fn().mockRejectedValue(new ProviderRateLimitError("Rate limited", "nvidia")),
       };
+      
+      const router = new ProviderRouter({ primaryProvider: primaryMock });
+      const req = { prompt: "test rate limit", lessonType: "conceptual" };
 
-      const fallbackMock: AIProvider = {
-        id: "mock-fallback",
-        name: "Mock Fallback",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(FALLBACK_MOCK_RESPONSE),
-      };
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: fallbackMock,
-      });
-
-      const request: TeachingRequest = {
-        prompt: "Explain Quicksort",
-        requestId: "req-single-dispatch",
-      };
-
-      const result = await router.generateTeachingLesson(request);
-
-      expect(result).toBe(PRIMARY_MOCK_RESPONSE);
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(fallbackMock.generateTeachingLesson).not.toHaveBeenCalled();
+      await expect(router.generateTeachingLesson(req)).rejects.toThrow(ProviderRateLimitError);
     });
 
-    it("fails over to fallback when primary encounters ProviderRateLimitError", async () => {
-      const primaryMock: AIProvider = {
-        id: "mock-primary",
-        name: "Mock Primary",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockRejectedValue(new ProviderRateLimitError("Rate limited", "mock-primary")),
-      };
-
-      const fallbackMock: AIProvider = {
-        id: "mock-fallback",
-        name: "Mock Fallback",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(FALLBACK_MOCK_RESPONSE),
-      };
-
-      const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: fallbackMock,
-      });
-
-      const request: TeachingRequest = {
-        prompt: "Explain Quicksort",
-        requestId: "req-rate-limit-failover",
-      };
-
-      const result = await router.generateTeachingLesson(request);
-
-      expect(result).toBe(FALLBACK_MOCK_RESPONSE);
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(fallbackMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("[COGNORA][AI][FALLBACK]"),
-      );
-    });
-
-    it("fails over to fallback when primary encounters ProviderCreditCapacityError", async () => {
-      const primaryMock: AIProvider = {
+    it("fails directly when primary encounters ProviderCreditCapacityError", async () => {
+      const { ProviderRouter } = await import("../ai/backend/provider-router");
+      const primaryMock = {
         id: "mock-primary",
         name: "Mock Primary",
         isConfigured: () => true,
         generateTeachingLesson: vi.fn().mockRejectedValue(
-          new ProviderCreditCapacityError("Credit limit reached", undefined, "mock-primary"),
+          new ProviderCreditCapacityError("Credit limit reached", undefined, "nvidia")
         ),
       };
+      const router = new ProviderRouter({ primaryProvider: primaryMock });
+      const req = { prompt: "test capacity", lessonType: "conceptual" };
 
-      const fallbackMock: AIProvider = {
-        id: "mock-fallback",
-        name: "Mock Fallback",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(FALLBACK_MOCK_RESPONSE),
-      };
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: fallbackMock,
-      });
-
-      const result = await router.generateTeachingLesson({
-        prompt: "Explain Merge Sort",
-        requestId: "req-credit-failover",
-      });
-
-      expect(result).toBe(FALLBACK_MOCK_RESPONSE);
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(fallbackMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-    });
-
-    it("fails over to fallback when primary encounters ProviderTimeoutError", async () => {
-      const primaryMock: AIProvider = {
-        id: "mock-primary",
-        name: "Mock Primary",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockRejectedValue(new ProviderTimeoutError(35000, "mock-primary")),
-      };
-
-      const fallbackMock: AIProvider = {
-        id: "mock-fallback",
-        name: "Mock Fallback",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(FALLBACK_MOCK_RESPONSE),
-      };
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: fallbackMock,
-      });
-
-      const result = await router.generateTeachingLesson({
-        prompt: "Explain Merge Sort",
-        requestId: "req-timeout-failover",
-      });
-
-      expect(result).toBe(FALLBACK_MOCK_RESPONSE);
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(fallbackMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-    });
-
-    it("NEVER falls over on ProviderSchemaError (malformed DSL/contract error)", async () => {
-      const primaryMock: AIProvider = {
-        id: "mock-primary",
-        name: "Mock Primary",
-        isConfigured: () => true,
-        generateTeachingLesson: vi
-          .fn()
-          .mockRejectedValue(new ProviderSchemaError("Missing canvas actions", ["Missing actions"], "mock-primary")),
-      };
-
-      const fallbackMock: AIProvider = {
-        id: "mock-fallback",
-        name: "Mock Fallback",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(FALLBACK_MOCK_RESPONSE),
-      };
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: fallbackMock,
-      });
-
-      await expect(
-        router.generateTeachingLesson({
-          prompt: "Explain Binary Search Tree",
-          requestId: "req-schema-no-failover",
-        }),
-      ).rejects.toThrow(ProviderSchemaError);
-
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(fallbackMock.generateTeachingLesson).not.toHaveBeenCalled();
-    });
-
-    it("NEVER falls over on non-recoverable ProviderAuthenticationError", async () => {
-      const primaryMock: AIProvider = {
-        id: "mock-primary",
-        name: "Mock Primary",
-        isConfigured: () => true,
-        generateTeachingLesson: vi
-          .fn()
-          .mockRejectedValue(new ProviderAuthenticationError("Invalid credentials", "mock-primary")),
-      };
-
-      const fallbackMock: AIProvider = {
-        id: "mock-fallback",
-        name: "Mock Fallback",
-        isConfigured: () => true,
-        generateTeachingLesson: vi.fn().mockResolvedValue(FALLBACK_MOCK_RESPONSE),
-      };
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: fallbackMock,
-      });
-
-      await expect(
-        router.generateTeachingLesson({
-          prompt: "Explain DFS",
-          requestId: "req-auth-no-failover",
-        }),
-      ).rejects.toThrow(ProviderAuthenticationError);
-
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
-      expect(fallbackMock.generateTeachingLesson).not.toHaveBeenCalled();
-    });
-
-    it("throws primary error directly if fallback is disabled or null", async () => {
-      const primaryMock: AIProvider = {
-        id: "mock-primary",
-        name: "Mock Primary",
-        isConfigured: () => true,
-        generateTeachingLesson: vi
-          .fn()
-          .mockRejectedValue(new ProviderRateLimitError("Rate limit exceeded", "mock-primary")),
-      };
-
-      const router = new ProviderRouter({
-        primaryProvider: primaryMock,
-        fallbackProvider: null as unknown as AIProvider,
-      });
-
-      await expect(
-        router.generateTeachingLesson({
-          prompt: "Explain BFS",
-          requestId: "req-no-fallback",
-        }),
-      ).rejects.toThrow(ProviderRateLimitError);
-
-      expect(primaryMock.generateTeachingLesson).toHaveBeenCalledTimes(1);
+      await expect(router.generateTeachingLesson(req)).rejects.toThrow(ProviderCreditCapacityError);
     });
   });
 });

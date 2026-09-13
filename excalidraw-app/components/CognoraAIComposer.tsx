@@ -439,7 +439,7 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
               type="button"
               className="cognora-ai-composer__suggestion-pill"
               onClick={() => onSuggestionClick?.(sug)}
-              disabled={isLoading}
+              disabled={isLoading || isSubmittingRef.current}
             >
               {sug}
             </button>

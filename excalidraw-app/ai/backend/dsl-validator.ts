@@ -22,6 +22,9 @@ const VALID_ACTION_TYPES = new Set<string>([
   "create_text",
   "create_circle",
   "create_arrow",
+  "connect",
+  "disconnect",
+  "update",
   "create_array",
   "create_linked_list",
   "create_stack",
@@ -631,6 +634,28 @@ export function normalizeVisualAction(action: unknown): unknown {
   }
   const act = { ...(action as Record<string, unknown>) };
 
+  // Convert connect -> create_arrow
+  if (act.type === "connect") {
+    act.type = "create_arrow";
+    act.from = act.from || act.source || "";
+    act.to = act.to || act.target || "";
+    act.id = act.id || `arrow-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  // Convert disconnect -> delete
+  if (act.type === "disconnect") {
+    act.type = "delete";
+    act.target = act.target || act.id || "";
+  }
+
+  // Convert update -> highlight with state / label message
+  if (act.type === "update") {
+    act.type = "highlight";
+    act.target = act.target || act.id || "";
+    act.color = act.color || "primary";
+    act.message = act.state || act.label || "";
+  }
+
   // Normalize style
   if (act.style && typeof act.style === "object" && !Array.isArray(act.style)) {
     const st = { ...(act.style as Record<string, unknown>) };
@@ -1073,6 +1098,26 @@ export function normalizeTeachingResponse(input: unknown): unknown {
     res.visual_actions = Array.isArray(initScene)
       ? initScene.map((act) => normalizeVisualAction(act))
       : [];
+  }
+
+  // Safety net: ensure visualLesson exists whenever visual_actions are present
+  if (
+    !res.visualLesson &&
+    !res.visual_lesson &&
+    Array.isArray(res.visual_actions) &&
+    res.visual_actions.length > 0
+  ) {
+    const actList = res.visual_actions.map((act) => normalizeVisualAction(act));
+    res.visualLesson = {
+      id: `lesson-${Date.now()}`,
+      title:
+        typeof res.topic === "string" && res.topic.trim()
+          ? res.topic
+          : "Visual Lesson",
+      initialScene: actList,
+      transformations: [],
+      capabilities: ["explain", "code", "analyze", "practice"],
+    };
   }
 
   return res;

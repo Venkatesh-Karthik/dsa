@@ -52,6 +52,7 @@ export interface TeachingRequest {
   prompt: string;
   context?: TeachingRequestContext;
   requestId?: string;
+  generationId?: string;
   userAction?: string;
 }
 

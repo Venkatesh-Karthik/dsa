@@ -348,11 +348,13 @@ export function createSceneGraphFromActions(
       case "create_arrow":
       case "connect": {
         const arrow = action as any;
+        const from = arrow.from || arrow.source || "";
+        const to = arrow.to || arrow.target || "";
         addRelationship(graph, {
-          id: arrow.id || `conn-${arrow.from}-${arrow.to}`,
+          id: arrow.id || `conn-${from}-${to}`,
           type: arrow.role || "connects",
-          sourceEntityId: arrow.from,
-          targetEntityId: arrow.to,
+          sourceEntityId: from,
+          targetEntityId: to,
           label: arrow.label,
           properties: {
             directed: arrow.direction !== "none",

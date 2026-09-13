@@ -134,7 +134,7 @@ describe("NvidiaNemotronProvider", () => {
 
     it("uses compact system prompt by default and supports custom system prompt", () => {
       const provider = new NvidiaNemotronProvider();
-      expect(provider.getSystemPrompt()).toContain("OUTPUT JSON CONTRACT");
+      expect(provider.getSystemPrompt()).toContain("visualLesson");
 
       const customProvider = new NvidiaNemotronProvider({
         systemPrompt: "Custom Nemotron Prompt",
@@ -237,7 +237,7 @@ describe("NvidiaNemotronProvider", () => {
       expect(init.headers["Content-Type"]).toBe("application/json");
 
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+      expect(body.model).toBe(NVIDIA_DEFAULT_MODEL);
       expect(body.max_tokens).toBe(NVIDIA_DEFAULT_MAX_TOKENS);
       expect(body.temperature).toBe(0.1);
 
