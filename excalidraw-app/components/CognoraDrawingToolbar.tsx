@@ -142,25 +142,6 @@ export const CognoraDrawingToolbar: React.FC<CognoraDrawingToolbarProps> = ({
       >
         <IconImage size={18} />
       </button>
-
-      {/* More Tools */}
-      <button
-        type="button"
-        className="cognora-drawing-toolbar__btn"
-        onClick={onOpenMoreTools}
-        title="More Canvas Tools"
-        aria-label="More Canvas Tools"
-      >
-        <svg
-          fill="currentColor"
-          viewBox="0 0 24 24"
-          style={{ width: "18px", height: "18px" }}
-        >
-          <circle cx="5" cy="12" r="1.5" />
-          <circle cx="12" cy="12" r="1.5" />
-          <circle cx="19" cy="12" r="1.5" />
-        </svg>
-      </button>
     </div>
   );
 };

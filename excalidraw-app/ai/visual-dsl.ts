@@ -582,4 +582,9 @@ export interface VisualLesson {
   transformations: Transformation[];
   codeContexts?: Record<string, CodeContext> | CodeContext[];
   steps?: TeachingStep[];
+  dependencies?: unknown[];
+  practiceOpportunities?: unknown[];
+  adaptationHints?: unknown[];
+  causalRelationships?: unknown[];
+  conceptModel?: unknown;
 }

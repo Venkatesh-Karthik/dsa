@@ -566,11 +566,14 @@ export function resolveSceneCollisions(
 export function balanceElementPositions(
   elements: { id: string; x: number; y: number; width: number; height: number }[],
 ): Map<string, LayoutPoint> {
-  const positions = new Map<string, LayoutPoint>();
-  for (const el of elements) {
-    positions.set(el.id, { x: el.x, y: el.y });
-  }
-  return positions;
+  const boxes: CollisionBox[] = elements.map((el) => ({
+    id: el.id,
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    height: el.height,
+  }));
+  return resolveLayoutCollisions(boxes, 24);
 }
 
 /**

@@ -21,11 +21,10 @@ export const AppWelcomeScreen: React.FC<{
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "12px",
-              marginBottom: "4px",
+              marginBottom: "8px",
             }}
           >
-            <CognoraMark size={44} />
+            <CognoraMark size={52} color="#0f172a" />
           </div>
         </WelcomeScreen.Center.Logo>
         <WelcomeScreen.Center.Heading>
@@ -34,36 +33,44 @@ export const AppWelcomeScreen: React.FC<{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              gap: "6px",
+              gap: "4px",
               textAlign: "center",
+              fontFamily:
+                '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
             }}
           >
             <span
               style={{
-                fontSize: "2.2rem",
-                fontWeight: 800,
-                letterSpacing: "-0.03em",
-                color: "var(--text-primary-color, #111827)",
+                fontSize: "2rem",
+                fontWeight: 700,
+                letterSpacing: "-0.025em",
+                color: "#0f172a",
+                fontFamily:
+                  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
               }}
             >
-              COGNORA
+              Cognora
             </span>
             <span
               style={{
-                fontSize: "1.25rem",
-                fontWeight: 600,
-                color: "var(--color-primary, #4f46e5)",
+                fontSize: "1.1rem",
+                fontWeight: 500,
+                color: "#64748b",
                 letterSpacing: "-0.01em",
+                fontFamily:
+                  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
               }}
             >
               Learn by seeing.
             </span>
             <span
               style={{
-                fontSize: "0.95rem",
-                color: "var(--text-secondary, #6b7280)",
-                marginTop: "2px",
+                fontSize: "0.9rem",
+                color: "#94a3b8",
+                marginTop: "4px",
                 fontWeight: 400,
+                fontFamily:
+                  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
               }}
             >
               Ask a question. Understand it visually.

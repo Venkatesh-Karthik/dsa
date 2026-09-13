@@ -56,6 +56,7 @@ import {
   validateTransformationTimeline,
   type TransformationValidationResult,
 } from "./transformation-validator";
+import type { AuthoritativeSemanticModel } from "./authoritative-model";
 
 export interface TransformationMeta {
   id: string;
@@ -72,6 +73,121 @@ export interface CompiledTimeline {
   states: SceneState[]; // Index 0 = initialScene, Index 1 = after T1, etc.
   meta: TransformationMeta[];
   currentIndex: number;
+}
+
+/**
+ * Compiles a validated AuthoritativeSemanticModel directly into an immutable sequence
+ * of complete SceneStates for local playback.
+ * The canvas renders strictly what the authoritative semantic world has validated.
+ */
+export function compileAuthoritativeTimeline(
+  model: AuthoritativeSemanticModel,
+  options?: { prompt?: string },
+): CompiledTimeline {
+  const lessonId = model.id || "authoritative-lesson";
+  const states: SceneState[] = [];
+  const meta: TransformationMeta[] = [];
+  let previousLayoutPositions: Map<string, { x: number; y: number }> | undefined;
+
+  const conceptType = (model.problem as any)?.concept || model.problem?.question || options?.prompt || "generic";
+
+  for (let sIdx = 0; sIdx < model.states.length; sIdx++) {
+    const semState = model.states[sIdx];
+    const graph: SceneGraph = {
+      entities: new Map(),
+      relationships: new Map(),
+      annotations: new Map(),
+      metadata: {
+        conceptType,
+        title: semState.name || model.problem?.objective,
+      },
+    };
+
+    // 1. Project Entities maintaining stable IDs
+    for (const [id, ent] of semState.entities.entries()) {
+      let primType = ent.type;
+      const lowerType = ent.type.toLowerCase();
+      if (lowerType.includes("tree")) primType = "TreeNode";
+      else if (lowerType.includes("graph")) primType = "GraphNode";
+      else if (lowerType.includes("array") || lowerType.includes("cell")) primType = "ArrayCell";
+      else if (lowerType.includes("list") || lowerType.includes("link")) primType = "LinkedListNode";
+      else if (lowerType.includes("stack") || lowerType.includes("frame")) primType = "StackFrame";
+      else if (lowerType.includes("queue")) primType = "GenericEntity";
+
+      graph.entities.set(id, {
+        id: ent.id,
+        primitiveType: primType,
+        semanticRole: ent.semanticRole || "component",
+        label: ent.label || ent.id,
+        value: ent.value,
+        state: ent.state,
+        properties: {
+          ...(ent.properties || {}),
+          highlight: ent.properties?.highlight,
+          color: ent.properties?.color,
+        },
+      });
+    }
+
+    // 2. Project Relationships maintaining stable IDs
+    for (const [id, rel] of semState.relationships.entries()) {
+      graph.relationships.set(id, {
+        id: rel.id,
+        sourceEntityId: rel.source,
+        targetEntityId: rel.target,
+        type: rel.type,
+        label: rel.label,
+        properties: {
+          directed: rel.direction !== "none" && rel.direction !== "bidirectional",
+          ...(rel.properties || {}),
+          highlight: (rel.properties as any)?.highlight,
+          color: (rel.properties as any)?.color,
+        },
+      });
+    }
+
+    // 3. Compute deterministic layout from graph topology
+    const layout = computeSceneGraphLayout(
+      graph,
+      { x: 140, y: 120 },
+      previousLayoutPositions,
+    );
+
+    states.push(createSceneState(graph, layout.positions, layout.bounds));
+    previousLayoutPositions = layout.positions;
+
+    // 4. Project transformation metadata
+    if (sIdx === 0) {
+      meta.push({
+        id: "initial",
+        title: semState.name || model.problem?.objective || "Initial State",
+        explanation: semState.description || "Initial state of the verified concept.",
+      });
+    } else {
+      const trans = model.transformations[sIdx - 1];
+      meta.push({
+        id: trans?.id || `t-${sIdx}`,
+        title: trans?.title || semState.name || `Step ${sIdx}`,
+        explanation: trans?.explanation || semState.description || "",
+        calculations: trans?.calculations,
+        insight: trans?.insight,
+        codeContext: trans?.codeSnippet
+          ? {
+              code: trans.codeSnippet,
+              language: trans.codeLanguage || "typescript",
+            }
+          : undefined,
+      });
+    }
+  }
+
+  return {
+    lessonId,
+    topic: (model.problem as any)?.concept || model.problem?.question || options?.prompt,
+    states,
+    meta,
+    currentIndex: 0,
+  };
 }
 
 /**
@@ -173,7 +289,11 @@ export function compileAndValidateVisualLesson(
   timeline: CompiledTimeline;
   validation: TransformationValidationResult;
 } {
-  const rawTimeline = compileVisualLesson(lesson);
+  const model = (lesson as any).authoritativeModel as AuthoritativeSemanticModel | undefined;
+  const rawTimeline = model
+    ? compileAuthoritativeTimeline(model, { prompt: options?.prompt || lesson.topic || lesson.title })
+    : compileVisualLesson(lesson);
+
   const validation = validateTransformationTimeline(rawTimeline, {
     prompt: options?.prompt || lesson.topic || lesson.title,
     concept: lesson.concept,
@@ -194,47 +314,80 @@ function applyOperationToGraph(
   graph: SceneGraph,
   op: TransformationOperation,
 ): void {
-  switch (op.type) {
-    case "update": {
-      const updateOp = op as UpdateOperation;
-      const targetId = updateOp.target;
+  const anyOp = op as any;
+  const opType = anyOp.type;
+
+  switch (opType) {
+    case "update":
+    case "UPDATE_ENTITY": {
+      const targetId = anyOp.target || anyOp.entityId;
       const existing = graph.entities.get(targetId);
       if (existing) {
         updateEntity(graph, targetId, {
-          label: updateOp.label ?? existing.label,
-          value: updateOp.value ?? existing.value,
+          label: anyOp.label ?? anyOp.name ?? existing.label,
+          value: anyOp.value ?? existing.value,
           properties: {
-            highlight: updateOp.style?.color ?? existing.properties?.highlight,
+            ...(existing.properties || {}),
+            ...(anyOp.properties || {}),
+            highlight: anyOp.style?.color ?? anyOp.properties?.highlight ?? existing.properties?.highlight,
           },
         });
       }
       break;
     }
 
-    case "connect": {
-      const connOp = op as ConnectOperation;
-      const relId = connOp.id || `edge-${connOp.from}-${connOp.to}`;
+    case "ADD_ENTITY": {
+      const ent = anyOp.entity;
+      if (ent) {
+        addEntity(graph, {
+          id: ent.id,
+          primitiveType: ent.type || "Box",
+          semanticRole: ent.visualRole || ent.semanticRole || "generic",
+          label: ent.label || ent.name || ent.id,
+          value: ent.value,
+          properties: ent.properties,
+        });
+      }
+      break;
+    }
+
+    case "REMOVE_ENTITY": {
+      const targetId = anyOp.target || anyOp.entityId;
+      if (targetId) {
+        removeEntity(graph, targetId);
+      }
+      break;
+    }
+
+    case "connect":
+    case "ADD_RELATIONSHIP": {
+      const rel = anyOp.relationship || anyOp;
+      const from = rel.from || rel.sourceEntityId;
+      const to = rel.to || rel.targetEntityId;
+      const relId = rel.id || `edge-${from}-${to}`;
       addRelationship(graph, {
         id: relId,
-        type: connOp.role || "connects",
-        sourceEntityId: connOp.from,
-        targetEntityId: connOp.to,
-        label: connOp.label,
+        type: rel.role || rel.type || "connects",
+        sourceEntityId: from,
+        targetEntityId: to,
+        label: rel.label,
         properties: {
-          directed: connOp.direction !== "none",
-          color: connOp.style?.color,
+          directed: rel.direction !== "none",
+          color: rel.style?.color || rel.color,
+          ...(rel.properties || {}),
         },
       });
       break;
     }
 
-    case "disconnect": {
-      const disOp = op as DisconnectOperation;
-      if (disOp.target) {
-        graph.relationships.delete(disOp.target);
-      } else if (disOp.from && disOp.to) {
+    case "disconnect":
+    case "REMOVE_RELATIONSHIP": {
+      const relId = anyOp.relationshipId || anyOp.target;
+      if (relId) {
+        graph.relationships.delete(relId);
+      } else if (anyOp.from && anyOp.to) {
         for (const [id, r] of graph.relationships.entries()) {
-          if (r.sourceEntityId === disOp.from && r.targetEntityId === disOp.to) {
+          if (r.sourceEntityId === anyOp.from && r.targetEntityId === anyOp.to) {
             graph.relationships.delete(id);
           }
         }
@@ -242,19 +395,23 @@ function applyOperationToGraph(
       break;
     }
 
-    case "highlight": {
-      const target = graph.entities.get(op.target);
+    case "highlight":
+    case "HIGHLIGHT": {
+      const targetId = anyOp.target || anyOp.id || anyOp.entityId;
+      const target = graph.entities.get(targetId);
       if (target) {
         target.properties = {
           ...(target.properties || {}),
-          highlight: op.color || op.emphasis || "accent",
+          highlight: anyOp.color || anyOp.style?.color || anyOp.emphasis || "accent",
         };
       }
       break;
     }
 
-    case "unhighlight": {
-      const target = graph.entities.get((op as UnhighlightOperation).target);
+    case "unhighlight":
+    case "UNHIGHLIGHT": {
+      const targetId = anyOp.target || anyOp.id || anyOp.entityId;
+      const target = graph.entities.get(targetId);
       if (target && target.properties) {
         delete target.properties.highlight;
       }
@@ -263,14 +420,16 @@ function applyOperationToGraph(
 
     case "delete": {
       // If target matches a container (e.g. 'avl-tree'), remove all its children or relationships
-      const targetId = op.target;
-      if (graph.entities.has(targetId)) {
-        removeEntity(graph, targetId);
-      } else {
-        // Check if target is a container ID prefix (e.g. 'avl-tree')
-        for (const [id] of graph.entities.entries()) {
-          if (id.startsWith(`${targetId}-`)) {
-            removeEntity(graph, id);
+      const targetId = anyOp.target || anyOp.entityId;
+      if (targetId) {
+        if (graph.entities.has(targetId)) {
+          removeEntity(graph, targetId);
+        } else {
+          // Check if target is a container ID prefix (e.g. 'avl-tree')
+          for (const [id] of graph.entities.entries()) {
+            if (id.startsWith(`${targetId}-`)) {
+              removeEntity(graph, id);
+            }
           }
         }
       }

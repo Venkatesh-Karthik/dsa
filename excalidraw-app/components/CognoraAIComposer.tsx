@@ -11,6 +11,7 @@ export interface CognoraAIComposerProps {
   onInputChange: (val: string) => void;
   onSubmit: (prompt: string) => void;
   isLoading: boolean;
+  isPanelOpen?: boolean;
   selectedContext?: SelectedSemanticElement[];
   onClearSelectedContext?: () => void;
   pendingInteraction?: CanvasInteractionDelta | null;
@@ -31,6 +32,7 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   onInputChange,
   onSubmit,
   isLoading,
+  isPanelOpen = false,
   selectedContext = [],
   onClearSelectedContext,
   pendingInteraction,
@@ -172,7 +174,12 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   };
 
   return (
-    <div className="cognora-ai-composer" data-purpose="ai-composer-dock">
+    <div
+      className={`cognora-ai-composer ${
+        isPanelOpen ? "cognora-ai-composer--panel-open" : ""
+      }`}
+      data-purpose="ai-composer-dock"
+    >
       {/* Mounted Conversation Thread / Thinking State */}
       {children}
 
@@ -357,16 +364,29 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
       {/* Input Form with Pill */}
       <form onSubmit={handleFormSubmit} className="cognora-ai-composer__form">
         <div className="cognora-ai-composer__input-pill">
-          {/* AI Sparkle Icon */}
-          <div className="cognora-ai-composer__sparkle-icon">
+          {/* Plus Button for Attachments & Files */}
+          <button
+            type="button"
+            className="cognora-ai-composer__plus-btn"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach file or import"
+            aria-label="Attach file or import"
+            disabled={isLoading}
+          >
             <svg
               style={{ width: "16px", height: "16px" }}
-              fill="currentColor"
+              fill="none"
+              stroke="currentColor"
               viewBox="0 0 24 24"
             >
-              <path d="M12 2L14.4 8.6L21 11L14.4 13.4L12 20L9.6 13.4L3 11L9.6 8.6L12 2Z" />
+              <path
+                d="M12 5v14M5 12h14"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2.2"
+              />
             </svg>
-          </div>
+          </button>
 
           {/* Text Input */}
           <input
@@ -387,70 +407,25 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
             aria-label="AI Prompt"
           />
 
-          {/* Attachment */}
-          <button
-            type="button"
-            className="cognora-ai-composer__action-btn"
-            onClick={() => fileInputRef.current?.click()}
-            title="Attach file"
-            aria-label="Attach file"
-            disabled={isLoading}
-          >
-            <svg
-              style={{ width: "16px", height: "16px" }}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-              />
-            </svg>
-          </button>
-
-          {/* Mic Voice */}
-          <button
-            type="button"
-            className="cognora-ai-composer__action-btn"
-            onClick={toggleVoice}
-            title={isListening ? "Listening..." : "Voice Input"}
-            aria-label="Voice Input"
-            style={{ color: isListening ? "#ef4444" : undefined }}
-            disabled={isLoading}
-          >
-            <svg
-              style={{ width: "16px", height: "16px" }}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-              />
-            </svg>
-          </button>
-
-          {/* Canonical Send Button (type="submit" inside form) */}
+          {/* Canonical Send Button */}
           <button
             type="submit"
             className="cognora-ai-composer__send-btn"
             disabled={isLoading || isSubmittingRef.current || !inputValue.trim()}
-            title="Send prompt"
-            aria-label="Send prompt"
+            title={isLoading ? "Generating..." : "Send prompt"}
+            aria-label={isLoading ? "Generating..." : "Send prompt"}
           >
-            <svg
-              style={{ width: "14px", height: "14px" }}
-              fill="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-            </svg>
+            {isLoading ? (
+              <div className="cognora-ai-composer__send-spinner" />
+            ) : (
+              <svg
+                style={{ width: "14px", height: "14px", marginLeft: "1px" }}
+                fill="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            )}
           </button>
         </div>
       </form>

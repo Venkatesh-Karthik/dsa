@@ -16,6 +16,7 @@
 import type { SceneGraph, SemanticEntity, SemanticRelationship } from "./scene-graph";
 import type { SceneState } from "./scene-state";
 import type { CompiledTimeline } from "./transformation-timeline";
+import { resolveDomainModule } from "./domain-knowledge";
 
 export interface SemanticDiff {
   hasChanges: boolean;
@@ -345,8 +346,11 @@ export function validateTreeComplexity(
 
 /**
  * Validates AVL Rotation Transformations:
- * Verifies that the rotation actually changes the subtree root, reconnects parent/child pointers,
- * and preserves node identities.
+ * Verifies:
+ * 1. Subtree root changes to the pivot node.
+ * 2. In-order traversal sequence is strictly preserved (BST invariant holds).
+ * 3. Terminal state is height-balanced (|height(L) - height(R)| <= 1).
+ * 4. Node identities are preserved.
  */
 export function validateAVLRotation(
   timeline: CompiledTimeline,
@@ -366,7 +370,7 @@ export function validateAVLRotation(
     promptLower.includes("right-heavy");
 
   if (!isRightRotation && !isLeftRotation) {
-    return { valid: true }; // Not specifically a single rotation check
+    return { valid: true };
   }
 
   if (timeline.states.length < 2) {
@@ -379,27 +383,124 @@ export function validateAVLRotation(
   const initialState = timeline.states[0];
   const finalState = timeline.states[timeline.states.length - 1];
 
-  const initialRoot = initialState.graph.metadata?.rootEntityId;
-  const finalRoot = finalState.graph.metadata?.rootEntityId;
-
-  // For both right and left rotations, the root of the subtree MUST change to the pivot
-  if (initialRoot && finalRoot && initialRoot === finalRoot) {
-    // Check if relationships changed significantly
-    const diff = computeSemanticDiff(initialState, finalState);
-    if (!diff.hasChanges || (diff.relationshipChanges.updated.length === 0 && diff.relationshipChanges.added.length === 0)) {
-      return {
-        valid: false,
-        error: `AVL ${isRightRotation ? "right" : "left"} rotation claimed, but root remained '${initialRoot}' and parent-child edges were not restructured.`,
-      };
-    }
-  }
-
-  // Node identity preservation check: nodes from initial state should remain in final state
+  // 1. Identity preservation: nodes from initial state must exist in final state
   for (const entityId of initialState.graph.entities.keys()) {
     if (!finalState.graph.entities.has(entityId)) {
       return {
         valid: false,
         error: `AVL rotation lost node identity: entity '${entityId}' disappeared instead of transforming into the new tree structure.`,
+      };
+    }
+  }
+
+  // 2. Helper to extract child mappings from SceneGraph
+  function getTreeChildren(graph: SceneGraph): { left: Map<string, string>; right: Map<string, string>; root?: string } {
+    const left = new Map<string, string>();
+    const right = new Map<string, string>();
+    const hasParent = new Set<string>();
+
+    for (const rel of graph.relationships.values()) {
+      const isL = rel.type === "left" || rel.type === "leftOf" || rel.label === "L";
+      const isR = rel.type === "right" || rel.type === "rightOf" || rel.label === "R";
+
+      if (isL) {
+        left.set(rel.sourceEntityId, rel.targetEntityId);
+        hasParent.add(rel.targetEntityId);
+      } else if (isR) {
+        right.set(rel.sourceEntityId, rel.targetEntityId);
+        hasParent.add(rel.targetEntityId);
+      } else if (rel.type === "parentOf" || rel.type === "childOf") {
+        const src = graph.entities.get(rel.sourceEntityId);
+        const tgt = graph.entities.get(rel.targetEntityId);
+        if (src && tgt && src.value !== undefined && tgt.value !== undefined) {
+          if (Number(tgt.value) < Number(src.value)) {
+            left.set(rel.sourceEntityId, rel.targetEntityId);
+          } else {
+            right.set(rel.sourceEntityId, rel.targetEntityId);
+          }
+          hasParent.add(rel.targetEntityId);
+        }
+      }
+    }
+
+    let root = graph.metadata?.rootEntityId;
+    if (!root) {
+      for (const id of graph.entities.keys()) {
+        if (!hasParent.has(id)) {
+          root = id;
+          break;
+        }
+      }
+    }
+    if (!root && graph.entities.size > 0) {
+      root = graph.entities.keys().next().value;
+    }
+
+    return { left, right, root };
+  }
+
+  const initialTree = getTreeChildren(initialState.graph);
+  const finalTree = getTreeChildren(finalState.graph);
+
+  // 3. Root change check: rotation MUST re-balance around the pivot
+  if (initialTree.root && finalTree.root && initialTree.root === finalTree.root && initialState.graph.entities.size >= 3) {
+    const diff = computeSemanticDiff(initialState, finalState);
+    if (!diff.hasChanges || (diff.relationshipChanges.updated.length === 0 && diff.relationshipChanges.added.length === 0)) {
+      return {
+        valid: false,
+        error: `AVL ${isRightRotation ? "right" : "left"} rotation claimed, but root remained '${initialTree.root}' and parent-child edges were not restructured.`,
+      };
+    }
+  }
+
+  // 4. In-order traversal preservation check:
+  // An AVL rotation is a search-tree transformation; in-order keys MUST remain strictly identical!
+  function getInOrder(nodeId?: string, tree?: { left: Map<string, string>; right: Map<string, string> }, graph?: SceneGraph): number[] {
+    if (!nodeId || !tree || !graph) return [];
+    const ent = graph.entities.get(nodeId);
+    if (!ent) return [];
+    const val = Number(ent.value ?? ent.label);
+    const seq: number[] = [];
+    const leftId = tree.left.get(nodeId);
+    if (leftId) seq.push(...getInOrder(leftId, tree, graph));
+    if (!Number.isNaN(val)) seq.push(val);
+    const rightId = tree.right.get(nodeId);
+    if (rightId) seq.push(...getInOrder(rightId, tree, graph));
+    return seq;
+  }
+
+  const inOrderInitial = getInOrder(initialTree.root, initialTree, initialState.graph);
+  const inOrderFinal = getInOrder(finalTree.root, finalTree, finalState.graph);
+
+  if (inOrderInitial.length > 1 && inOrderFinal.length === inOrderInitial.length) {
+    const initialSorted = [...inOrderInitial].sort((a, b) => a - b);
+    const isInitialBST = inOrderInitial.every((v, i) => v === initialSorted[i]);
+    const isFinalBST = inOrderFinal.every((v, i) => v === initialSorted[i]);
+
+    if (isInitialBST && !isFinalBST) {
+      return {
+        valid: false,
+        error: `AVL rotation corrupted Binary Search Tree in-order invariant: [${inOrderFinal.join(", ")}] does not match expected sorted sequence [${initialSorted.join(", ")}].`,
+      };
+    }
+  }
+
+  // 5. Height-balance check on final tree
+  function getHeight(nodeId?: string, tree?: { left: Map<string, string>; right: Map<string, string> }, graph?: SceneGraph): number {
+    if (!nodeId || !tree || !graph || !graph.entities.has(nodeId)) return 0;
+    const hL = getHeight(tree.left.get(nodeId), tree, graph);
+    const hR = getHeight(tree.right.get(nodeId), tree, graph);
+    return 1 + Math.max(hL, hR);
+  }
+
+  for (const nodeId of finalState.graph.entities.keys()) {
+    const hL = getHeight(finalTree.left.get(nodeId), finalTree, finalState.graph);
+    const hR = getHeight(finalTree.right.get(nodeId), finalTree, finalState.graph);
+    if (Math.abs(hL - hR) > 1) {
+      const ent = finalState.graph.entities.get(nodeId);
+      return {
+        valid: false,
+        error: `AVL rotation failed to balance tree at node '${ent?.label || nodeId}': left height is ${hL}, right height is ${hR} (diff ${Math.abs(hL - hR)} > 1).`,
       };
     }
   }
@@ -410,7 +511,7 @@ export function validateAVLRotation(
 /**
  * Validates BFS Traversal Transformations:
  * 1. Verifies initial and final states are NOT identical.
- * 2. Verifies that queue / visited set / current node / graph highlights evolve monotonically.
+ * 2. Verifies that visited nodes / highlights evolve monotonically.
  * 3. Verifies final state represents completed traversal.
  */
 export function validateBFSTraversal(
@@ -583,6 +684,35 @@ export function validateTransformationTimeline(
     const bfsRes = validateBFSTraversal(finalTimeline);
     if (!bfsRes.valid && bfsRes.error) {
       errors.push(bfsRes.error);
+    }
+  }
+
+  // Universal Domain Invariants Validation
+  const domainModule = resolveDomainModule(timeline.topic || prompt);
+  const domainInvariants = domainModule.getInvariants(timeline.topic || prompt);
+  for (const inv of domainInvariants) {
+    // If invariant has custom check function, execute it on each state
+    if (typeof inv.check === "function") {
+      for (let sIdx = 0; sIdx < finalTimeline.states.length; sIdx++) {
+        const dummyConceptModel: any = {
+          concept: timeline.topic || prompt,
+          domain: domainModule.domain,
+          states: finalTimeline.states,
+          entities: Array.from(finalTimeline.states[sIdx].graph.entities.values()),
+        };
+        const pass = inv.check(
+          {
+            stateIndex: sIdx,
+            name: finalTimeline.meta[sIdx]?.title || `State ${sIdx}`,
+            activeEntityIds: Array.from(finalTimeline.states[sIdx].graph.entities.keys()),
+            activeRelationshipIds: Array.from(finalTimeline.states[sIdx].graph.relationships.keys()),
+          },
+          dummyConceptModel,
+        );
+        if (!pass) {
+          errors.push(`State ${sIdx} violates invariant '${inv.id}': ${inv.description}`);
+        }
+      }
     }
   }
 

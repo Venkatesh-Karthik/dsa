@@ -90,7 +90,7 @@ export function createSceneGraphFromActions(
   const graph = createEmptySceneGraph(metadata);
 
   for (const action of actions) {
-    switch (action.type) {
+    switch ((action as any).type) {
       case "create_tree": {
         const tree = action as CreateTreeAction;
         const treeId = tree.id || "tree";
@@ -345,8 +345,9 @@ export function createSceneGraphFromActions(
         break;
       }
 
-      case "create_arrow": {
-        const arrow = action as CreateArrowAction;
+      case "create_arrow":
+      case "connect": {
+        const arrow = action as any;
         addRelationship(graph, {
           id: arrow.id || `conn-${arrow.from}-${arrow.to}`,
           type: arrow.role || "connects",
@@ -380,11 +381,12 @@ export function createSceneGraphFromActions(
 
       case "highlight": {
         // Apply highlight directly to the target entity in the graph
-        const target = graph.entities.get(action.target);
+        const hl = action as any;
+        const target = graph.entities.get(hl.target);
         if (target) {
           target.properties = {
             ...(target.properties || {}),
-            highlight: action.color || action.emphasis || "accent",
+            highlight: hl.color || hl.emphasis || "accent",
           };
         }
         break;

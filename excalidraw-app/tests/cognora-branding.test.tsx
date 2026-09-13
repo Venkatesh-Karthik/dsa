@@ -13,11 +13,11 @@ describe("Cognora Branding & UI Cleanliness", () => {
   it("renders CognoraMark and CognoraLogo with correct text and attributes", () => {
     const { container } = rtlRender(<CognoraLogo showTagline={true} />);
     expect(screen.getByText("Cognora")).toBeTruthy();
-    expect(screen.getByText("Learn by seeing")).toBeTruthy();
+    expect(screen.getByText(/Learn by seeing/i)).toBeTruthy();
     expect(container.querySelector("svg")).toBeTruthy();
   });
 
-  it("renders AppWelcomeScreen with COGNORA brand identity and no Excalidraw+ promos", async () => {
+  it("renders AppWelcomeScreen with Cognora brand identity and no Excalidraw+ promos", async () => {
     const { container } = await render(
       <Excalidraw>
         <AppWelcomeScreen />
@@ -25,8 +25,8 @@ describe("Cognora Branding & UI Cleanliness", () => {
     );
 
     // Cognora headings
-    expect(screen.getByText("COGNORA")).toBeTruthy();
-    expect(screen.getByText("Learn by seeing.")).toBeTruthy();
+    expect(screen.getAllByText("Cognora").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Learn by seeing/i)).toBeTruthy();
     expect(
       screen.getByText("Ask a question. Understand it visually."),
     ).toBeTruthy();

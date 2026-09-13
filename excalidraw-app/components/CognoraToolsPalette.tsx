@@ -114,6 +114,8 @@ export const CognoraToolsPalette: React.FC<CognoraToolsPaletteProps> = ({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
@@ -465,6 +467,10 @@ export const CognoraToolsPalette: React.FC<CognoraToolsPaletteProps> = ({
       if (filteredItems[selectedIndex]) {
         handleSelect(filteredItems[selectedIndex]);
       }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     }
   };
 
@@ -512,7 +518,19 @@ export const CognoraToolsPalette: React.FC<CognoraToolsPaletteProps> = ({
               <IconClose size={14} />
             </button>
           ) : (
-            <kbd className="cognora-tools-palette__kbd-esc">Esc</kbd>
+            <button
+              type="button"
+              className="cognora-tools-palette__kbd-esc-btn"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClose();
+              }}
+              title="Close Tools (Esc)"
+              aria-label="Close Tools"
+            >
+              <kbd className="cognora-tools-palette__kbd-esc">Esc</kbd>
+            </button>
           )}
         </div>
 

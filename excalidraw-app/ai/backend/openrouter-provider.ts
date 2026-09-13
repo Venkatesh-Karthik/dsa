@@ -260,67 +260,6 @@ export class OpenRouterTeachingProvider implements TeachingProvider {
 
     // Case 1A: Initial response is valid DSL
     if (initialValidation.valid && initialValidation.data) {
-      const quality = validateLessonQuality(
-        initialValidation.data,
-        request.prompt,
-      );
-
-      // Check if lesson needs progressive expansion (e.g. only 1 step for conceptual prompt)
-      if (quality.needsExpansion) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[OpenRouterTeachingProvider] Lesson is under-expanded (${quality.stepCount} steps). Triggering single expansion repair (timeout: ${this.repairTimeoutMs}ms)...`,
-        );
-
-        // ==========================================
-        // ATTEMPT 2 (MAX 2): Single Expansion Repair
-        // ==========================================
-        try {
-          const expansionMessages = [
-            ...messages,
-            { role: "assistant" as const, content: initialRawContent },
-            {
-              role: "user" as const,
-              content: formatExpansionPrompt(
-                request.prompt,
-                initialRawContent,
-                quality.stepCount,
-                quality.targetMinSteps,
-              ),
-            },
-          ];
-
-          const repairRawContent = await this.executeCompletionCall(
-            expansionMessages,
-            this.repairTimeoutMs,
-            reasoningEffort,
-          );
-
-          const repairParsed = safeParseJson(repairRawContent);
-          const repairNormalized = normalizeTeachingResponse(repairParsed);
-          const repairValidation = validateTeachingResponse(repairNormalized, {
-            existingIds,
-            validateReferences: false,
-          });
-
-          if (repairValidation.valid && repairValidation.data) {
-            console.info(`[COGNORA AI] total: ${Date.now() - T0}ms`);
-            return this.finalizeResponse(
-              repairValidation.data,
-              existingIds,
-              request.context?.intent as string | undefined,
-            );
-          }
-        } catch (repairErr: unknown) {
-          // If expansion fails or times out, gracefully return initial validated response
-          // eslint-disable-next-line no-console
-          console.warn(
-            "[OpenRouterTeachingProvider] Expansion repair failed; gracefully returning initial validated response:",
-            repairErr,
-          );
-        }
-      }
-
       console.info(`[COGNORA AI] total: ${Date.now() - T0}ms`);
       return this.finalizeResponse(
         initialValidation.data,

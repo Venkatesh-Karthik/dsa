@@ -204,7 +204,7 @@ describe("FeatherlessTeachingProvider", () => {
       }>;
       expect(messages[0].role).toBe("system");
       expect(messages[0].content.toLowerCase()).toContain(
-        "ai visual learning tutor",
+        "visual learning tutor",
       );
       expect(messages[1].role).toBe("user");
       expect(messages[1].content).toContain(

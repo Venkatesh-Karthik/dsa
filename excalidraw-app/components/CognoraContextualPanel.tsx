@@ -44,7 +44,12 @@ export interface AnalyzeModel {
   resultSummary?: string;
   contextAction?: ContextAction;
 
-  // Dijkstra-specific (rendered ONLY when isDijkstra === true)
+  // Generic Interactive Parameter Controls
+  hasInteractiveControls?: boolean;
+  startParamLabel?: string;
+  destParamLabel?: string;
+  resultCardTitle?: string;
+  // Backward compatibility
   isDijkstra?: boolean;
   startNodes?: string[];
   destNodes?: string[];
@@ -310,13 +315,13 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                   </button>
                 )}
 
-                {/* Dijkstra-Specific Controls (RENDERED ONLY FOR GENUINE DIJKSTRA LESSONS) */}
-                {analyzeData?.isDijkstra && (
+                {/* Generic Interactive Parameter Controls */}
+                {(analyzeData?.hasInteractiveControls || analyzeData?.isDijkstra) && (
                   <>
                     <div className="cognora-contextual-panel__inputs-row">
                       <div>
                         <label className="cognora-contextual-panel__field-label">
-                          Start Node
+                          {analyzeData?.startParamLabel || "Source Parameter"}
                         </label>
                         <div className="cognora-contextual-panel__select-wrapper">
                           <select
@@ -334,7 +339,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
 
                       <div>
                         <label className="cognora-contextual-panel__field-label">
-                          Destination Node
+                          {analyzeData?.destParamLabel || "Target Parameter"}
                         </label>
                         <div className="cognora-contextual-panel__select-wrapper">
                           <select
@@ -363,7 +368,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                       >
                         <polygon points="5 3 19 12 5 21 5 3" />
                       </svg>
-                      <span>{analyzeData?.actionLabel || "Find Shortest Path"}</span>
+                      <span>{analyzeData?.actionLabel || "Execute State Transformation"}</span>
                     </button>
 
                     <div
@@ -371,7 +376,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                       data-purpose="algorithm-result-card"
                     >
                       <div className="cognora-contextual-panel__result-card-title">
-                        Graph Result
+                        {analyzeData?.resultCardTitle || "Execution Result"}
                       </div>
                       {analyzeData?.resultPath && (
                         <div className="cognora-contextual-panel__result-card-row">
@@ -475,7 +480,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                 }}
               >
                 <h3 className="cognora-contextual-panel__section-title">
-                  {explainData?.title || "Why node B?"}
+                  {explainData?.title || "Step Insight"}
                 </h3>
                 <p
                   style={{
@@ -485,8 +490,58 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                   }}
                 >
                   {explainData?.explanation ||
-                    "Node B has the minimal tentative distance (5) among all unvisited frontier nodes. Greedy choice guarantees the optimal path up to this node assuming non-negative edge weights."}
+                    "Examine the semantic transition and causal mechanisms driving this state change."}
                 </p>
+
+                {explainData?.whatChanged && (
+                  <div
+                    style={{
+                      background: "#f1f5f9",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: "12px",
+                      padding: "12px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        color: "#0f172a",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      What Changed
+                    </div>
+                    <div style={{ color: "#334155", lineHeight: 1.5 }}>
+                      {explainData.whatChanged}
+                    </div>
+                  </div>
+                )}
+
+                {explainData?.consequence && (
+                  <div
+                    style={{
+                      background: "#f0fdf4",
+                      border: "1px solid #bbf7d0",
+                      borderRadius: "12px",
+                      padding: "12px",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        color: "#166534",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      Consequence & Invariants
+                    </div>
+                    <div style={{ color: "#15803d", lineHeight: 1.5 }}>
+                      {explainData.consequence}
+                    </div>
+                  </div>
+                )}
 
                 {explainData?.calculations && (
                   <div
@@ -513,29 +568,30 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                   </div>
                 )}
 
-                <div
-                  style={{
-                    background: "#eff6ff",
-                    border: "1px solid #dbeafe",
-                    borderRadius: "12px",
-                    padding: "12px",
-                    fontSize: "12px",
-                  }}
-                >
+                {explainData?.insight && (
                   <div
                     style={{
-                      fontWeight: 700,
-                      color: "#1d4ed8",
-                      marginBottom: "4px",
+                      background: "#eff6ff",
+                      border: "1px solid #dbeafe",
+                      borderRadius: "12px",
+                      padding: "12px",
+                      fontSize: "12px",
                     }}
                   >
-                    Time & Space Complexity
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        color: "#1d4ed8",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      Key Invariant & Rule
+                    </div>
+                    <div style={{ color: "#1e3a8a", lineHeight: 1.5 }}>
+                      {explainData.insight}
+                    </div>
                   </div>
-                  <div style={{ color: "#1e3a8a", lineHeight: 1.5 }}>
-                    • Time: O((V + E) log V) with binary min-heap
-                    <br />• Space: O(V) for distances & priority queue
-                  </div>
-                </div>
+                )}
               </div>
             )}
 

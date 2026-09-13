@@ -175,7 +175,7 @@ export function reconcileSceneState(
     const existingArrow = existingConnectors.get(relId);
 
     if (existingArrow) {
-      // In-place update existing connector
+      // Immutable update existing connector
       const updatedArrow = newElementWith(existingArrow as ExcalidrawArrowElement, {
         x: arrowStartX,
         y: arrowStartY,
@@ -187,6 +187,16 @@ export function reconcileSceneState(
         strokeWidth: edgeStyle.strokeWidth,
         isDeleted: false,
         endArrowhead: isDirected ? "arrow" : null,
+        startBinding: {
+          elementId: sourceEl.id,
+          fixedPoint: [0.5, 0.5],
+          mode: "orbit",
+        },
+        endBinding: {
+          elementId: targetEl.id,
+          fixedPoint: [0.5, 0.5],
+          mode: "orbit",
+        },
         customData: {
           ...(existingArrow.customData ?? {}),
           dslId: relId,
@@ -199,8 +209,8 @@ export function reconcileSceneState(
       });
       resultElements.push(updatedArrow);
     } else {
-      // Create new connector arrow
-      const newArrow = newArrowElement({
+      // Create new connector arrow with native Excalidraw bindings
+      const baseArrow = newArrowElement({
         type: "arrow",
         x: arrowStartX,
         y: arrowStartY,
@@ -219,6 +229,18 @@ export function reconcileSceneState(
           targetEntityId: rel.targetEntityId,
           lessonId,
           isAiTeaching: true,
+        },
+      });
+      const newArrow = newElementWith(baseArrow, {
+        startBinding: {
+          elementId: sourceEl.id,
+          fixedPoint: [0.5, 0.5],
+          mode: "orbit",
+        },
+        endBinding: {
+          elementId: targetEl.id,
+          fixedPoint: [0.5, 0.5],
+          mode: "orbit",
         },
       });
       resultElements.push(newArrow);

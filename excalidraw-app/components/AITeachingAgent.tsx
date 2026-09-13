@@ -47,11 +47,34 @@ import {
   compileAndValidateVisualLesson,
   type CompiledTimeline,
 } from "../ai/transformation-timeline";
+import { validateTransformationTimeline } from "../ai/transformation-validator";
 import {
   LessonPlaybackController,
   type LessonPlaybackState,
 } from "../ai/lesson-playback-controller";
 import { balanceElementPositions } from "../ai/layout-engine";
+import {
+  getBinarySearchVisualLesson,
+  getDijkstraVisualLesson,
+} from "../ai/backend/mock-lessons";
+import { resolveDomainModule } from "../ai/domain-knowledge";
+import { extractConceptModelFromVisualLesson } from "../ai/concept-intelligence";
+import {
+  inspectSelectedEntity,
+  deriveWhatChangedExplanation,
+  derivePracticeItem,
+} from "../ai/adaptation-engine";
+import {
+  createLearnerSession,
+  recordInteraction,
+  type LearnerSession,
+} from "../ai/learner-model";
+import {
+  UniversalConceptIntelligenceEngine,
+} from "../ai/universal-engine";
+import {
+  type AuthoritativeSemanticModel,
+} from "../ai/authoritative-model";
 
 import "./AITeachingAgent.scss";
 
@@ -151,6 +174,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // Lessons State
   const [transformationLesson, setTransformationLesson] =
     useState<TransformationLesson | null>(null);
+  const [authoritativeModel, setAuthoritativeModel] =
+    useState<AuthoritativeSemanticModel | null>(null);
   const [isLessonPlaying, setIsLessonPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
@@ -196,6 +221,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     useState<CanvasInteractionDelta | null>(null);
   const [selectedStartNode, setSelectedStartNode] = useState<string>("A");
   const [selectedDestNode, setSelectedDestNode] = useState<string>("P");
+  const [selectedPracticeOption, setSelectedPracticeOption] = useState<number | null>(null);
+  const [practiceFeedback, setPracticeFeedback] = useState<{ isCorrect?: boolean; message?: string } | null>(null);
+  const learnerSessionRef = useRef<LearnerSession>(createLearnerSession());
 
   const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousSnapshotRef = useRef<Map<string, SemanticElementSnapshot>>(
@@ -323,17 +351,33 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   ) => {
     isApplyingVisualsRef.current = true;
     try {
-      // 1. Compile and validate visual lesson into immutable canonical SceneStates
-      const { timeline, validation } = compileAndValidateVisualLesson(lesson, {
+      // 1. Process question through the universal intelligence engine to build AuthoritativeSemanticModel
+      const processed = UniversalConceptIntelligenceEngine.processQuestion(
+        options.prompt || options.topic || lesson.title,
+        lesson as any,
+      );
+
+      const model = processed.authoritativeModel;
+      setAuthoritativeModel(model);
+
+      // 2. The authoritative timeline is derived directly from the validated semantic model
+      const timeline = processed.timeline;
+
+      const validation = validateTransformationTimeline(timeline, {
         prompt: options.prompt || options.topic || lesson.title,
+        concept: lesson.concept,
       });
 
       console.log(
-        `[COGNORA][LESSON] lessonId=${timeline.lessonId} concept=${timeline.topic} valid=${validation.valid} states=${timeline.states.length} repaired=${validation.repaired}`,
+        `[COGNORA][LESSON] lessonId=${timeline.lessonId} concept=${timeline.topic} valid=${validation.valid} states=${timeline.states.length} repaired=${validation.repaired} goalSatisfied=${model.goalSatisfaction.satisfied}`,
       );
 
       if (!validation.valid && validation.errors.length > 0) {
         console.warn(`[COGNORA][VALIDATION][FAIL]`, validation.errors);
+      }
+
+      if (!model.goalSatisfaction.satisfied) {
+        console.warn(`[COGNORA][GOAL_VERIFICATION][FAIL]`, model.goalSatisfaction.summary);
       }
 
       // 2. Tear down any previous playback controller cleanly
@@ -382,15 +426,68 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__cognoraStartSampleLesson = (type = "binarySearch") => {
+        const lesson =
+          type === "dijkstra"
+            ? getDijkstraVisualLesson()
+            : getBinarySearchVisualLesson();
+        startTransformationLesson(lesson, {
+          messageId: `sample-${Date.now()}`,
+          topic: lesson.concept || lesson.title,
+          prompt: lesson.title,
+        });
+      };
+      (window as any).__cognoraStartLessonDirectly = (lesson: any) => {
+        startTransformationLesson(lesson, {
+          messageId: `direct-${Date.now()}`,
+          topic: lesson.concept || lesson.title,
+          prompt: lesson.title,
+        });
+      };
+      (window as any).__cognoraToggleInspector = () => {
+        setIsContextualPanelOpen((prev) => !prev);
+      };
+      (window as any).__cognoraToggleTools = () => {
+        setIsToolsPaletteOpen((prev) => !prev);
+      };
+    }
+  }, [excalidrawAPI]);
+
   const handleNextTransformation = () => {
+    setSelectedPracticeOption(null);
+    setPracticeFeedback(null);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "next",
+        stepIndex: (transformationLesson?.currentTransformationIndex ?? 0) + 1,
+      });
+    }
     playbackControllerRef.current?.next(true);
   };
 
   const handlePreviousTransformation = () => {
+    setSelectedPracticeOption(null);
+    setPracticeFeedback(null);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "prev",
+        stepIndex: Math.max(0, (transformationLesson?.currentTransformationIndex ?? 0) - 1),
+      });
+    }
     playbackControllerRef.current?.prev(true);
   };
 
   const handleJumpTransformation = (targetIndex: number) => {
+    setSelectedPracticeOption(null);
+    setPracticeFeedback(null);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "seek",
+        stepIndex: targetIndex,
+      });
+    }
     playbackControllerRef.current?.seek(targetIndex, true);
   };
 
@@ -503,6 +600,14 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   };
 
   const handleUndo = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const app = (excalidrawAPI as any).app;
+    if (app?.actionManager?.actions?.["undo"]) {
+      app.actionManager.executeAction(app.actionManager.actions["undo"], "ui");
+      return;
+    }
     const doc = getOwnerDoc();
     const event = new KeyboardEvent("keydown", {
       key: "z",
@@ -515,6 +620,14 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   };
 
   const handleRedo = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const app = (excalidrawAPI as any).app;
+    if (app?.actionManager?.actions?.["redo"]) {
+      app.actionManager.executeAction(app.actionManager.actions["redo"], "ui");
+      return;
+    }
     const doc = getOwnerDoc();
     const event = new KeyboardEvent("keydown", {
       key: "y",
@@ -1044,170 +1157,142 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       }))
     : [];
 
+  const conceptModel = React.useMemo(() => {
+    if (!transformationLesson) return null;
+    return extractConceptModelFromVisualLesson(transformationLesson.lesson);
+  }, [transformationLesson]);
+
+  const activeIndex = Math.max(0, transformationLesson?.currentTransformationIndex ?? 0);
+  const activeT =
+    transformationLesson?.lesson.transformations[activeIndex] ||
+    transformationLesson?.lesson.transformations[0];
+
   const analyzeData: AnalyzeModel | undefined = (() => {
     if (!transformationLesson) return undefined;
 
-    const topicStr = (
+    const topic =
       currentTopic ||
       transformationLesson.lesson.topic ||
+      transformationLesson.lesson.concept ||
       transformationLesson.lesson.title ||
-      ""
-    ).toLowerCase();
+      "Technical Concept";
 
-    const activeT =
-      transformationLesson.currentTransformationIndex >= 0
-        ? transformationLesson.lesson.transformations[
-            transformationLesson.currentTransformationIndex
-          ]
-        : transformationLesson.lesson.transformations[0];
+    const domainModule = resolveDomainModule(topic);
 
-    const isTree =
-      topicStr.includes("tree") ||
-      topicStr.includes("avl") ||
-      topicStr.includes("bst") ||
-      topicStr.includes("heap");
-    const isGraphDijkstra =
-      topicStr.includes("dijkstra") || topicStr.includes("shortest path");
-    const isBFS =
-      topicStr.includes("bfs") ||
-      topicStr.includes("breadth-first") ||
-      topicStr.includes("breadth first");
-    const isBinarySearch = topicStr.includes("binary search");
-    const isHttp =
-      topicStr.includes("http") ||
-      topicStr.includes("request") ||
-      topicStr.includes("tcp") ||
-      topicStr.includes("api");
-    const isLinkedList = topicStr.includes("linked list");
-    const isSql =
-      topicStr.includes("sql") ||
-      topicStr.includes("join") ||
-      topicStr.includes("database");
+    // Semantic Object Intelligence: Check if user has selected whiteboard elements
+    if (selectedContext.length > 0) {
+      const first = selectedContext[0];
+      const targetId = first.dslId || first.label;
 
-    const metrics: ContextMetric[] = [];
-    const properties: ContextProperty[] = [];
-    const operation = activeT?.title;
-    const resultSummary = activeT?.explanation;
+      if (authoritativeModel && targetId) {
+        const inspected = UniversalConceptIntelligenceEngine.inspectEntity(targetId, authoritativeModel, activeIndex);
+        if (inspected) {
+          return {
+            title: `Selected: ${inspected.label}`,
+            subtitle: `${inspected.type}${inspected.role ? ` (${inspected.role})` : ""}`,
+            conceptType: domainModule.domain,
+            operation: `Step ${currentStepNum} semantic state inspection`,
+            statusBadge: inspected.state ? `State: ${inspected.state}` : `Entity: ${inspected.id}`,
+            metrics: [
+              ...(inspected.value !== undefined ? [{ label: "Value", value: String(inspected.value) }] : []),
+              { label: "Inbound Links", value: inspected.incomingConnections.length },
+              { label: "Outbound Links", value: inspected.outgoingConnections.length },
+            ],
+            properties: [
+              ...inspected.incomingConnections.map((c, i) => ({
+                label: `Inbound ${i + 1}`,
+                value: `${c.from} (${c.type})`,
+              })),
+              ...inspected.outgoingConnections.map((c, i) => ({
+                label: `Outbound ${i + 1}`,
+                value: `${c.to} (${c.type})`,
+              })),
+              ...inspected.invariants.map((inv, i) => ({
+                label: `Invariant ${i + 1}`,
+                value: inv,
+              })),
+            ],
+            resultSummary: `Preserves semantic invariants for ${inspected.label}`,
+            stepperSteps,
+            onSelectStep: (idx) => {
+              playbackControllerRef.current?.seek(idx, true);
+            },
+          };
+        }
+      }
 
-    if (isBFS) {
-      metrics.push({ label: "Traversal", value: "Breadth-First (BFS)" });
-      metrics.push({
-        label: "Queue State",
-        value:
-          currentStepNum === 1
-            ? "[Start Node]"
-            : currentStepNum === 2
-            ? "[Neighbors Enqueued]"
-            : currentStepNum === totalStepsCount
-            ? "[] (Empty)"
-            : "[Active Queue]",
-      });
-      metrics.push({
-        label: "Visited Nodes",
-        value: `${currentStepNum} / ${totalStepsCount} explored`,
-      });
-      metrics.push({
-        label: "Timeline Step",
-        value: `${currentStepNum} / ${totalStepsCount}`,
-      });
-    } else if (isTree) {
-      const isLL =
-        activeT?.title?.includes("LL") || activeT?.explanation?.includes("LL");
-      const isRR =
-        activeT?.title?.includes("RR") || activeT?.explanation?.includes("RR");
-      const isLR =
-        activeT?.title?.includes("LR") || activeT?.explanation?.includes("LR");
-      const isRL =
-        activeT?.title?.includes("RL") || activeT?.explanation?.includes("RL");
-      const imbalanceType = isLL
-        ? "LL (Left-Left)"
-        : isRR
-        ? "RR (Right-Right)"
-        : isLR
-        ? "LR (Left-Right)"
-        : isRL
-        ? "RL (Right-Left)"
-        : "Balanced";
-
-      metrics.push({ label: "Imbalance", value: imbalanceType });
-      metrics.push({
-        label: "Subtree Root",
-        value: activeT?.highlights?.[0]
-          ? String(activeT.highlights[0]).replace(/^(node|entity)-/, "")
-          : "30",
-      });
-      metrics.push({
-        label: "Pivot Node",
-        value: activeT?.highlights?.[1]
-          ? String(activeT.highlights[1]).replace(/^(node|entity)-/, "")
-          : "20",
-      });
-      metrics.push({
-        label: "Timeline Step",
-        value: `${currentStepNum} / ${totalStepsCount}`,
-      });
-    } else if (isBinarySearch) {
-      metrics.push({ label: "Target", value: "42" });
-      metrics.push({ label: "Low", value: "0" });
-      metrics.push({ label: "Mid", value: "3" });
-      metrics.push({ label: "High", value: "7" });
-    } else if (isHttp) {
-      metrics.push({ label: "Method", value: "GET" });
-      metrics.push({ label: "Status", value: "200 OK" });
-      metrics.push({ label: "Protocol", value: "HTTP/1.1" });
-      metrics.push({ label: "Latency", value: "48ms" });
-    } else if (isLinkedList) {
-      metrics.push({ label: "Operation", value: activeT?.title || "Insert" });
-      metrics.push({ label: "Active Node", value: "New Node" });
-      metrics.push({ label: "Head", value: "Node 1" });
-      metrics.push({ label: "Tail", value: "Node 4" });
-    } else if (isSql) {
-      metrics.push({ label: "Join Type", value: "INNER JOIN" });
-      metrics.push({ label: "Table A", value: "users" });
-      metrics.push({ label: "Table B", value: "orders" });
-      metrics.push({
-        label: "Condition",
-        value: "users.id = orders.user_id",
-      });
-    } else {
-      // Arbitrary / Universal concept (e.g. Refrigerator, Operating Systems, Physics)
-      metrics.push({ label: "Phase", value: `Phase ${currentStepNum}` });
-      metrics.push({
-        label: "Progress",
-        value: `${currentStepNum} / ${totalStepsCount}`,
-      });
-      if (activeT?.highlights && activeT.highlights.length > 0) {
-        metrics.push({
-          label: "Active Entity",
-          value: String(activeT.highlights[0]).replace(/^(node|entity)-/, ""),
-        });
+      if (conceptModel && targetId) {
+        const inspected = inspectSelectedEntity(targetId, conceptModel, activeIndex);
+        if (inspected) {
+          return {
+            title: `Selected: ${inspected.label}`,
+            subtitle: `${inspected.type}${inspected.role ? ` (${inspected.role})` : ""}`,
+            conceptType: domainModule.domain,
+            operation: inspected.purposeInCurrentStep,
+            statusBadge: inspected.state ? `State: ${inspected.state}` : `Entity: ${inspected.id}`,
+            metrics: [
+              ...(inspected.value !== undefined ? [{ label: "Value", value: String(inspected.value) }] : []),
+              { label: "Inbound Links", value: inspected.incomingConnections.length },
+              { label: "Outbound Links", value: inspected.outgoingConnections.length },
+            ],
+            properties: [
+              ...inspected.incomingConnections.map((c, i) => ({
+                label: `Inbound ${i + 1}`,
+                value: `${c.fromId} (${c.type})`,
+              })),
+              ...inspected.outgoingConnections.map((c, i) => ({
+                label: `Outbound ${i + 1}`,
+                value: `${c.toId} (${c.type})`,
+              })),
+            ],
+            resultSummary: inspected.nextChangeSummary || "Entity remains stable in subsequent transformations.",
+            stepperSteps,
+            onSelectStep: (idx) => {
+              playbackControllerRef.current?.seek(idx, true);
+            },
+          };
+        }
       }
     }
+
+    // Read attached inspectorData if provided
+    const explicitInspector = (activeT as any)?.inspectorData;
+
+    // Build or infer current concept state
+    const currentState = transformationLesson.timeline?.states[activeIndex] || {
+      stateIndex: activeIndex,
+      name: activeT?.title || `State ${currentStepNum}`,
+      activeEntityIds: [],
+      activeRelationshipIds: [],
+    };
+
+    // Extract dynamic inspector metrics via Domain Knowledge or fallback
+    const extracted =
+      explicitInspector ||
+      domainModule.extractInspectorData(
+        currentState as any,
+        activeT as any,
+      );
 
     return {
       title: transformationLesson.lesson.title || "Lesson Analysis",
       subtitle:
         transformationLesson.lesson.concept ||
-        "Step-by-step state inspection",
-      conceptType: isTree
-        ? "tree"
-        : isGraphDijkstra || isBFS
-        ? "graph"
-        : isBinarySearch
-        ? "array"
-        : isHttp
-        ? "network"
-        : isLinkedList
-        ? "linked_list"
-        : "generic",
-      operation,
-      statusBadge: `Step ${currentStepNum} of ${totalStepsCount}`,
-      metrics,
-      properties,
-      resultSummary,
-      isDijkstra: isGraphDijkstra,
-      startNodes: isGraphDijkstra ? ["A", "B", "C", "D", "E"] : undefined,
-      destNodes: isGraphDijkstra ? ["P", "K", "L"] : undefined,
+        `${domainModule.name} — Step-by-step state inspection`,
+      conceptType: domainModule.domain,
+      operation: extracted.operation || activeT?.title,
+      statusBadge: extracted.statusBadge || `Step ${currentStepNum} of ${totalStepsCount}`,
+      metrics: extracted.metrics || [],
+      properties: extracted.properties || [],
+      resultSummary: extracted.resultSummary || activeT?.explanation,
+      hasInteractiveControls: extracted.hasInteractiveControls || Boolean((activeT as any)?.interactiveControls),
+      contextAction: extracted.contextAction,
+      startNodes: authoritativeModel
+        ? authoritativeModel.world.entities.map((e) => e.label || e.id)
+        : Array.from(transformationLesson?.timeline?.states[activeIndex]?.graph.entities.values() || []).map((e) => e.label || e.id),
+      destNodes: authoritativeModel
+        ? authoritativeModel.world.entities.map((e) => e.label || e.id).slice().reverse()
+        : Array.from(transformationLesson?.timeline?.states[activeIndex]?.graph.entities.values() || []).map((e) => e.label || e.id).slice().reverse(),
       selectedStart: selectedStartNode,
       selectedDest: selectedDestNode,
       onStartChange: setSelectedStartNode,
@@ -1215,13 +1300,24 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       onRunAction: () => {
         playbackControllerRef.current?.seek(totalStepsCount - 1, true);
       },
-      actionLabel: isGraphDijkstra ? "Find Shortest Path" : undefined,
+      actionLabel: "Execute Transformation",
       stepperSteps,
       onSelectStep: (idx) => {
         playbackControllerRef.current?.seek(idx, true);
       },
     };
   })();
+
+  const fromSceneState =
+    activeIndex > 0 ? transformationLesson?.timeline?.states[activeIndex - 1] : undefined;
+  const toSceneState =
+    transformationLesson?.timeline?.states[activeIndex];
+
+  const derivedWhatChanged = authoritativeModel
+    ? UniversalConceptIntelligenceEngine.getWhatChanged(activeIndex, authoritativeModel)?.whatChanged
+    : activeT
+    ? deriveWhatChangedExplanation(activeT as any, fromSceneState, toSceneState)
+    : undefined;
 
   const explainData: ExplainModel = {
     title:
@@ -1234,13 +1330,81 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       "Ask any algorithm or data structure question below to start a step-by-step visual lesson.",
     calculations: currentCalculations,
     insight: currentInsight,
-    whatChanged: currentTopic
-      ? `Step ${currentStepNum} of ${totalStepsCount} active.`
-      : undefined,
-    consequence: undefined,
+    whatChanged: derivedWhatChanged,
+    consequence: (activeT as any)?.consequence || (activeT as any)?.effect,
   };
 
-  const practiceData: PracticeModel | undefined = undefined;
+  const practiceData: PracticeModel | undefined = (() => {
+    if (!transformationLesson) return undefined;
+
+    if (authoritativeModel) {
+      const quiz = UniversalConceptIntelligenceEngine.getPracticeQuiz(activeIndex, authoritativeModel);
+      return {
+        question: quiz.question,
+        options: quiz.options,
+        selectedOption: selectedPracticeOption,
+        onSelectOption: (idx: number) => {
+          setSelectedPracticeOption(idx);
+          setPracticeFeedback(null);
+        },
+        onCheckAnswer: () => {
+          if (selectedPracticeOption === null) return;
+          const isCorrect = selectedPracticeOption === quiz.correctIndex;
+          setPracticeFeedback({
+            isCorrect,
+            message: isCorrect ? quiz.explanation : `Not quite. ${quiz.explanation}`,
+          });
+          if (learnerSessionRef.current) {
+            recordInteraction(learnerSessionRef.current, {
+              action: "practice_submit",
+              stepIndex: activeIndex,
+              details: { isCorrect, selectedOption: selectedPracticeOption },
+            });
+          }
+        },
+        feedback: practiceFeedback,
+        onGenerateNewPractice: () => {
+          setSelectedPracticeOption(null);
+          setPracticeFeedback(null);
+        },
+      };
+    }
+
+    if (!conceptModel) return undefined;
+    const item = derivePracticeItem(conceptModel, activeIndex);
+
+    return {
+      question: item.question,
+      options: item.options,
+      selectedOption: selectedPracticeOption,
+      onSelectOption: (idx: number) => {
+        setSelectedPracticeOption(idx);
+        setPracticeFeedback(null);
+      },
+      onCheckAnswer: () => {
+        if (selectedPracticeOption === null) return;
+        const isCorrect = selectedPracticeOption === item.correctIndex;
+        setPracticeFeedback({
+          isCorrect,
+          message: isCorrect
+            ? `Correct! ${item.explanation}`
+            : `Not quite. ${item.explanation}`,
+        });
+        if (learnerSessionRef.current) {
+          recordInteraction(learnerSessionRef.current, {
+            action: "practice_submit",
+            stepIndex: activeIndex,
+            details: { isCorrect, selectedOption: selectedPracticeOption },
+          });
+        }
+      },
+      feedback: practiceFeedback,
+      onGenerateNewPractice: () => {
+        setSelectedPracticeOption(null);
+        setPracticeFeedback(null);
+      },
+    };
+  })();
 
   // Code context for current transformation
   const currentCodeContext: CodeContext | undefined = (() => {
@@ -1378,93 +1542,112 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         </div>
       )}
 
-      {/* 5. Timeline Playback HUD (Floating Bottom Center) */}
-      {transformationLesson && (
-        <CognoraTimeline
-          currentStep={currentStepNum}
-          totalSteps={totalStepsCount}
-          isPlaying={isLessonPlaying}
-          speed={playbackSpeed}
-          canPrev={canPrev}
-          canNext={canNext}
-          onPrev={handlePreviousTransformation}
-          onNext={handleNextTransformation}
-          onTogglePlay={() => {
-            if (isLessonPlaying) {
-              stopLessonPlayback();
-            } else {
-              playTransformationLesson();
-            }
-          }}
-          onReplay={() => {
-            playbackControllerRef.current?.replay();
-          }}
-          onCycleSpeed={handleCycleSpeed}
-          onSeek={(stepIndex) => {
-            handleJumpTransformation(stepIndex);
-          }}
-          onCloseLesson={() => {
-            playbackControllerRef.current?.destroy();
-            playbackControllerRef.current = null;
-            setTransformationLesson(null);
-          }}
-        />
-      )}
-
-      {/* 6. AI Composer Dock with Integrated Conversation Thread */}
-      <CognoraAIComposer
-        inputValue={inputValue}
-        onInputChange={setInputValue}
-        onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
-        isLoading={isTeachingRequestActive}
-        selectedContext={selectedContext}
-        onClearSelectedContext={() => setSelectedContext([])}
-        pendingInteraction={pendingInteraction}
-        onClearPendingInteraction={() => setPendingInteraction(null)}
-        showAutocomplete={showAutocomplete}
-        autocompleteSuggestions={autocompleteSuggestions}
-        selectedSuggestionIndex={selectedSuggestionIndex}
-        onSelectSuggestion={(sug) => {
-          setInputValue(`/${sug.name} `);
-          setShowAutocomplete(false);
-        }}
-        onSuggestionHover={setSelectedSuggestionIndex}
-        suggestions={
-          transformationLesson
-            ? [
-                "Explain this step",
-                "Show the code implementation",
-                "What is the time complexity?",
-                "How do pointers transition?",
-                "Walk through an edge case",
-              ]
-            : [
-                "Explain Binary Search step by step",
-                "Explain AVL Tree Rotations",
-                "Explain Linked List Insertion",
-                "Explain Recursion and Call Stack",
-                "Explain Graph BFS Traversal",
-              ]
-        }
-        onSuggestionClick={(s) => handleSubmit(s, "suggestion_pill_click")}
+      {/* Dedicated Floating Bottom Control Region (Layer 4 & Layer 5) */}
+      <div
+        className={`cognora-bottom-control-region ${
+          isContextualPanelOpen
+            ? "cognora-bottom-control-region--panel-open"
+            : ""
+        }`}
+        data-purpose="bottom-floating-controls"
       >
-        <CognoraConversation
-          messages={messages}
-          requestState={requestState}
-          errorMessage={errorMessage}
-          errorCode={errorCode}
-          onRetry={handleRetry}
-          isTeachingRequestActive={isTeachingRequestActive}
-          isMinimized={isConversationMinimized}
-          onToggleMinimize={() => setIsConversationMinimized((prev) => !prev)}
-        />
-      </CognoraAIComposer>
+        {/* 5. Timeline Playback HUD (Positioned independently above Composer) */}
+        {transformationLesson && (
+          <CognoraTimeline
+            currentStep={currentStepNum}
+            totalSteps={totalStepsCount}
+            isPlaying={isLessonPlaying}
+            speed={playbackSpeed}
+            canPrev={canPrev}
+            canNext={canNext}
+            onPrev={handlePreviousTransformation}
+            onNext={handleNextTransformation}
+            onTogglePlay={() => {
+              if (isLessonPlaying) {
+                stopLessonPlayback();
+              } else {
+                playTransformationLesson();
+              }
+            }}
+            onReplay={() => {
+              playbackControllerRef.current?.replay();
+            }}
+            onCycleSpeed={handleCycleSpeed}
+            onSeek={(stepIndex) => {
+              handleJumpTransformation(stepIndex);
+            }}
+            onCloseLesson={() => {
+              playbackControllerRef.current?.destroy();
+              playbackControllerRef.current = null;
+              setTransformationLesson(null);
+            }}
+          />
+        )}
+
+        {/* 6. AI Composer Dock with Integrated Conversation Thread */}
+        <CognoraAIComposer
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
+          isLoading={isTeachingRequestActive}
+          isPanelOpen={isContextualPanelOpen}
+          selectedContext={selectedContext}
+          onClearSelectedContext={() => setSelectedContext([])}
+          pendingInteraction={pendingInteraction}
+          onClearPendingInteraction={() => setPendingInteraction(null)}
+          showAutocomplete={showAutocomplete}
+          autocompleteSuggestions={autocompleteSuggestions}
+          selectedSuggestionIndex={selectedSuggestionIndex}
+          onSelectSuggestion={(sug) => {
+            setInputValue(`/${sug.name} `);
+            setShowAutocomplete(false);
+          }}
+          onSuggestionHover={setSelectedSuggestionIndex}
+          suggestions={
+            transformationLesson
+              ? [
+                  "Explain this step",
+                  "Show the code implementation",
+                  "What is the time complexity?",
+                  "How do pointers transition?",
+                  "Walk through an edge case",
+                ]
+              : [
+                  "Explain Binary Search step by step",
+                  "Explain AVL Tree Rotations",
+                  "Explain Linked List Insertion",
+                  "Explain Recursion and Call Stack",
+                  "Explain Graph BFS Traversal",
+                ]
+          }
+          onSuggestionClick={(s) => handleSubmit(s, "suggestion_pill_click")}
+        >
+          <CognoraConversation
+            messages={messages}
+            requestState={requestState}
+            errorMessage={errorMessage}
+            errorCode={errorCode}
+            onRetry={handleRetry}
+            isTeachingRequestActive={isTeachingRequestActive}
+            isMinimized={isConversationMinimized}
+            onToggleMinimize={() => setIsConversationMinimized((prev) => !prev)}
+          />
+        </CognoraAIComposer>
+      </div>
 
       {/* 7. Right Contextual Panel (Analyze, Explain, Code, Practice) */}
       {isContextualPanelOpen && (
         <CognoraContextualPanel
           activeTab={contextualTab}
-          onTabChange={setContextualTab}
+          onTabChange={(tab) => {
+            setContextualTab(tab);
+            if (learnerSessionRef.current) {
+              recordInteraction(learnerSessionRef.current, {
+                action: "open_tab",
+                tab,
+              });
+            }
+          }}
           onClose={() => setIsContextualPanelOpen(false)}
           analyzeData={analyzeData}
           explainData={explainData}

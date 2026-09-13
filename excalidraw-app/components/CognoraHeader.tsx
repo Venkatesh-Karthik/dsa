@@ -1,4 +1,4 @@
-import React from "react";
+import { CognoraLogo } from "./CognoraLogo";
 
 export interface CognoraHeaderProps {
   lessonTitle?: string;
@@ -45,101 +45,17 @@ export const CognoraHeader: React.FC<CognoraHeaderProps> = ({
     <header className="cognora-header" data-purpose="top-navigation-bar">
       {/* Left: Cognora Logo */}
       <div className="cognora-header__left">
-        <div className="cognora-header__logo" aria-hidden="true">
-          <div className="cognora-header__logo-dot" />
-          <div className="cognora-header__logo-notch" />
-        </div>
-        <div className="cognora-header__brand-group">
-          <span className="cognora-header__brand-name">Cognora</span>
-          <span className="cognora-header__brand-sub">Learn by seeing.</span>
-        </div>
+        <CognoraLogo size={32} showTagline={true} />
       </div>
 
-      {/* Center: Dynamic Lesson Title & Modes */}
-      <div className="cognora-header__center">
-        {lessonTitle ? (
-          <>
-            <button
-              type="button"
-              className="cognora-header__topic-btn group"
-              onClick={onLessonTitleClick}
-              title="Current Lesson Concept"
-            >
-              <span>{lessonTitle}</span>
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  d="M19 9l-7 7-7-7"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                />
-              </svg>
-            </button>
-            <div className="cognora-header__modes-list">
-              <span
-                style={{
-                  color: activeMode === "visualize" ? "#2563eb" : undefined,
-                  fontWeight: activeMode === "visualize" ? 600 : 500,
-                  cursor: "pointer",
-                }}
-                onClick={() => onModeSelect?.("visualize")}
-              >
-                Visualize
-              </span>
-              <span className="dot">•</span>
-              <span
-                style={{
-                  color: activeMode === "explore" ? "#2563eb" : undefined,
-                  fontWeight: activeMode === "explore" ? 600 : 500,
-                  cursor: "pointer",
-                }}
-                onClick={() => onModeSelect?.("explore")}
-              >
-                Explore
-              </span>
-              <span className="dot">•</span>
-              <span
-                style={{
-                  color: activeMode === "practice" ? "#2563eb" : undefined,
-                  fontWeight: activeMode === "practice" ? 600 : 500,
-                  cursor: "pointer",
-                }}
-                onClick={() => onModeSelect?.("practice")}
-              >
-                Practice
-              </span>
-              <span className="dot">•</span>
-              <span
-                style={{
-                  color: activeMode === "understand" ? "#2563eb" : undefined,
-                  fontWeight: activeMode === "understand" ? 600 : 500,
-                  cursor: "pointer",
-                }}
-                onClick={() => onModeSelect?.("understand")}
-              >
-                Understand
-              </span>
-            </div>
-          </>
-        ) : (
-          <div className="cognora-header__center">
-            <span
-              style={{
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#0f172a",
-                letterSpacing: "-0.01em",
-              }}
-            >
-              Cognora Workspace
-            </span>
-            <span
-              style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 500 }}
-            >
-              Ask anything below to construct a visual lesson
-            </span>
-          </div>
-        )}
+      {/* Center: Mathematically Centered Dynamic Lesson Title */}
+      <div className="cognora-header__center" data-purpose="centered-lesson-title">
+        <span
+          className="cognora-header__title"
+          title={lessonTitle || "Cognora Workspace"}
+        >
+          {lessonTitle || "Cognora Workspace"}
+        </span>
       </div>
 
       {/* Right: Workspace Actions & Profile */}
@@ -261,31 +177,8 @@ export const CognoraHeader: React.FC<CognoraHeaderProps> = ({
           <span>Share</span>
         </button>
 
-        {/* More Menu */}
-        <button
-          type="button"
-          className="cognora-header__icon-btn"
-          onClick={onToggleMore}
-          title="More tools & settings"
-          aria-label="More tools and settings"
-        >
-          <svg
-            style={{ width: "16px", height: "16px" }}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-            />
-          </svg>
-        </button>
-
         {/* Contextual Inspector Toggle */}
-        {hasActiveLesson && onToggleContextualPanel && (
+        {onToggleContextualPanel && (
           <button
             type="button"
             className={`cognora-header__action-btn ${isContextualPanelOpen ? "cognora-header__action-btn--active" : ""}`}
