@@ -15,12 +15,14 @@
 export interface LatencyTimestamps {
   t0_prompt_submit?: number;
   t1_request_sent?: number;
+  t1_client_dispatch?: number;
   t2_model_received?: number;
   t3_json_parsed?: number;
   t4_dsl_validated?: number;
   t5_state_reconstructed?: number;
   t6_layout_computed?: number;
   t7_render_complete?: number;
+  t9_client_received?: number;
 }
 
 export interface LatencyBreakdown {

@@ -9,3 +9,8 @@ packages/excalidraw/types
 examples/**/public
 dev-dist
 coverage
+.agents/
+test_concepts.js
+browser_test.py
+test_remaining.js
+inspect_avl.js

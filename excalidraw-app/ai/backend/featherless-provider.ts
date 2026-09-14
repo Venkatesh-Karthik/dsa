@@ -12,8 +12,16 @@ import {
   repairOrReorderActions,
 } from "./dsl-validator";
 
+import {
+  SYSTEM_PROMPT,
+  formatTeachingUserPrompt,
+  formatExpansionPrompt,
+} from "./prompts";
+import { validateLessonQuality } from "./lesson-validator";
 import type { TeachingProvider } from "./teaching-provider";
 import type { TeachingRequest, TeachingResponse } from "../teaching-contract";
+
+export { SYSTEM_PROMPT };
 
 export interface FeatherlessProviderOptions {
   apiKey?: string;
@@ -26,15 +34,6 @@ export interface FeatherlessProviderOptions {
 const DEFAULT_BASE_URL = "https://api.featherless.ai/v1";
 const DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct";
 const DEFAULT_TIMEOUT_MS = 30000;
-
-import {
-  SYSTEM_PROMPT,
-  formatTeachingUserPrompt,
-  formatExpansionPrompt,
-} from "./prompts";
-import { validateLessonQuality } from "./lesson-validator";
-
-export { SYSTEM_PROMPT };
 
 export class FeatherlessTeachingProvider implements TeachingProvider {
   readonly id = "featherless";
@@ -76,6 +75,12 @@ export class FeatherlessTeachingProvider implements TeachingProvider {
 
   getBaseUrl(): string {
     return this.baseUrl;
+  }
+
+  async generateTeachingLesson(
+    request: TeachingRequest,
+  ): Promise<TeachingResponse> {
+    return this.generateTeachingResponse(request);
   }
 
   async generateTeachingResponse(

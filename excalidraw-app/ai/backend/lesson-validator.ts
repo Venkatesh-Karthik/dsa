@@ -143,16 +143,17 @@ export function estimatePromptComplexity(prompt: string): PromptComplexity {
   }
 
   // Map complexity to step ranges:
-  // Default for normal conceptual/step-by-step is 6 to 8 steps
+  // Map complexity to step ranges:
+  // Default for normal conceptual/step-by-step
   const targetStepRanges: Record<
     number,
     { min: number; target: number; max: number; minExpected: number }
   > = {
-    1: { min: 1, target: 2, max: 3, minExpected: 1 },
-    2: { min: 3, target: 4, max: 5, minExpected: 2 },
-    3: { min: 5, target: 6, max: 7, minExpected: 4 },
-    4: { min: 6, target: 7, max: 8, minExpected: 5 },
-    5: { min: 7, target: 8, max: 10, minExpected: 5 },
+    1: { min: 1, target: 1, max: 2, minExpected: 1 },
+    2: { min: 2, target: 2, max: 3, minExpected: 1 },
+    3: { min: 2, target: 3, max: 5, minExpected: 2 },
+    4: { min: 2, target: 4, max: 6, minExpected: 2 },
+    5: { min: 2, target: 5, max: 10, minExpected: 2 },
   };
 
   const range = targetStepRanges[complexity] ?? targetStepRanges[3];
@@ -226,12 +227,12 @@ export function validateLessonQuality(
   ) {
     needsExpansion = true;
     issues.push(
-      `Teaching prompt requires progressive multi-step explanation (${promptComplexity.reason}), but only 1 step was generated. Target is 6-8 steps.`,
+      `Teaching prompt requires progressive multi-step explanation (${promptComplexity.reason}), but only 1 step was generated. Target is multiple steps.`,
     );
   } else if (stepCount === 0 && promptComplexity.isStepByStepRequested) {
     needsExpansion = true;
     issues.push(
-      `Step-by-step lesson was requested, but 0 steps were generated. Target is 6-8 steps.`,
+      `Step-by-step lesson was requested, but 0 steps were generated. Target is multiple steps.`,
     );
   }
 

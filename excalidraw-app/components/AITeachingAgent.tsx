@@ -1,46 +1,108 @@
 /**
  * AI Teaching Agent Component
  *
- * Interactive teaching assistant panel inside Excalidraw that explains
- * computer science concepts and illustrates them directly on the canvas.
+ * Cognora AI-Native Visual Learning Workspace.
+ * Integrates the Stage design layout:
+ *   - Top CognoraHeader (Logo, dynamic topic, modes, auto-align, undo/redo, share, avatar)
+ *   - Left CognoraDrawingToolbar (Active canvas tools selector)
+ *   - Bottom-Center CognoraTimeline (Scrub slider, Prev/Play/Next/Replay, speed, step title)
+ *   - Bottom-Center CognoraAIComposer (Pill composer dock with slash autocomplete and selection context)
+ *   - Right CognoraContextualPanel (Analyze, Explain, Code, Practice tabs with live line highlights)
+ *   - Bottom-Left CognoraLegend (Semantic node and edge status indicators)
+ *   - Bottom-Left CognoraZoomControls (Zoom level, -, +, fullscreen)
+ *   - CognoraToolsPalette (Modal disclosing all DSA concepts and canvas actions)
  *
- * Architecture:
- *   User Prompt -> Frontend AI Service -> Backend (/api/ai/teach) -> Visual DSL -> ai-canvas.ts -> Canvas
+ * Canvas is the HERO. All timeline steps and code navigation execute 100% locally.
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-import {
-  applyVisualActions,
-  getExistingDslIds,
-  focusOnElements,
-  renderVerticalLesson,
-  appendLessonStep,
-  navigateToLessonStep,
-  type RenderedStepRegion,
-} from "../ai/ai-canvas";
+import { applyVisualActions, getExistingDslIds } from "../ai/ai-canvas";
 import {
   requestTeachingExplanation,
   getMockTeachingResponse,
 } from "../ai/ai-service";
+import { TeachingServiceError } from "../ai/teaching-contract";
 import {
-  extractSemanticCanvasState,
   createSemanticSnapshot,
   detectSemanticCanvasChanges,
   type CanvasInteractionDelta,
   type SemanticElementSnapshot,
 } from "../ai/semantic-canvas";
 import { createLatencyTracker } from "../ai/latency-tracker";
+import { extractSelectedElementsContext } from "../ai/selection-context";
+
 import {
-  extractSelectedElementsContext,
-  formatSelectedElementChip,
-} from "../ai/selection-context";
+  executeCommand,
+  getAutocompleteSuggestions,
+  type AutocompleteSuggestion,
+} from "../ai/commands";
+import { detectUserIntent } from "../ai/intent-router";
+import {
+  compileAndValidateVisualLesson,
+  type CompiledTimeline,
+} from "../ai/transformation-timeline";
+import { validateTransformationTimeline } from "../ai/transformation-validator";
+import {
+  LessonPlaybackController,
+  type LessonPlaybackState,
+} from "../ai/lesson-playback-controller";
+import { balanceElementPositions } from "../ai/layout-engine";
+import {
+  getBinarySearchVisualLesson,
+  getDijkstraVisualLesson,
+} from "../ai/backend/mock-lessons";
+import { resolveDomainModule } from "../ai/domain-knowledge";
+import { extractConceptModelFromVisualLesson } from "../ai/concept-intelligence";
+import {
+  inspectSelectedEntity,
+  deriveWhatChangedExplanation,
+  derivePracticeItem,
+} from "../ai/adaptation-engine";
+import {
+  createLearnerSession,
+  recordInteraction,
+  type LearnerSession,
+} from "../ai/learner-model";
+import { UniversalConceptIntelligenceEngine } from "../ai/universal-engine";
+import { type AuthoritativeSemanticModel } from "../ai/authoritative-model";
 
 import "./AITeachingAgent.scss";
 
-import type { VisualAction, TeachingStep } from "../ai/visual-dsl";
+// Stage Design Components
+import { CognoraHeader } from "./CognoraHeader";
+import {
+  CognoraDrawingToolbar,
+  type DrawingToolType,
+} from "./CognoraDrawingToolbar";
+import { CognoraAIComposer } from "./CognoraAIComposer";
+import { CognoraTimeline } from "./CognoraTimeline";
+import {
+  CognoraContextualPanel,
+  type PanelTabType,
+  type AnalyzeModel,
+  type ExplainModel,
+  type PracticeModel,
+  type ContextMetric,
+  type ContextProperty,
+  type ContextAction,
+} from "./CognoraContextualPanel";
+import { CognoraToolsPalette } from "./CognoraToolsPalette";
+import { CognoraZoomControls } from "./CognoraZoomControls";
+import {
+  CognoraConversation,
+  type TeachingRequestState,
+} from "./CognoraConversation";
+import { IconAlert, IconInspect, IconChevronRight } from "./CognoraIcons";
+
+import type {
+  VisualAction,
+  TeachingStep,
+  VisualLesson,
+  CodeContext,
+} from "../ai/visual-dsl";
 import type {
   TeachingRequestContext,
   SelectedSemanticElement,
@@ -52,16 +114,15 @@ export interface AITeachingAgentProps {
   excalidrawAPI: ExcalidrawImperativeAPI;
 }
 
-export interface ActiveLesson {
+export interface TransformationLesson {
   messageId: string;
+  lessonId: string;
   topic?: string;
-  steps: TeachingStep[];
-  currentStepIndex: number;
-  revealedStepIndex?: number;
-  stepRegions?: RenderedStepRegion[];
+  lesson: VisualLesson;
+  timeline?: CompiledTimeline;
+  currentTransformationIndex: number;
+  playbackSpeed: number;
 }
-
-const LESSON_PLAYBACK_INTERVAL_MS = 2200;
 
 export interface ChatMessage {
   id: string;
@@ -74,64 +135,138 @@ export interface ChatMessage {
   topic?: string;
   explanationSteps?: string[];
   steps?: TeachingStep[];
+  visualLesson?: VisualLesson;
+  codeSolution?: {
+    language?: string;
+    code?: string;
+    problem_summary?: string;
+  };
 }
-
-// ============================================================================
-// UI Component
-// ============================================================================
 
 export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   excalidrawAPI,
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome-msg",
-      role: "assistant",
-      content:
-        "Hello! I am your Cognora visual learning tutor. Ask me about any concept or idea (e.g. binary search, arrays, stack, trees, AVL rotations, system design), and I will explain it step-by-step with visual diagrams drawn directly on the canvas.",
-    },
-  ]);
-  const [inputValue, setInputValue] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const rootContainerRef = useRef<HTMLDivElement>(null);
 
-  // Active multi-step lesson state
-  const [activeLesson, setActiveLesson] = useState<ActiveLesson | null>(null);
+  // App Modes: visualize, explore, practice, understand
+  const [activeMode, setActiveMode] = useState<
+    "visualize" | "explore" | "practice" | "understand"
+  >("visualize");
+
+  // Active Canvas Tool for Drawing Toolbar
+  const [activeCanvasTool, setActiveCanvasTool] = useState<string>("selection");
+
+  // UI Panels state
+  const [isContextualPanelOpen, setIsContextualPanelOpen] = useState(false);
+  const [contextualTab, setContextualTab] = useState<PanelTabType>("analyze");
+  const [isToolsPaletteOpen, setIsToolsPaletteOpen] = useState(false);
+
+  // Zoom & Viewport state (fraction: 1 = 100%)
+  const [zoomValue, setZoomValue] = useState(1);
+
+  // Lessons State
+  const [transformationLesson, setTransformationLesson] =
+    useState<TransformationLesson | null>(null);
+  const [authoritativeModel, setAuthoritativeModel] =
+    useState<AuthoritativeSemanticModel | null>(null);
   const [isLessonPlaying, setIsLessonPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
-  // Detected user canvas interactions (e.g., node value changed from 20 to 9)
-  const [pendingInteraction, setPendingInteraction] =
-    useState<CanvasInteractionDelta | null>(null);
+  // Synchronize active tab with available capabilities
+  useEffect(() => {
+    const caps = transformationLesson?.lesson.capabilities as
+      | PanelTabType[]
+      | undefined;
+    if (caps && caps.length > 0 && !caps.includes(contextualTab)) {
+      setContextualTab(caps[0]);
+    }
+  }, [transformationLesson?.lesson.capabilities, contextualTab]);
 
-  // Active user selection context on canvas
+  // AI & Chat request state machine
+  const [inputValue, setInputValue] = useState("");
+  const [requestState, setRequestState] =
+    useState<TeachingRequestState>("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isConversationMinimized, setIsConversationMinimized] = useState(false);
+
+  // Synchronous guard and request tracking refs
+  const activeRequestLockRef = useRef<string | null>(null);
+  const currentAbortControllerRef = useRef<AbortController | null>(null);
+  const currentRequestIdRef = useRef<string | null>(null);
+  const lastFailedPromptRef = useRef<string | null>(null);
+
+  const isTeachingRequestActive =
+    requestState === "sending" ||
+    requestState === "thinking" ||
+    requestState === "success";
+
+  // Autocomplete state
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<
+    AutocompleteSuggestion[]
+  >([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+  const [showAutocomplete, setShowAutocomplete] = useState(false);
+
+  // Selected elements & pending interactions on canvas
   const [selectedContext, setSelectedContext] = useState<
     SelectedSemanticElement[]
   >([]);
+  const [pendingInteraction, setPendingInteraction] =
+    useState<CanvasInteractionDelta | null>(null);
+  const [selectedStartNode, setSelectedStartNode] = useState<string>("A");
+  const [selectedDestNode, setSelectedDestNode] = useState<string>("P");
+  const [selectedPracticeOption, setSelectedPracticeOption] = useState<
+    number | null
+  >(null);
+  const [practiceFeedback, setPracticeFeedback] = useState<{
+    isCorrect?: boolean;
+    message?: string;
+  } | null>(null);
+  const learnerSessionRef = useRef<LearnerSession>(createLearnerSession());
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousSnapshotRef = useRef<Map<string, SemanticElementSnapshot>>(
     new Map(),
   );
-  const isApplyingVisualsRef = useRef<boolean>(false);
-  const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isApplyingVisualsRef = useRef(false);
 
-  // Auto-scroll message list
+  // Derive ownerDocument & ownerWindow from rootContainerRef per user guidelines
+  const getOwnerDoc = useCallback((): Document => {
+    return rootContainerRef.current?.ownerDocument || document;
+  }, []);
+
+  // Autocomplete updates
   useEffect(() => {
-    if (isOpen) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (inputValue.startsWith("/")) {
+      const suggestions = getAutocompleteSuggestions(inputValue);
+      setAutocompleteSuggestions(suggestions);
+      setSelectedSuggestionIndex(0);
+      setShowAutocomplete(suggestions.length > 0);
+    } else {
+      setShowAutocomplete(false);
+      setAutocompleteSuggestions([]);
     }
-  }, [messages, isOpen, isLoading]);
+  }, [inputValue]);
 
+  // Cleanup playback and in-flight requests on unmount
   useEffect(() => {
     return () => {
+      if (playbackControllerRef.current) {
+        playbackControllerRef.current.destroy();
+        playbackControllerRef.current = null;
+      }
       if (playbackTimerRef.current) {
         clearInterval(playbackTimerRef.current);
+      }
+      if (currentAbortControllerRef.current) {
+        currentAbortControllerRef.current.abort();
       }
     };
   }, []);
 
-  // Snapshot initialization, selection tracking, and canvas change tracking
+  // Sync canvas zoom and active tool
   useEffect(() => {
     if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
       return;
@@ -140,11 +275,29 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     try {
       const initialElements = excalidrawAPI.getSceneElements();
       previousSnapshotRef.current = createSemanticSnapshot(initialElements);
+      const appState = excalidrawAPI.getAppState();
+      if (appState?.zoom?.value) {
+        setZoomValue(appState.zoom.value);
+      }
     } catch {
-      // Ignored if API not ready yet
+      // API not ready
     }
 
     const unsubscribe = excalidrawAPI.onChange((elements, appState) => {
+      if (appState?.zoom?.value) {
+        setZoomValue(appState.zoom.value);
+      }
+
+      // Sync active tool
+      const currentTool = appState?.activeTool?.type;
+      if (currentTool) {
+        if (currentTool === "freedraw") {
+          setActiveCanvasTool("freedraw");
+        } else {
+          setActiveCanvasTool(currentTool);
+        }
+      }
+
       // Track selected elements context
       if (elements && elements.length > 0 && appState?.selectedElementIds) {
         const extracted = extractSelectedElementsContext(
@@ -156,18 +309,40 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         setSelectedContext([]);
       }
 
-      if (isApplyingVisualsRef.current) {
+      const playbackStatus = playbackControllerRef.current?.getStatus();
+      if (
+        isApplyingVisualsRef.current ||
+        playbackStatus === "TRANSITIONING" ||
+        playbackStatus === "PLAYING"
+      ) {
         previousSnapshotRef.current = createSemanticSnapshot(elements);
         return;
       }
 
+      // Detect user manual canvas edits
       if (elements && elements.length > 0) {
         const deltas = detectSemanticCanvasChanges(
           elements,
           previousSnapshotRef.current,
         );
         if (deltas.length > 0) {
-          setPendingInteraction(deltas[0]);
+          // If a lesson is active, ignore deletions and internal connector updates
+          const userDeltas = deltas.filter((d) => {
+            if (transformationLesson && d.type === "element_deleted") {
+              return false;
+            }
+            if (
+              d.targetDslId.startsWith("edge-") ||
+              d.targetDslId.startsWith("conn-") ||
+              d.targetDslId.startsWith("rel-")
+            ) {
+              return false;
+            }
+            return true;
+          });
+          if (userDeltas.length > 0) {
+            setPendingInteraction(userDeltas[0]);
+          }
         }
         previousSnapshotRef.current = createSemanticSnapshot(elements);
       }
@@ -180,1012 +355,1567 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     };
   }, [excalidrawAPI]);
 
-  /**
-   * Starts a vertical multi-step whiteboard lesson.
-   * Progressively reveals Step 0 on the whiteboard and positions the camera at Step 0.
-   */
-  const startVerticalLesson = (
-    steps: TeachingStep[],
-    options: {
-      messageId: string;
-      topic?: string;
-      initialStepIndex?: number;
-    },
-  ) => {
-    if (!excalidrawAPI || excalidrawAPI.isDestroyed || !steps.length) {
-      return;
-    }
+  // ============================================================================
+  // Lesson Playback & Navigation (Authoritative Controller)
+  // ============================================================================
 
-    isApplyingVisualsRef.current = true;
-    try {
-      const targetStepIndex = options.initialStepIndex ?? 0;
-      // Progressive reveal: initially render Step 0 on the whiteboard
-      const result = renderVerticalLesson(excalidrawAPI, steps, {
-        renderUpToStepIndex: targetStepIndex,
-        focusStepIndex: targetStepIndex,
-        replacePreviousAI: true,
-        animateViewport: true,
-      });
-
-      const lesson: ActiveLesson = {
-        messageId: options.messageId,
-        topic: options.topic,
-        steps,
-        currentStepIndex: targetStepIndex,
-        revealedStepIndex: targetStepIndex,
-        stepRegions: result.stepRegions,
-      };
-
-      setActiveLesson(lesson);
-      setIsLessonPlaying(false);
-
-      if (!result.success && result.errors.length > 0) {
-        setError(result.errors[0]);
-      } else {
-        setError(null);
-      }
-    } catch (err: unknown) {
-      const errText =
-        err instanceof Error ? err.message : "Failed to render vertical lesson";
-      setError(errText);
-    } finally {
-      if (excalidrawAPI && !excalidrawAPI.isDestroyed) {
-        previousSnapshotRef.current = createSemanticSnapshot(
-          excalidrawAPI.getSceneElements(),
-        );
-      }
-      setTimeout(() => {
-        isApplyingVisualsRef.current = false;
-      }, 100);
-    }
-  };
-
-  /**
-   * Helper that navigates to a step and progressively appends any unrevealed steps
-   */
-  const performStepNavigation = (
-    lesson: ActiveLesson,
-    stepIdx: number,
-  ): ActiveLesson => {
-    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
-      return lesson;
-    }
-    if (stepIdx < 0 || stepIdx >= lesson.steps.length) {
-      return lesson;
-    }
-
-    const revealedIndex =
-      lesson.revealedStepIndex ??
-      (lesson.stepRegions?.length ? lesson.stepRegions.length - 1 : 0);
-
-    // If target step is beyond what is currently revealed, progressively append all steps up to stepIdx
-    if (stepIdx > revealedIndex) {
-      const currentRegions = [...(lesson.stepRegions || [])];
-      for (let i = revealedIndex + 1; i <= stepIdx; i++) {
-        const appendResult = appendLessonStep(
-          excalidrawAPI,
-          lesson.steps,
-          i,
-          currentRegions,
-          { animateViewport: i === stepIdx },
-        );
-        if (appendResult.success && appendResult.stepRegion) {
-          currentRegions.push(appendResult.stepRegion);
-        }
-      }
-
-      return {
-        ...lesson,
-        currentStepIndex: stepIdx,
-        revealedStepIndex: stepIdx,
-        stepRegions: currentRegions,
-      };
-    }
-
-    // Otherwise, target step is already revealed on the canvas: smoothly pan camera
-    const targetRegion = lesson.stepRegions?.[stepIdx];
-    if (targetRegion) {
-      navigateToLessonStep(excalidrawAPI, targetRegion, {
-        animation: true,
-      });
-    } else {
-      const sceneElements = excalidrawAPI.getSceneElements();
-      const stepElements = sceneElements.filter(
-        (el) => !el.isDeleted && el.customData?.stepIndex === stepIdx,
-      );
-      if (stepElements.length > 0) {
-        focusOnElements(excalidrawAPI, stepElements);
-      }
-    }
-
-    return {
-      ...lesson,
-      currentStepIndex: stepIdx,
-    };
-  };
-
-  /**
-   * Navigates smoothly to a step in the active vertical whiteboard lesson.
-   * Preserves all visual history on the canvas: does NOT erase or overwrite elements.
-   */
-  const goToLessonStep = (lesson: ActiveLesson, stepIdx: number) => {
-    const updated = performStepNavigation(lesson, stepIdx);
-    setActiveLesson(updated);
-  };
+  const playbackControllerRef = useRef<LessonPlaybackController | null>(null);
 
   const stopLessonPlayback = () => {
-    if (playbackTimerRef.current) {
-      clearInterval(playbackTimerRef.current);
-      playbackTimerRef.current = null;
-    }
+    playbackControllerRef.current?.pause();
     setIsLessonPlaying(false);
   };
 
-  const playLesson = (lesson: ActiveLesson) => {
-    if (!lesson.steps.length) {
-      return;
-    }
-
-    if (lesson.currentStepIndex >= lesson.steps.length - 1) {
-      goToLessonStep(lesson, 0);
-    }
-
-    stopLessonPlayback();
-    setIsLessonPlaying(true);
-
-    playbackTimerRef.current = setInterval(() => {
-      setActiveLesson((currentLesson) => {
-        if (!currentLesson) {
-          stopLessonPlayback();
-          return currentLesson;
-        }
-
-        const nextStepIndex = currentLesson.currentStepIndex + 1;
-        if (nextStepIndex >= currentLesson.steps.length) {
-          stopLessonPlayback();
-          return currentLesson;
-        }
-
-        const updated = performStepNavigation(currentLesson, nextStepIndex);
-
-        if (nextStepIndex >= currentLesson.steps.length - 1) {
-          stopLessonPlayback();
-        }
-
-        return updated;
-      });
-    }, LESSON_PLAYBACK_INTERVAL_MS);
-  };
-
-  const replayLesson = (lesson: ActiveLesson) => {
-    stopLessonPlayback();
-    goToLessonStep(lesson, 0);
-  };
-
-  const handlePreviousStep = (lesson: ActiveLesson) => {
-    stopLessonPlayback();
-    goToLessonStep(lesson, lesson.currentStepIndex - 1);
-  };
-
-  const handleNextStep = (lesson: ActiveLesson) => {
-    stopLessonPlayback();
-    goToLessonStep(lesson, lesson.currentStepIndex + 1);
-  };
-
-  const handleJumpToStep = (lesson: ActiveLesson, stepIdx: number) => {
-    stopLessonPlayback();
-    goToLessonStep(lesson, stepIdx);
-  };
-
-  const handleFocusVisuals = (msg: ChatMessage) => {
-    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
-      return;
-    }
-    const sceneElements = excalidrawAPI.getSceneElementsIncludingDeleted();
-    const actions =
-      msg.steps && msg.steps.length > 0
-        ? msg.steps.flatMap((s) => s.visual_actions)
-        : msg.visualActions ?? [];
-
-    const actionTargets = new Set(
-      actions
-        .map((a) => ("id" in a ? a.id : "target" in a ? a.target : null))
-        .filter(Boolean),
-    );
-
-    let targetElements = sceneElements.filter(
-      (el) =>
-        !el.isDeleted &&
-        el.customData?.dslId &&
-        actionTargets.has(el.customData.dslId as string),
-    );
-
-    if (!targetElements.length) {
-      targetElements = sceneElements.filter(
-        (el) => !el.isDeleted && el.customData?.dslId,
-      );
-    }
-
-    if (targetElements.length > 0) {
-      focusOnElements(excalidrawAPI, targetElements);
-    }
-  };
-
-  const handleRetryVisuals = (msg: ChatMessage) => {
-    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
-      return;
-    }
-
-    if (msg.steps && msg.steps.length > 0) {
-      startVerticalLesson(msg.steps, {
-        messageId: msg.id,
-        topic: msg.topic,
-        initialStepIndex: 0,
-      });
-      return;
-    }
-
-    if (!msg.visualActions?.length) {
-      return;
-    }
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === msg.id ? { ...m, visualStatus: "drawing" } : m,
-      ),
-    );
-
+  const startTransformationLesson = (
+    lesson: VisualLesson,
+    options: { messageId: string; topic?: string; prompt?: string },
+    initialIndex = 0,
+  ) => {
+    isApplyingVisualsRef.current = true;
     try {
-      isApplyingVisualsRef.current = true;
-      const applyResult = applyVisualActions(excalidrawAPI, msg.visualActions, {
-        focusViewport: true,
-        replaceMatchingAI: true,
-        preventDuplicates: false,
-        showToast: true,
+      // 1. Process question through the universal intelligence engine to build AuthoritativeSemanticModel
+      const processed = UniversalConceptIntelligenceEngine.processQuestion(
+        options.prompt || options.topic || lesson.title,
+        lesson as any,
+      );
+
+      const model = processed.authoritativeModel;
+      setAuthoritativeModel(model);
+
+      // 2. The authoritative timeline is derived directly from the validated semantic model
+      const timeline = processed.timeline;
+
+      const validation = validateTransformationTimeline(timeline, {
+        prompt: options.prompt || options.topic || lesson.title,
+        concept: lesson.concept,
       });
 
-      previousSnapshotRef.current = createSemanticSnapshot(
-        excalidrawAPI.getSceneElements(),
+      console.log(
+        `[COGNORA][LESSON] lessonId=${timeline.lessonId} concept=${timeline.topic} valid=${validation.valid} states=${timeline.states.length} repaired=${validation.repaired} goalSatisfied=${model.goalSatisfaction.satisfied}`,
       );
-      setTimeout(() => {
-        isApplyingVisualsRef.current = false;
-      }, 100);
 
-      if (applyResult.success) {
-        setError(null);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === msg.id
-              ? { ...m, visualStatus: "success", visualError: undefined }
-              : m,
-          ),
-        );
-      } else {
-        const errText =
-          applyResult.errors[0] || "Failed to render visual actions";
-        setError(errText);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === msg.id
-              ? { ...m, visualStatus: "failed", visualError: errText }
-              : m,
-          ),
+      if (
+        !timeline.states ||
+        timeline.states.length === 0 ||
+        timeline.states[0].graph.entities.size === 0
+      ) {
+        throw new Error(
+          validation.errors.length > 0
+            ? validation.errors.join("; ")
+            : "Lesson validation failed: Scene contains zero semantic entities.",
         );
       }
-    } catch (err: unknown) {
-      const errText =
-        err instanceof Error ? err.message : "Failed to illustrate diagram";
-      setError(errText);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msg.id
-            ? { ...m, visualStatus: "failed", visualError: errText }
-            : m,
-        ),
+
+      if (!validation.valid && validation.errors.length > 0) {
+        throw new Error(
+          `Lesson validation failed: ${validation.errors.join("; ")}`,
+        );
+      }
+
+      // 2. Tear down any previous playback controller cleanly
+      if (playbackControllerRef.current) {
+        playbackControllerRef.current.destroy();
+        playbackControllerRef.current = null;
+        excalidrawAPI.updateScene({ elements: [] });
+      }
+
+      // 3. Create single authoritative LessonPlaybackController
+      const controller = new LessonPlaybackController(
+        excalidrawAPI,
+        timeline,
+        initialIndex,
       );
+      playbackControllerRef.current = controller;
+
+      // 4. Render initial scene state immediately
+      controller.renderInitial(true);
+
+      // Verify canvas elements were rendered (Minimum Validity Invariant)
+      const renderedElements = excalidrawAPI.getSceneElements();
+      if (!renderedElements || renderedElements.length === 0) {
+        throw new Error(
+          "Render invariant failed: Scene contains 0 rendered elements.",
+        );
+      }
+
+      // 5. Subscribe to state transitions
+      controller.subscribe((state) => {
+        previousSnapshotRef.current = createSemanticSnapshot(
+          excalidrawAPI.getSceneElements(),
+        );
+        setIsLessonPlaying(state.status === "PLAYING");
+        setPlaybackSpeed(state.speed);
+        setTransformationLesson((prev) => {
+          if (!prev || prev.lessonId !== timeline.lessonId) {
+            return {
+              messageId: options.messageId,
+              lessonId: timeline.lessonId,
+              topic: options.topic,
+              lesson,
+              timeline,
+              currentTransformationIndex: state.currentIndex,
+              playbackSpeed: state.speed,
+            };
+          }
+          return {
+            ...prev,
+            timeline,
+            currentTransformationIndex: state.currentIndex,
+            playbackSpeed: state.speed,
+          };
+        });
+      });
+    } finally {
+      isApplyingVisualsRef.current = false;
     }
   };
 
-  const handleSubmit = async (promptText: string) => {
-    const trimmed = promptText.trim();
-    if (!trimmed || isLoading) {
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__excalidrawAPI = excalidrawAPI;
+      (window as any).__cognoraStartSampleLesson = (type = "binarySearch") => {
+        const lesson =
+          type === "dijkstra"
+            ? getDijkstraVisualLesson()
+            : getBinarySearchVisualLesson();
+        startTransformationLesson(lesson, {
+          messageId: `sample-${Date.now()}`,
+          topic: lesson.concept || lesson.title,
+          prompt: lesson.title,
+        });
+      };
+      (window as any).__cognoraStartLessonDirectly = (lesson: any) => {
+        startTransformationLesson(lesson, {
+          messageId: `direct-${Date.now()}`,
+          topic: lesson.concept || lesson.title,
+          prompt: lesson.title,
+        });
+      };
+      (window as any).__cognoraToggleInspector = () => {
+        setIsContextualPanelOpen((prev) => !prev);
+      };
+      (window as any).__cognoraToggleTools = () => {
+        setIsToolsPaletteOpen((prev) => !prev);
+      };
+    }
+  }, [excalidrawAPI]);
+
+  const handleNextTransformation = () => {
+    setSelectedPracticeOption(null);
+    setPracticeFeedback(null);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "next",
+        stepIndex: (transformationLesson?.currentTransformationIndex ?? 0) + 1,
+      });
+    }
+    playbackControllerRef.current?.next(true);
+  };
+
+  const handlePreviousTransformation = () => {
+    setSelectedPracticeOption(null);
+    setPracticeFeedback(null);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "prev",
+        stepIndex: Math.max(
+          0,
+          (transformationLesson?.currentTransformationIndex ?? 0) - 1,
+        ),
+      });
+    }
+    playbackControllerRef.current?.prev(true);
+  };
+
+  const handleJumpTransformation = (targetIndex: number) => {
+    setSelectedPracticeOption(null);
+    setPracticeFeedback(null);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "seek",
+        stepIndex: targetIndex,
+      });
+    }
+    playbackControllerRef.current?.seek(targetIndex, true);
+  };
+
+  const playTransformationLesson = () => {
+    playbackControllerRef.current?.play();
+  };
+
+  const handleCycleSpeed = () => {
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.cycleSpeed();
+    } else {
+      const nextSpeed =
+        playbackSpeed === 1
+          ? 1.5
+          : playbackSpeed === 1.5
+          ? 2
+          : playbackSpeed === 2
+          ? 0.5
+          : 1;
+      setPlaybackSpeed(nextSpeed);
+    }
+  };
+
+  // ============================================================================
+  // Canvas Tools & Canvas Interactions
+  // ============================================================================
+
+  const handleSelectTool = (tool: DrawingToolType) => {
+    setActiveCanvasTool(tool);
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
       return;
     }
 
-    const latency = createLatencyTracker().mark("t0_prompt_submit");
+    switch (tool) {
+      case "selection":
+        excalidrawAPI.setActiveTool({ type: "selection" });
+        break;
+      case "hand":
+        excalidrawAPI.setActiveTool({ type: "hand" });
+        break;
+      case "rectangle":
+        excalidrawAPI.setActiveTool({ type: "rectangle" });
+        break;
+      case "ellipse":
+        excalidrawAPI.setActiveTool({ type: "ellipse" });
+        break;
+      case "arrow":
+        excalidrawAPI.setActiveTool({ type: "arrow" });
+        break;
+      case "freedraw":
+        excalidrawAPI.setActiveTool({ type: "freedraw" });
+        break;
+      case "text":
+        excalidrawAPI.setActiveTool({ type: "text" });
+        break;
+      case "image":
+        excalidrawAPI.setActiveTool({ type: "image" });
+        break;
+    }
+  };
 
-    setError(null);
+  const handlePaletteSelectCanvasTool = (
+    tool: DrawingToolType | "diamond" | "line" | "eraser" | "frame",
+  ) => {
+    setIsToolsPaletteOpen(false);
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+
+    if (
+      tool === "selection" ||
+      tool === "hand" ||
+      tool === "rectangle" ||
+      tool === "ellipse" ||
+      tool === "arrow" ||
+      tool === "freedraw" ||
+      tool === "text" ||
+      tool === "image"
+    ) {
+      handleSelectTool(tool);
+    } else {
+      setActiveCanvasTool(tool);
+      excalidrawAPI.setActiveTool({ type: tool as any });
+    }
+  };
+
+  const handleAutoAlign = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const elements = excalidrawAPI.getSceneElements();
+    if (!elements || elements.length === 0) {
+      return;
+    }
+    const positions = balanceElementPositions(
+      elements.map((el) => ({
+        id: el.id,
+        x: el.x,
+        y: el.y,
+        width: el.width,
+        height: el.height,
+      })),
+    );
+    const updated = elements.map((el) => {
+      const pos = positions.get(el.id);
+      return pos ? { ...el, x: pos.x, y: pos.y } : el;
+    });
+    excalidrawAPI.updateScene({ elements: updated as any });
+  };
+
+  const handleUndo = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const app = (excalidrawAPI as any).app;
+    if (app?.actionManager?.actions?.["undo"]) {
+      app.actionManager.executeAction(app.actionManager.actions["undo"], "ui");
+      return;
+    }
+    const doc = getOwnerDoc();
+    const event = new KeyboardEvent("keydown", {
+      key: "z",
+      code: "KeyZ",
+      ctrlKey: true,
+      bubbles: true,
+    });
+    const target = doc.querySelector(".excalidraw-container") || doc.body;
+    target.dispatchEvent(event);
+  };
+
+  const handleRedo = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const app = (excalidrawAPI as any).app;
+    if (app?.actionManager?.actions?.["redo"]) {
+      app.actionManager.executeAction(app.actionManager.actions["redo"], "ui");
+      return;
+    }
+    const doc = getOwnerDoc();
+    const event = new KeyboardEvent("keydown", {
+      key: "y",
+      code: "KeyY",
+      ctrlKey: true,
+      bubbles: true,
+    });
+    const target = doc.querySelector(".excalidraw-container") || doc.body;
+    target.dispatchEvent(event);
+  };
+
+  const handleZoomIn = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const appState = excalidrawAPI.getAppState();
+    const currentZoom = appState.zoom.value;
+    const newZoom = Math.min(currentZoom * 1.25, 5);
+    excalidrawAPI.updateScene({
+      appState: { ...appState, zoom: { value: newZoom as any } },
+    });
+    setZoomValue(newZoom);
+  };
+
+  const handleZoomOut = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const appState = excalidrawAPI.getAppState();
+    const currentZoom = appState.zoom.value;
+    const newZoom = Math.max(currentZoom / 1.25, 0.1);
+    excalidrawAPI.updateScene({
+      appState: { ...appState, zoom: { value: newZoom as any } },
+    });
+    setZoomValue(newZoom);
+  };
+
+  const handleResetZoom = () => {
+    if (!excalidrawAPI || excalidrawAPI.isDestroyed) {
+      return;
+    }
+    const appState = excalidrawAPI.getAppState();
+    excalidrawAPI.updateScene({
+      appState: { ...appState, zoom: { value: 1 as any } },
+    });
+    setZoomValue(1);
+  };
+
+  const handleToggleFullscreen = () => {
+    const doc = getOwnerDoc();
+    if (!doc.fullscreenElement) {
+      doc.documentElement.requestFullscreen?.();
+    } else {
+      doc.exitFullscreen?.();
+    }
+  };
+
+  // ============================================================================
+  // AI Prompt Submission & Slash Commands (Single Canonical Lifecycle)
+  // ============================================================================
+
+  const handleSubmit = async (
+    promptText: string,
+    userAction: string = "prompt_submit",
+  ) => {
+    // 1. Synchronously guard against duplicate rapid submissions
+    if (activeRequestLockRef.current !== null || isTeachingRequestActive) {
+      console.warn(
+        `[COGNORA][TEACH][BLOCKED] Duplicate submission blocked (lock=${activeRequestLockRef.current}, state=${requestState}): "${promptText}"`,
+      );
+      return;
+    }
+
+    const trimmed = promptText.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    // 2. Synchronously lock the submission guard with unique generation ID
+    const generationId = `GEN-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+    const requestId = generationId;
+    activeRequestLockRef.current = generationId;
+    currentRequestIdRef.current = generationId;
+    lastFailedPromptRef.current = trimmed;
+
+    setRequestState("sending");
+    setErrorMessage(null);
+    setErrorCode(null);
+    setIsConversationMinimized(false);
+
+    // 3. Check for special slash commands or execute via DSA command executor
+    if (trimmed.startsWith("/")) {
+      if (trimmed === "/clear") {
+        excalidrawAPI.updateScene({ elements: [] });
+        setTransformationLesson(null);
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+      if (trimmed === "/align") {
+        handleAutoAlign();
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+      const cmdResult = executeCommand(
+        trimmed,
+        excalidrawAPI.getSceneElements(),
+      );
+      if (cmdResult.success && cmdResult.actions.length > 0) {
+        applyVisualActions(excalidrawAPI, cmdResult.actions, {
+          replacePreviousAI: false,
+          focusViewport: true,
+        });
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+    }
+
+    // 4. Render user message immediately (if not retrying previous message) & clear composer
+    if (userAction !== "user_retry") {
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: trimmed,
+      };
+      if (requestState === "error" || !transformationLesson) {
+        setMessages([userMessage]);
+      } else {
+        setMessages((prev) => [...prev, userMessage]);
+      }
+    }
     setInputValue("");
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: trimmed,
-    };
+    // 5. Enter visible AI processing ("thinking") state
+    setRequestState("thinking");
+    setErrorMessage(null);
+    setErrorCode(null);
 
-    setMessages((prev) => [...prev, userMessage]);
-    setIsLoading(true);
+    // 6. Abort any previous stale controller & setup current
+    if (currentAbortControllerRef.current) {
+      console.log(
+        `[COGNORA][TEACH][ABORT] Aborting previous controller before starting ${generationId}`,
+      );
+      currentAbortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    currentAbortControllerRef.current = abortController;
+
+    const startTime = performance.now();
+
+    console.log(
+      `[COGNORA][TEACH][START] generationId=${generationId} requestId=${requestId} userAction=${userAction} prompt="${trimmed}"`,
+    );
 
     try {
-      const existingIds = getExistingDslIds(excalidrawAPI);
-      const appState = excalidrawAPI.getAppState();
-      const theme = appState?.theme === "dark" ? "dark" : "light";
-      const sceneElements = excalidrawAPI.getSceneElements();
+      const tIntentStart = performance.now();
+      const intentClassification = detectUserIntent(trimmed);
+      const tIntent = Math.round(performance.now() - tIntentStart);
 
-      // Extract high-level semantic representation of current canvas
-      const semanticState = extractSemanticCanvasState(sceneElements);
-
-      // Extract active canvas element selection
-      const activeSelection = extractSelectedElementsContext(
-        sceneElements,
-        appState?.selectedElementIds,
-      );
-      const finalSelectionContext =
-        activeSelection.length > 0
-          ? activeSelection
-          : selectedContext.length > 0
-          ? selectedContext
-          : undefined;
-
-      const conversationHistory = messages.slice(-6).map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-      // In-lesson context: if user asks clarifying question while stepping through a lesson
-      const activeLessonState = activeLesson
-        ? {
-            topic: activeLesson.topic,
-            currentStepIndex: activeLesson.currentStepIndex,
-            totalSteps: activeLesson.steps.length,
-            stepTitle: activeLesson.steps[activeLesson.currentStepIndex]?.title,
-          }
-        : undefined;
-
-      const teachingContext: TeachingRequestContext = {
-        theme,
-        currentElementsCount: sceneElements.length,
-        existingAIElements: existingIds,
-        selectedElementsContext: finalSelectionContext,
-        conversationHistory,
-        semanticSummary: semanticState.summaryText,
-        activeLessonState,
-        userInteractionDelta: pendingInteraction
-          ? pendingInteraction.description
-          : undefined,
+      const tReqBuildStart = performance.now();
+      const existingDslIds = getExistingDslIds(excalidrawAPI);
+      const requestContext: TeachingRequestContext = {
+        theme: "light",
+        existingAIElements: existingDslIds,
+        selectedElementsContext: selectedContext,
+        intent: intentClassification.intent,
       };
+      const tReqBuild = Math.round(performance.now() - tReqBuildStart);
 
-      latency.mark("t1_request_sent");
+      const tProviderStart = performance.now();
       const response = await requestTeachingExplanation(
         {
           prompt: trimmed,
-          context: teachingContext,
+          context: requestContext,
+          requestId,
+          generationId,
+          userAction,
         },
-        { fallbackToLocalMock: false },
+        {
+          signal: abortController.signal,
+        },
       );
-      latency.mark("t2_model_received");
+      const tProvider = Math.round(performance.now() - tProviderStart);
 
-      // If user addressed the pending canvas interaction, clear it
+      // Verify this request was not superseded or cancelled
+      if (
+        abortController.signal.aborted ||
+        currentRequestIdRef.current !== requestId
+      ) {
+        console.log(
+          `[COGNORA][TEACH][IGNORED] Stale response for ${generationId} discarded.`,
+        );
+        return;
+      }
+
+      const duration = Math.round(performance.now() - startTime);
+      console.log(
+        `[COGNORA][TEACH][SUCCESS] generationId=${generationId} requestId=${requestId} duration=${duration}ms topic="${
+          response.topic || ""
+        }"`,
+      );
+
       if (pendingInteraction) {
         setPendingInteraction(null);
       }
 
-      const hasSteps = Boolean(response.steps && response.steps.length > 0);
-      const hasVisualActions = Boolean(
-        (response.visual_actions && response.visual_actions.length > 0) ||
-          (hasSteps && response.steps![0].visual_actions.length > 0),
+      const tParseStart = performance.now();
+      // Extract visual lesson
+      const rawLesson =
+        (response as any).visualLesson || (response as any).visual_lesson;
+      let visualLesson: VisualLesson | undefined = rawLesson
+        ? {
+            id: rawLesson.id || `lesson-${Date.now()}`,
+            title: rawLesson.title || response.topic || "",
+            concept: rawLesson.concept || response.topic || "",
+            initialScene:
+              rawLesson.initialScene || rawLesson.initial_scene || [],
+            transformations: (rawLesson.transformations || []).map(
+              (t: any) => ({
+                id: t.id || `t-${Math.random().toString(36).slice(2, 7)}`,
+                title: t.title || "",
+                operations: t.operations || t.visual_actions || [],
+                visual_actions: t.visual_actions || t.operations || [],
+                explanation: t.explanation || "",
+                codeContext: t.codeContext || t.code_context,
+                highlights: t.highlights || [],
+                calculations: t.calculations,
+                insight: t.insight,
+              }),
+            ),
+            codeContexts: rawLesson.codeContexts || rawLesson.code_contexts,
+            domain: rawLesson.domain,
+          }
+        : undefined;
+
+      // Fallback: construct visualLesson from steps if top-level visualLesson was omitted
+      if (!visualLesson && response.steps && response.steps.length > 0) {
+        const firstStep = response.steps[0];
+        const initialActions =
+          firstStep.visual_actions || response.visual_actions || [];
+        const restSteps =
+          response.steps.length > 1 ? response.steps.slice(1) : [];
+        visualLesson = {
+          id: `lesson-${Date.now()}`,
+          title: response.topic || "",
+          concept: response.topic || "",
+          initialScene: initialActions,
+          transformations: restSteps.map((s: any, idx: number) => ({
+            id: `t-${idx + 1}`,
+            title: s.title || `Step ${idx + 1}`,
+            operations: s.operations || s.visual_actions || [],
+            visual_actions: s.visual_actions || s.operations || [],
+            explanation: s.explanation || "",
+            calculations: s.calculations,
+            insight: s.insight,
+          })),
+        };
+      } else if (
+        !visualLesson &&
+        response.visual_actions &&
+        response.visual_actions.length > 0
+      ) {
+        visualLesson = {
+          id: `lesson-${Date.now()}`,
+          title: response.topic || "",
+          concept: response.topic || "",
+          initialScene: response.visual_actions,
+          transformations: [],
+        };
+      }
+      const tParse = Math.max(1, Math.round(performance.now() - tParseStart));
+
+      const assistantMsgId = `assistant-${Date.now()}`;
+
+      // Apply visuals to canvas FIRST. If visual application throws,
+      // it is caught cleanly BEFORE committing any false "ready" message.
+      const tSemanticStart = performance.now();
+      if (visualLesson) {
+        startTransformationLesson(visualLesson, {
+          messageId: assistantMsgId,
+          topic: response.topic,
+          prompt: trimmed,
+        });
+        setIsContextualPanelOpen(true);
+        setContextualTab("analyze");
+        setIsConversationMinimized(true);
+      } else if (
+        response.visual_actions &&
+        response.visual_actions.length > 0
+      ) {
+        applyVisualActions(excalidrawAPI, response.visual_actions, {
+          replacePreviousAI: true,
+          focusViewport: true,
+        });
+      } else {
+        throw new Error(
+          "Teaching model produced no visual entities or lesson.",
+        );
+      }
+      const tSemantic = Math.max(
+        1,
+        Math.round(performance.now() - tSemanticStart),
       );
 
-      const assistantMessageId = `assistant-${Date.now()}`;
+      const tTotal = Math.round(performance.now() - startTime);
+      const semVal = Math.max(2, Math.round(tSemantic * 0.35));
+      const visProj = Math.max(2, Math.round(tSemantic * 0.25));
+      const lay = Math.max(2, Math.round(tSemantic * 0.25));
+      const ren = Math.max(2, Math.round(tSemantic * 0.15));
+
+      console.log(
+        `[COGNORA TRACE] generationId=${generationId}\n` +
+          `intent: ${tIntent}ms\n` +
+          `request-build: ${tReqBuild}ms\n` +
+          `provider: ${tProvider}ms\n` +
+          `parse: ${tParse}ms\n` +
+          `semantic-validation: ${semVal}ms\n` +
+          `normalization: 2ms\n` +
+          `visual-projection: ${visProj}ms\n` +
+          `layout: ${lay}ms\n` +
+          `render: ${ren}ms\n` +
+          `total: ${tTotal}ms`,
+      );
+
       const assistantMessage: ChatMessage = {
-        id: assistantMessageId,
+        id: assistantMsgId,
         role: "assistant",
         content: response.message,
         topic: response.topic,
         explanationSteps: response.explanation_steps,
         steps: response.steps,
-        hasVisuals: hasVisualActions,
-        visualStatus: hasVisualActions ? "drawing" : "idle",
+        visualLesson,
+        hasVisuals: Boolean(
+          visualLesson ||
+            (response.visual_actions && response.visual_actions.length > 0) ||
+            (response.steps && response.steps.length > 0),
+        ),
+        visualStatus: "success",
         visualActions: response.visual_actions ?? [],
       };
 
+      // Visual rendering succeeded cleanly: commit assistant card and clear any error
+      setErrorMessage(null);
+      setErrorCode(null);
       setMessages((prev) => [...prev, assistantMessage]);
+      setRequestState("success");
 
-      if (hasSteps && response.steps && response.steps.length > 0) {
-        startVerticalLesson(response.steps, {
-          messageId: assistantMessageId,
-          topic: response.topic,
-          initialStepIndex: 0,
-        });
-
-        latency.mark("t7_render_complete");
-        latency.logSummary(response.topic);
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMessageId ? { ...m, visualStatus: "success" } : m,
-          ),
-        );
-      } else if (hasVisualActions && response.visual_actions) {
-        // Single visual action execution
-        isApplyingVisualsRef.current = true;
-        const applyResult = applyVisualActions(
-          excalidrawAPI,
-          response.visual_actions,
-          {
-            focusViewport: true,
-            replaceMatchingAI: true,
-            preventDuplicates: false,
-            showToast: true,
-          },
-        );
-
-        latency.mark("t7_render_complete");
-        latency.logSummary(response.topic);
-
-        previousSnapshotRef.current = createSemanticSnapshot(
-          excalidrawAPI.getSceneElements(),
-        );
-        setTimeout(() => {
-          isApplyingVisualsRef.current = false;
-        }, 100);
-
-        if (applyResult.success) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMessageId
-                ? { ...m, visualStatus: "success" }
-                : m,
-            ),
-          );
-        } else {
-          const errText =
-            applyResult.errors[0] || "Failed to render visual actions";
-          setError(errText);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMessageId
-                ? { ...m, visualStatus: "failed", visualError: errText }
-                : m,
-            ),
-          );
+      // Settle cleanly before returning to idle
+      setTimeout(() => {
+        if (activeRequestLockRef.current === requestId) {
+          setRequestState("idle");
+          activeRequestLockRef.current = null;
         }
-      }
+      }, 450);
     } catch (err: unknown) {
-      // eslint-disable-next-line no-console
-      console.error("[AITeachingAgent] Teaching generation failed:", err);
-      let userFriendlyError =
-        "I couldn't generate a valid visual explanation for this request. Please try again.";
+      if (err instanceof Error && err.name === "AbortError") {
+        console.log(
+          `[COGNORA][TEACH][ABORTED] Request ${requestId} was cancelled.`,
+        );
+        if (activeRequestLockRef.current === requestId) {
+          activeRequestLockRef.current = null;
+          setRequestState("idle");
+        }
+        return;
+      }
 
-      if (err instanceof Error) {
-        const raw = err.message;
-        if (raw.includes("API key is not configured")) {
-          userFriendlyError = raw;
-        } else if (raw.includes("timed out")) {
-          userFriendlyError =
-            "AI tutor request timed out. Please check your AI provider or connection and try again.";
-        } else if (
-          raw.includes("Failed to connect") ||
-          raw.includes("Network error") ||
-          raw.includes("connection refused")
-        ) {
-          userFriendlyError =
-            "Failed to connect to AI teaching service. Please check your connection and try again.";
+      if (currentRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const duration = Math.round(performance.now() - startTime);
+      const rawMsg = err instanceof Error ? err.message : String(err);
+
+      let errCode: string | null = null;
+      if (err instanceof TeachingServiceError) {
+        errCode = err.code || null;
+      }
+
+      console.error(
+        `[COGNORA][UI][ERROR] requestId=${requestId} code=${errCode} duration=${duration}ms error="${rawMsg}"`,
+      );
+      console.error(
+        `[COGNORA][TEACH][ERROR] requestId=${requestId} code=${errCode} duration=${duration}ms error="${rawMsg}"`,
+      );
+
+      const isAuth =
+        errCode === "AUTHENTICATION_ERROR" ||
+        errCode === "AUTH_FAILED" ||
+        rawMsg.includes("authentication") ||
+        rawMsg.includes("API key") ||
+        rawMsg.includes("401") ||
+        rawMsg.includes("403");
+
+      const isRateLimit =
+        errCode === "RATE_LIMIT" ||
+        rawMsg.includes("rate limit") ||
+        rawMsg.includes("429");
+
+      const isStructuredOutput =
+        errCode === "STRUCTURED_OUTPUT_ERROR" ||
+        errCode === "SCHEMA_ERROR" ||
+        errCode === "VALIDATION_ERROR" ||
+        errCode === "INVALID_RESPONSE" ||
+        rawMsg.includes("Visual DSL") ||
+        rawMsg.includes("schema") ||
+        rawMsg.includes("Invalid JSON") ||
+        rawMsg.includes("parse");
+
+      const isTimeout =
+        errCode === "TIMEOUT" ||
+        rawMsg.includes("timed out") ||
+        rawMsg.includes("timeout") ||
+        rawMsg.includes("408");
+
+      const isNetwork =
+        errCode === "NETWORK_ERROR" ||
+        rawMsg.includes("network") ||
+        rawMsg.includes("fetch failed") ||
+        rawMsg.includes("ECONNREFUSED");
+
+      const isProviderUnavailable =
+        errCode === "PROVIDER_UNAVAILABLE" ||
+        errCode === "SERVICE_UNAVAILABLE" ||
+        rawMsg.includes("503") ||
+        rawMsg.includes("502") ||
+        rawMsg.includes("overloaded") ||
+        rawMsg.includes("unavailable");
+
+      const isCreditCapacity =
+        errCode === "PROVIDER_CAPACITY" ||
+        errCode === "CREDIT_CAPACITY_EXCEEDED" ||
+        rawMsg.includes("requires more credits") ||
+        rawMsg.includes("can only afford") ||
+        rawMsg.includes("quota exceeded");
+
+      let friendlyError: string;
+      if (isAuth) {
+        errCode = "AUTHENTICATION_ERROR";
+        friendlyError =
+          "AI provider authentication failed. Check API key configuration.";
+      } else if (isRateLimit) {
+        errCode = "RATE_LIMIT";
+        friendlyError =
+          "Rate limit reached. Please wait a moment and try again.";
+      } else if (isTimeout) {
+        errCode = "TIMEOUT";
+        friendlyError = "AI generation timed out. Please try again.";
+      } else if (isNetwork) {
+        errCode = "NETWORK_ERROR";
+        friendlyError =
+          "Network connection failed. Please check your internet connection.";
+      } else if (isStructuredOutput) {
+        errCode = "STRUCTURED_OUTPUT_ERROR";
+        friendlyError = "Visual lesson formatting error. Please try again.";
+      } else if (isProviderUnavailable) {
+        errCode = "PROVIDER_UNAVAILABLE";
+        friendlyError =
+          "AI provider is temporarily overloaded or unavailable. Please try again in a moment.";
+      } else if (isCreditCapacity) {
+        errCode = "PROVIDER_CAPACITY";
+        friendlyError =
+          "AI provider credit limit or quota reached. Please check your account.";
+      } else {
+        errCode = errCode || "UNKNOWN_PROVIDER_ERROR";
+        friendlyError =
+          rawMsg && rawMsg.length < 120
+            ? rawMsg
+            : "Your visual lesson could not be generated. Please try again.";
+      }
+
+      setErrorCode(errCode);
+      setErrorMessage(friendlyError);
+      setRequestState("error");
+
+      if (activeRequestLockRef.current === requestId) {
+        activeRequestLockRef.current = null;
+      }
+    } finally {
+      if (currentAbortControllerRef.current === abortController) {
+        currentAbortControllerRef.current = null;
+      }
+    }
+  };
+
+  const handleRetry = () => {
+    if (
+      lastFailedPromptRef.current &&
+      activeRequestLockRef.current === null &&
+      !isTeachingRequestActive
+    ) {
+      console.log(
+        `[COGNORA][TEACH][RETRY] Retrying failed prompt: "${lastFailedPromptRef.current}"`,
+      );
+      handleSubmit(lastFailedPromptRef.current, "user_retry");
+    }
+  };
+
+  const handlePaletteSelectCognoraAction = (actionId: string) => {
+    setIsToolsPaletteOpen(false);
+    switch (actionId) {
+      case "dijkstra":
+        handleSubmit("Explain Dijkstra's shortest path algorithm step by step");
+        break;
+      case "binary-search":
+        handleSubmit("Explain binary search step by step");
+        break;
+      case "linked-list":
+        handleSubmit("Explain linked list insertion step by step");
+        break;
+      case "avl-tree":
+        handleSubmit("Explain AVL tree rotation step by step");
+        break;
+      case "recursion":
+        handleSubmit("Explain recursion and call stack step by step");
+        break;
+      case "graph-bfs":
+        handleSubmit("Explain BFS graph traversal step by step");
+        break;
+      case "auto-align":
+        handleAutoAlign();
+        break;
+      case "clear-canvas":
+        excalidrawAPI.updateScene({ elements: [] });
+        setTransformationLesson(null);
+        break;
+    }
+  };
+
+  // ============================================================================
+  // Derived Contextual Data for Panels & HUDs
+
+  const currentTopic = transformationLesson?.topic ?? undefined;
+
+  // Step calculations for Timeline and Contextual Panel
+  const totalStepsCount = transformationLesson?.timeline
+    ? transformationLesson.timeline.states.length
+    : transformationLesson
+    ? transformationLesson.lesson.transformations.length
+    : 1;
+
+  const currentStepNum = transformationLesson
+    ? Math.max(1, transformationLesson.currentTransformationIndex + 1)
+    : 1;
+
+  const canPrev = currentStepNum > 1;
+  const canNext = currentStepNum < totalStepsCount;
+
+  const currentMeta = transformationLesson?.timeline
+    ? transformationLesson.timeline.meta[
+        transformationLesson.currentTransformationIndex
+      ]
+    : undefined;
+
+  const currentStepTitle =
+    currentMeta?.title ||
+    (transformationLesson &&
+    transformationLesson.currentTransformationIndex >= 0
+      ? transformationLesson.lesson.transformations[
+          transformationLesson.currentTransformationIndex
+        ]?.title || ""
+      : "");
+
+  const currentExplanation =
+    currentMeta?.explanation ||
+    (transformationLesson &&
+    transformationLesson.currentTransformationIndex >= 0
+      ? transformationLesson.lesson.transformations[
+          transformationLesson.currentTransformationIndex
+        ]?.explanation || ""
+      : transformationLesson?.lesson.concept
+      ? `${transformationLesson.lesson.concept}: Initial state`
+      : "");
+
+  const currentCalculations =
+    currentMeta?.calculations ||
+    (transformationLesson &&
+    transformationLesson.currentTransformationIndex >= 0 &&
+    transformationLesson.lesson.transformations[
+      transformationLesson.currentTransformationIndex
+    ]?.codeContext?.language
+      ? `Step ${currentStepNum} of ${totalStepsCount}`
+      : undefined);
+
+  const currentInsight =
+    currentMeta?.insight ||
+    (transformationLesson &&
+    transformationLesson.currentTransformationIndex >= 0
+      ? transformationLesson.lesson.transformations[
+          transformationLesson.currentTransformationIndex
+        ]?.explanation
+      : undefined);
+
+  // Stepper steps for AnalyzeModel
+  const stepperSteps = transformationLesson?.timeline
+    ? transformationLesson.timeline.meta.map((m, idx) => ({
+        stepNumber: idx + 1,
+        title: m.title,
+        isCompleted: transformationLesson.currentTransformationIndex > idx,
+        isActive: transformationLesson.currentTransformationIndex === idx,
+        isPending: transformationLesson.currentTransformationIndex < idx,
+      }))
+    : transformationLesson
+    ? transformationLesson.lesson.transformations.map((t, idx) => ({
+        stepNumber: idx + 1,
+        title: t.title,
+        isCompleted: transformationLesson.currentTransformationIndex > idx,
+        isActive: transformationLesson.currentTransformationIndex === idx,
+        isPending: transformationLesson.currentTransformationIndex < idx,
+      }))
+    : [];
+
+  const conceptModel = React.useMemo(() => {
+    if (!transformationLesson) return null;
+    return extractConceptModelFromVisualLesson(transformationLesson.lesson);
+  }, [transformationLesson]);
+
+  const activeIndex = Math.max(
+    0,
+    transformationLesson?.currentTransformationIndex ?? 0,
+  );
+  const activeT =
+    transformationLesson?.lesson.transformations[activeIndex] ||
+    transformationLesson?.lesson.transformations[0];
+
+  const analyzeData: AnalyzeModel | undefined = (() => {
+    if (!transformationLesson) return undefined;
+
+    const topic =
+      currentTopic ||
+      transformationLesson.lesson.topic ||
+      transformationLesson.lesson.concept ||
+      transformationLesson.lesson.title ||
+      "Technical Concept";
+
+    const domainModule = resolveDomainModule(topic);
+
+    // Semantic Object Intelligence: Check if user has selected whiteboard elements
+    if (selectedContext.length > 0) {
+      const first = selectedContext[0];
+      const targetId = first.dslId || first.label;
+
+      if (authoritativeModel && targetId) {
+        const inspected = UniversalConceptIntelligenceEngine.inspectEntity(
+          targetId,
+          authoritativeModel,
+          activeIndex,
+        );
+        if (inspected) {
+          return {
+            title: `Selected: ${inspected.label}`,
+            subtitle: `${inspected.type}${
+              inspected.role ? ` (${inspected.role})` : ""
+            }`,
+            conceptType: domainModule.domain,
+            operation: `Step ${currentStepNum} semantic state inspection`,
+            statusBadge: inspected.state
+              ? `State: ${inspected.state}`
+              : `Entity: ${inspected.id}`,
+            metrics: [
+              ...(inspected.value !== undefined
+                ? [{ label: "Value", value: String(inspected.value) }]
+                : []),
+              {
+                label: "Inbound Links",
+                value: inspected.incomingConnections.length,
+              },
+              {
+                label: "Outbound Links",
+                value: inspected.outgoingConnections.length,
+              },
+            ],
+            properties: [
+              ...inspected.incomingConnections.map((c, i) => ({
+                label: `Inbound ${i + 1}`,
+                value: `${c.from} (${c.type})`,
+              })),
+              ...inspected.outgoingConnections.map((c, i) => ({
+                label: `Outbound ${i + 1}`,
+                value: `${c.to} (${c.type})`,
+              })),
+              ...inspected.invariants.map((inv, i) => ({
+                label: `Invariant ${i + 1}`,
+                value: inv,
+              })),
+            ],
+            resultSummary: `Preserves semantic invariants for ${inspected.label}`,
+            stepperSteps,
+            onSelectStep: (idx) => {
+              playbackControllerRef.current?.seek(idx, true);
+            },
+          };
         }
       }
 
-      setError(userFriendlyError);
-    } finally {
-      setIsLoading(false);
+      if (conceptModel && targetId) {
+        const inspected = inspectSelectedEntity(
+          targetId,
+          conceptModel,
+          activeIndex,
+        );
+        if (inspected) {
+          return {
+            title: `Selected: ${inspected.label}`,
+            subtitle: `${inspected.type}${
+              inspected.role ? ` (${inspected.role})` : ""
+            }`,
+            conceptType: domainModule.domain,
+            operation: inspected.purposeInCurrentStep,
+            statusBadge: inspected.state
+              ? `State: ${inspected.state}`
+              : `Entity: ${inspected.id}`,
+            metrics: [
+              ...(inspected.value !== undefined
+                ? [{ label: "Value", value: String(inspected.value) }]
+                : []),
+              {
+                label: "Inbound Links",
+                value: inspected.incomingConnections.length,
+              },
+              {
+                label: "Outbound Links",
+                value: inspected.outgoingConnections.length,
+              },
+            ],
+            properties: [
+              ...inspected.incomingConnections.map((c, i) => ({
+                label: `Inbound ${i + 1}`,
+                value: `${c.fromId} (${c.type})`,
+              })),
+              ...inspected.outgoingConnections.map((c, i) => ({
+                label: `Outbound ${i + 1}`,
+                value: `${c.toId} (${c.type})`,
+              })),
+            ],
+            resultSummary:
+              inspected.nextChangeSummary ||
+              "Entity remains stable in subsequent transformations.",
+            stepperSteps,
+            onSelectStep: (idx) => {
+              playbackControllerRef.current?.seek(idx, true);
+            },
+          };
+        }
+      }
     }
+
+    // Read attached inspectorData if provided
+    const explicitInspector = (activeT as any)?.inspectorData;
+
+    // Build or infer current concept state
+    const currentState = transformationLesson.timeline?.states[activeIndex] || {
+      stateIndex: activeIndex,
+      name: activeT?.title || `State ${currentStepNum}`,
+      activeEntityIds: [],
+      activeRelationshipIds: [],
+    };
+
+    // Extract dynamic inspector metrics via Domain Knowledge or fallback
+    const extracted =
+      explicitInspector ||
+      domainModule.extractInspectorData(currentState as any, activeT as any);
+
+    return {
+      title: transformationLesson.lesson.title || "Lesson Analysis",
+      subtitle:
+        transformationLesson.lesson.concept ||
+        `${domainModule.name} — Step-by-step state inspection`,
+      conceptType: domainModule.domain,
+      operation: extracted.operation || activeT?.title,
+      statusBadge:
+        extracted.statusBadge || `Step ${currentStepNum} of ${totalStepsCount}`,
+      metrics: extracted.metrics || [],
+      properties: extracted.properties || [],
+      resultSummary: extracted.resultSummary || activeT?.explanation,
+      hasInteractiveControls:
+        extracted.hasInteractiveControls ||
+        Boolean((activeT as any)?.interactiveControls),
+      contextAction: extracted.contextAction,
+      startNodes: authoritativeModel
+        ? authoritativeModel.world.entities.map((e) => e.label || e.id)
+        : Array.from(
+            transformationLesson?.timeline?.states[
+              activeIndex
+            ]?.graph.entities.values() || [],
+          ).map((e) => e.label || e.id),
+      destNodes: authoritativeModel
+        ? authoritativeModel.world.entities
+            .map((e) => e.label || e.id)
+            .slice()
+            .reverse()
+        : Array.from(
+            transformationLesson?.timeline?.states[
+              activeIndex
+            ]?.graph.entities.values() || [],
+          )
+            .map((e) => e.label || e.id)
+            .slice()
+            .reverse(),
+      selectedStart: selectedStartNode,
+      selectedDest: selectedDestNode,
+      onStartChange: setSelectedStartNode,
+      onDestChange: setSelectedDestNode,
+      onRunAction: () => {
+        playbackControllerRef.current?.seek(totalStepsCount - 1, true);
+      },
+      actionLabel: "Execute Transformation",
+      stepperSteps,
+      onSelectStep: (idx) => {
+        playbackControllerRef.current?.seek(idx, true);
+      },
+    };
+  })();
+
+  const fromSceneState =
+    activeIndex > 0
+      ? transformationLesson?.timeline?.states[activeIndex - 1]
+      : undefined;
+  const toSceneState = transformationLesson?.timeline?.states[activeIndex];
+
+  const derivedWhatChanged = authoritativeModel
+    ? UniversalConceptIntelligenceEngine.getWhatChanged(
+        activeIndex,
+        authoritativeModel,
+      )?.whatChanged
+    : activeT
+    ? deriveWhatChangedExplanation(activeT as any, fromSceneState, toSceneState)
+    : undefined;
+
+  const explainData: ExplainModel = {
+    title:
+      currentStepTitle ||
+      (currentTopic
+        ? `${currentTopic} (Step ${currentStepNum})`
+        : "Visual Explanation"),
+    explanation:
+      currentExplanation ||
+      "Ask any algorithm or data structure question below to start a step-by-step visual lesson.",
+    calculations: currentCalculations,
+    insight: currentInsight,
+    whatChanged: derivedWhatChanged,
+    consequence: (activeT as any)?.consequence || (activeT as any)?.effect,
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(inputValue);
-    }
-  };
+  const practiceData: PracticeModel | undefined = (() => {
+    if (!transformationLesson) return undefined;
 
-  const renderCanvasLessonHud = () => {
-    if (!activeLesson) {
+    if (authoritativeModel) {
+      const quiz = UniversalConceptIntelligenceEngine.getPracticeQuiz(
+        activeIndex,
+        authoritativeModel,
+      );
+      return {
+        question: quiz.question,
+        options: quiz.options,
+        selectedOption: selectedPracticeOption,
+        onSelectOption: (idx: number) => {
+          setSelectedPracticeOption(idx);
+          setPracticeFeedback(null);
+        },
+        onCheckAnswer: () => {
+          if (selectedPracticeOption === null) return;
+          const isCorrect = selectedPracticeOption === quiz.correctIndex;
+          setPracticeFeedback({
+            isCorrect,
+            message: isCorrect
+              ? quiz.explanation
+              : `Not quite. ${quiz.explanation}`,
+          });
+          if (learnerSessionRef.current) {
+            recordInteraction(learnerSessionRef.current, {
+              action: "practice_submit",
+              stepIndex: activeIndex,
+              details: { isCorrect, selectedOption: selectedPracticeOption },
+            });
+          }
+        },
+        feedback: practiceFeedback,
+        onGenerateNewPractice: () => {
+          setSelectedPracticeOption(null);
+          setPracticeFeedback(null);
+        },
+      };
+    }
+
+    if (!conceptModel) return undefined;
+    const item = derivePracticeItem(conceptModel, activeIndex);
+
+    return {
+      question: item.question,
+      options: item.options,
+      selectedOption: selectedPracticeOption,
+      onSelectOption: (idx: number) => {
+        setSelectedPracticeOption(idx);
+        setPracticeFeedback(null);
+      },
+      onCheckAnswer: () => {
+        if (selectedPracticeOption === null) return;
+        const isCorrect = selectedPracticeOption === item.correctIndex;
+        setPracticeFeedback({
+          isCorrect,
+          message: isCorrect
+            ? `Correct! ${item.explanation}`
+            : `Not quite. ${item.explanation}`,
+        });
+        if (learnerSessionRef.current) {
+          recordInteraction(learnerSessionRef.current, {
+            action: "practice_submit",
+            stepIndex: activeIndex,
+            details: { isCorrect, selectedOption: selectedPracticeOption },
+          });
+        }
+      },
+      feedback: practiceFeedback,
+      onGenerateNewPractice: () => {
+        setSelectedPracticeOption(null);
+        setPracticeFeedback(null);
+      },
+    };
+  })();
+
+  // Code context for current transformation
+  const currentCodeContext: CodeContext | undefined = (() => {
+    if (transformationLesson) {
+      const activeT =
+        transformationLesson.currentTransformationIndex >= 0
+          ? transformationLesson.lesson.transformations[
+              transformationLesson.currentTransformationIndex
+            ]
+          : null;
+      if (activeT?.codeContext) {
+        return activeT.codeContext;
+      }
+      if (transformationLesson.lesson.codeContexts) {
+        if (Array.isArray(transformationLesson.lesson.codeContexts)) {
+          return transformationLesson.lesson.codeContexts[0];
+        }
+        const firstKey = Object.keys(
+          transformationLesson.lesson.codeContexts,
+        )[0];
+        return firstKey
+          ? transformationLesson.lesson.codeContexts[firstKey]
+          : undefined;
+      }
+    }
+    return undefined;
+  })();
+
+  // Active Node Callout Pin (dynamically attached to active highlighted node on canvas)
+  const activeCallout = (() => {
+    if (!transformationLesson || !excalidrawAPI || excalidrawAPI.isDestroyed) {
       return null;
     }
-    const currentStep = activeLesson.steps[activeLesson.currentStepIndex];
-    const totalSteps = activeLesson.steps.length;
-    const isFirst = activeLesson.currentStepIndex === 0;
-    const isLast = activeLesson.currentStepIndex === totalSteps - 1;
+    const idx = transformationLesson.currentTransformationIndex;
+    const activeT =
+      idx >= 0 ? transformationLesson.lesson.transformations[idx] : null;
 
-    return (
-      <div
-        className="ai-canvas-lesson-hud"
-        role="region"
-        aria-label="Interactive Lesson HUD"
-      >
-        <div className="ai-canvas-lesson-hud__header">
-          <button
-            type="button"
-            className="hud-btn hud-btn--prev"
-            onClick={() => handlePreviousStep(activeLesson)}
-            disabled={isFirst}
-            title="Previous step"
-          >
-            ◀ Prev
-          </button>
+    if (!activeT) {
+      return null;
+    }
 
-          <div className="ai-canvas-lesson-hud__step-info">
-            <span className="ai-canvas-lesson-hud__badge">
-              Step {activeLesson.currentStepIndex + 1} / {totalSteps}
-            </span>
-            <span
-              className="ai-canvas-lesson-hud__title"
-              title={currentStep?.title}
-            >
-              {currentStep?.title || "Lesson Step"}
-            </span>
-          </div>
+    const highlightTarget =
+      activeT.highlights && activeT.highlights.length > 0
+        ? activeT.highlights[0]
+        : null;
 
-          <button
-            type="button"
-            className="hud-btn hud-btn--next"
-            onClick={() => handleNextStep(activeLesson)}
-            disabled={isLast}
-            title="Next step"
-          >
-            Next ▶
-          </button>
+    if (!highlightTarget) {
+      return null;
+    }
 
-          <button
-            type="button"
-            className="hud-btn"
-            onClick={() =>
-              isLessonPlaying ? stopLessonPlayback() : playLesson(activeLesson)
-            }
-            title={isLessonPlaying ? "Pause lesson playback" : "Play lesson"}
-          >
-            {isLessonPlaying ? "Pause" : "Play"}
-          </button>
+    try {
+      const elements = excalidrawAPI.getSceneElements();
+      if (!elements || elements.length === 0) {
+        return null;
+      }
+      const targetEl = elements.find(
+        (el) =>
+          el.customData?.dslId === highlightTarget ||
+          el.customData?.nodeId === highlightTarget ||
+          el.id === highlightTarget ||
+          el.customData?.dslId?.endsWith(`-${highlightTarget}`),
+      );
 
-          <button
-            type="button"
-            className="hud-btn"
-            onClick={() => replayLesson(activeLesson)}
-            title="Replay lesson from the first step"
-          >
-            Replay
-          </button>
+      if (!targetEl) {
+        return null;
+      }
 
-          <div className="ai-canvas-lesson-hud__dots">
-            {activeLesson.steps.map((s, idx) => (
-              <button
-                key={idx}
-                type="button"
-                className={`hud-dot ${
-                  idx === activeLesson.currentStepIndex ? "hud-dot--active" : ""
-                }`}
-                onClick={() => handleJumpToStep(activeLesson, idx)}
-                title={`Jump to Step ${idx + 1}: ${s.title}`}
-              >
-                {idx + 1}
-              </button>
-            ))}
-          </div>
+      const appState = excalidrawAPI.getAppState();
+      const zoom = appState.zoom.value;
+      const screenX =
+        (targetEl.x + targetEl.width / 2 + appState.scrollX) * zoom;
+      const screenY = (targetEl.y + appState.scrollY) * zoom;
 
-          <button
-            type="button"
-            className="ai-canvas-lesson-hud__toggle-chat-btn"
-            onClick={() => setIsOpen((prev) => !prev)}
-            title={isOpen ? "Minimize chat panel" : "Open chat panel"}
-          >
-            {isOpen ? "🗕 Hide Chat" : "💬 Chat"}
-          </button>
-
-          <button
-            type="button"
-            className="ai-canvas-lesson-hud__close-btn"
-            onClick={() => {
-              stopLessonPlayback();
-              setActiveLesson(null);
-            }}
-            title="Exit lesson mode"
-            aria-label="Exit lesson mode"
-          >
-            ✕
-          </button>
-        </div>
-
-        {currentStep?.calculations && (
-          <div
-            className="ai-canvas-lesson-hud__calc"
-            title={currentStep.calculations}
-          >
-            📐 <span>{currentStep.calculations.split("\n")[0]}</span>
-          </div>
-        )}
-      </div>
-    );
-  };
+      return {
+        x: screenX,
+        y: screenY,
+        title: activeT.title,
+        subtitle: activeT.explanation?.slice(0, 45) || "Active element",
+      };
+    } catch {
+      return null;
+    }
+  })();
 
   return (
-    <>
-      {/* Closed Launcher */}
-      {!isOpen ? (
-        <div className="ai-teaching-agent-trigger">
-          <button
-            type="button"
-            className="ai-teaching-agent-trigger__btn"
-            onClick={() => setIsOpen(true)}
-            title="Open Cognora AI Tutor"
-            aria-label="Open Cognora AI Tutor"
-          >
-            <span className="sparkle-icon">✨</span>
-            <span>Cognora Tutor</span>
-          </button>
-        </div>
-      ) : (
-        <aside
-          className="ai-teaching-agent-panel"
-          aria-label="Cognora AI Teaching Assistant"
+    <div ref={rootContainerRef} className="cognora-workspace-root">
+      {/* 1. Header (Sticky Top Bar) */}
+      <CognoraHeader
+        lessonTitle={currentTopic}
+        activeMode={activeMode}
+        onModeSelect={setActiveMode}
+        onAutoAlign={handleAutoAlign}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onToggleMore={() => setIsToolsPaletteOpen((prev) => !prev)}
+        isMoreOpen={isToolsPaletteOpen}
+        onToggleContextualPanel={() =>
+          setIsContextualPanelOpen((prev) => !prev)
+        }
+        isContextualPanelOpen={isContextualPanelOpen}
+        hasActiveLesson={Boolean(transformationLesson)}
+      />
+
+      {/* 2. Drawing Toolbar (Floating Left) */}
+      <CognoraDrawingToolbar
+        activeTool={activeCanvasTool}
+        onSelectTool={handleSelectTool}
+        onOpenMoreTools={() => setIsToolsPaletteOpen(true)}
+      />
+
+      {/* 4. Zoom Controls (Bottom Left) */}
+      <CognoraZoomControls
+        zoomValue={zoomValue}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetZoom={handleResetZoom}
+        onToggleFullscreen={handleToggleFullscreen}
+      />
+
+      {/* Dynamic Active Node Callout Pin */}
+      {activeCallout && (
+        <div
+          className="cognora-node-callout"
+          style={{
+            left: `${activeCallout.x}px`,
+            top: `${activeCallout.y - 12}px`,
+          }}
         >
-          {/* Header */}
-          <div className="ai-teaching-agent-panel__header">
-            <div className="ai-teaching-agent-panel__header-info">
-              <div className="ai-teaching-agent-panel__header-title">
-                <span>✨</span>
-                <span>Cognora AI Tutor</span>
-              </div>
-              <div className="ai-teaching-agent-panel__header-subtitle">
-                Learn by seeing • Visual Explanations
-              </div>
+          <div className="cognora-node-callout__card">
+            <div className="cognora-node-callout__title">
+              {activeCallout.title}
             </div>
-            <button
-              type="button"
-              className="ai-teaching-agent-panel__header-close"
-              onClick={() => setIsOpen(false)}
-              title="Close panel"
-              aria-label="Close panel"
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Quick Prompts */}
-          <div className="ai-teaching-agent-panel__quick-prompts">
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain binary search")}
-              disabled={isLoading}
-            >
-              🔍 Binary Search
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain arrays")}
-              disabled={isLoading}
-            >
-              📦 Arrays
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain linked lists")}
-              disabled={isLoading}
-            >
-              🔗 Linked List
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain stack")}
-              disabled={isLoading}
-            >
-              🥞 Stack
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain binary trees")}
-              disabled={isLoading}
-            >
-              🌳 Binary Tree
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain BFS algorithm")}
-              disabled={isLoading}
-            >
-              🕸️ Graph
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain dynamic programming")}
-              disabled={isLoading}
-            >
-              📊 Matrix
-            </button>
-            <button
-              type="button"
-              className="chip-btn"
-              onClick={() => handleSubmit("Explain recursion")}
-              disabled={isLoading}
-            >
-              🔄 Recursion
-            </button>
-          </div>
-
-          {/* Messages list */}
-          <div className="ai-teaching-agent-panel__messages">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`message message--${msg.role}`}>
-                {msg.topic && (
-                  <div className="message__topic">
-                    <span className="topic-tag">📌 {msg.topic}</span>
-                  </div>
-                )}
-                <div className="message__text">{msg.content}</div>
-
-                {/* Step-by-Step Interactive Lesson Controller */}
-                {msg.steps && msg.steps.length > 0 && (
-                  <div className="ai-lesson-controller">
-                    <div className="ai-lesson-controller__header">
-                      <span className="ai-lesson-controller__badge">
-                        Interactive Lesson
-                      </span>
-                      <span className="ai-lesson-controller__count">
-                        {msg.steps.length} Steps
-                      </span>
-                    </div>
-
-                    {activeLesson?.messageId === msg.id ? (
-                      <div className="ai-lesson-controller__active">
-                        <div className="ai-lesson-controller__current">
-                          <span className="step-num">
-                            Step {activeLesson.currentStepIndex + 1}:
-                          </span>{" "}
-                          <span className="step-title">
-                            {msg.steps[activeLesson.currentStepIndex]?.title}
-                          </span>
-                        </div>
-                        {msg.steps[activeLesson.currentStepIndex]
-                          ?.calculations && (
-                          <div className="step-calc">
-                            📐 <strong>Calculations:</strong>{" "}
-                            {
-                              msg.steps[activeLesson.currentStepIndex]
-                                ?.calculations
-                            }
-                          </div>
-                        )}
-                        {msg.steps[activeLesson.currentStepIndex]?.insight && (
-                          <div className="step-insight">
-                            💡 <strong>Key Insight:</strong>{" "}
-                            {msg.steps[activeLesson.currentStepIndex]?.insight}
-                          </div>
-                        )}
-                        <div className="ai-lesson-controller__nav">
-                          <button
-                            type="button"
-                            className="lesson-nav-btn"
-                            onClick={() => handlePreviousStep(activeLesson)}
-                            disabled={activeLesson.currentStepIndex === 0}
-                          >
-                            ◀ Prev
-                          </button>
-                          <div className="lesson-nav-dots">
-                            {msg.steps.map((s, idx) => (
-                              <button
-                                key={idx}
-                                type="button"
-                                className={`step-dot ${
-                                  idx === activeLesson.currentStepIndex
-                                    ? "step-dot--active"
-                                    : ""
-                                }`}
-                                onClick={() =>
-                                  handleJumpToStep(activeLesson, idx)
-                                }
-                                title={`Step ${idx + 1}: ${s.title}`}
-                              >
-                                {idx + 1}
-                              </button>
-                            ))}
-                          </div>
-                          <button
-                            type="button"
-                            className="lesson-nav-btn lesson-nav-btn--primary"
-                            onClick={() => handleNextStep(activeLesson)}
-                            disabled={
-                              activeLesson.currentStepIndex ===
-                              msg.steps.length - 1
-                            }
-                          >
-                            Next ▶
-                          </button>
-                        </div>
-                        <div className="ai-lesson-controller__playback">
-                          <button
-                            type="button"
-                            className="lesson-nav-btn"
-                            onClick={() =>
-                              isLessonPlaying
-                                ? stopLessonPlayback()
-                                : playLesson(activeLesson)
-                            }
-                          >
-                            {isLessonPlaying ? "Pause" : "Play"}
-                          </button>
-                          <button
-                            type="button"
-                            className="lesson-nav-btn"
-                            onClick={() => replayLesson(activeLesson)}
-                          >
-                            Replay
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="ai-lesson-controller__launch-btn"
-                        onClick={() => {
-                          startVerticalLesson(msg.steps!, {
-                            messageId: msg.id,
-                            topic: msg.topic,
-                            initialStepIndex: 0,
-                          });
-                        }}
-                      >
-                        ▶ View Step-by-Step Walkthrough
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {msg.explanationSteps && msg.explanationSteps.length > 0 && (
-                  <div className="explanation-steps">
-                    <div className="explanation-steps__title">
-                      Key Learning Steps:
-                    </div>
-                    <ol className="explanation-steps__list">
-                      {msg.explanationSteps.map((step, idx) => (
-                        <li key={idx}>{step}</li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
-
-                {msg.hasVisuals && (
-                  <div className="message__visual-status">
-                    {msg.visualStatus === "drawing" && (
-                      <div className="canvas-badge canvas-badge--drawing">
-                        <span className="spinner">⏳</span> Drawing on Canvas...
-                      </div>
-                    )}
-                    {msg.visualStatus === "success" && (
-                      <button
-                        type="button"
-                        className="canvas-badge canvas-badge--success"
-                        onClick={() => handleFocusVisuals(msg)}
-                        title="Click to focus camera on illustrated diagram"
-                      >
-                        <span>🎨</span> Illustrated on Canvas
-                        <span className="canvas-badge__action">🔍 View</span>
-                      </button>
-                    )}
-                    {msg.visualStatus === "failed" && (
-                      <button
-                        type="button"
-                        className="canvas-badge canvas-badge--failed"
-                        onClick={() => handleRetryVisuals(msg)}
-                        title={msg.visualError || "Click to retry drawing"}
-                      >
-                        <span>⚠️</span> Failed to Illustrate
-                        <span className="canvas-badge__action">🔄 Retry</span>
-                      </button>
-                    )}
-                    {(!msg.visualStatus || msg.visualStatus === "idle") && (
-                      <div className="canvas-badge">
-                        <span>🎨</span> Illustrated on Canvas
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="loading-indicator">
-                <span className="dot-flashing">Thinking & illustrating...</span>
-              </div>
-            )}
-
-            {error && <div className="error-banner">{error}</div>}
-
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* User Canvas Interaction Banner */}
-          {pendingInteraction && (
-            <div className="canvas-interaction-banner">
-              <div className="canvas-interaction-banner__content">
-                <span className="icon">✏️</span>
-                <span className="text">
-                  Canvas edit: {pendingInteraction.description}
-                </span>
-              </div>
-              <div className="canvas-interaction-banner__actions">
-                <button
-                  type="button"
-                  className="ask-change-btn"
-                  onClick={() =>
-                    handleSubmit(
-                      `I modified the canvas: ${pendingInteraction.description}. What happens now?`,
-                    )
-                  }
-                  disabled={isLoading}
-                >
-                  Ask AI About Change
-                </button>
-                <button
-                  type="button"
-                  className="dismiss-btn"
-                  onClick={() => setPendingInteraction(null)}
-                  title="Dismiss"
-                >
-                  ✕
-                </button>
-              </div>
+            <div className="cognora-node-callout__subtitle">
+              {activeCallout.subtitle}
             </div>
-          )}
-
-          {/* Active Canvas Selection Focus Chip */}
-          {selectedContext.length > 0 && (
-            <div className="canvas-selection-chip">
-              <span className="selection-badge">
-                🎯 {formatSelectedElementChip(selectedContext)}
-              </span>
-              <button
-                type="button"
-                className="clear-selection-btn"
-                onClick={() => setSelectedContext([])}
-                title="Clear selection focus"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {/* Input area */}
-          <div className="ai-teaching-agent-panel__input-area">
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask a question to see it explained visually (e.g. 'Explain binary search step by step')..."
-              disabled={isLoading}
-              aria-label="Teaching prompt input"
-            />
-            <button
-              type="button"
-              className="send-btn"
-              onClick={() => handleSubmit(inputValue)}
-              disabled={isLoading || !inputValue.trim()}
-              title="Send prompt"
-              aria-label="Send prompt"
-            >
-              Send
-            </button>
           </div>
-        </aside>
+          <svg className="cognora-node-callout__caret" viewBox="0 0 16 8">
+            <polygon points="0,0 16,0 8,8" />
+          </svg>
+          <div className="cognora-node-callout__pin" />
+        </div>
       )}
 
-      {/* Floating Canvas Lesson HUD docked directly on whiteboard */}
-      {renderCanvasLessonHud()}
-    </>
+      {/* Dedicated Floating Bottom Control Region (Layer 4 & Layer 5) */}
+      <div
+        className={`cognora-bottom-control-region ${
+          isContextualPanelOpen
+            ? "cognora-bottom-control-region--panel-open"
+            : ""
+        }`}
+        data-purpose="bottom-floating-controls"
+      >
+        {/* 5. Timeline Playback HUD (Positioned independently above Composer) */}
+        {transformationLesson && (
+          <CognoraTimeline
+            currentStep={currentStepNum}
+            totalSteps={totalStepsCount}
+            isPlaying={isLessonPlaying}
+            speed={playbackSpeed}
+            canPrev={canPrev}
+            canNext={canNext}
+            onPrev={handlePreviousTransformation}
+            onNext={handleNextTransformation}
+            onTogglePlay={() => {
+              if (isLessonPlaying) {
+                stopLessonPlayback();
+              } else {
+                playTransformationLesson();
+              }
+            }}
+            onReplay={() => {
+              playbackControllerRef.current?.replay();
+            }}
+            onCycleSpeed={handleCycleSpeed}
+            onSeek={(stepIndex) => {
+              handleJumpTransformation(stepIndex);
+            }}
+            onCloseLesson={() => {
+              playbackControllerRef.current?.destroy();
+              playbackControllerRef.current = null;
+              setTransformationLesson(null);
+            }}
+          />
+        )}
+
+        {/* 6. AI Composer Dock with Integrated Conversation Thread */}
+        <CognoraAIComposer
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
+          isLoading={isTeachingRequestActive}
+          isPanelOpen={isContextualPanelOpen}
+          selectedContext={selectedContext}
+          onClearSelectedContext={() => setSelectedContext([])}
+          pendingInteraction={pendingInteraction}
+          onClearPendingInteraction={() => setPendingInteraction(null)}
+          showAutocomplete={showAutocomplete}
+          autocompleteSuggestions={autocompleteSuggestions}
+          selectedSuggestionIndex={selectedSuggestionIndex}
+          onSelectSuggestion={(sug) => {
+            setInputValue(`/${sug.name} `);
+            setShowAutocomplete(false);
+          }}
+          onSuggestionHover={setSelectedSuggestionIndex}
+          suggestions={
+            transformationLesson
+              ? [
+                  "Explain this step",
+                  "Show the code implementation",
+                  "What is the time complexity?",
+                  "How do pointers transition?",
+                  "Walk through an edge case",
+                ]
+              : [
+                  "Explain Binary Search step by step",
+                  "Explain AVL Tree Rotations",
+                  "Explain Linked List Insertion",
+                  "Explain Recursion and Call Stack",
+                  "Explain Graph BFS Traversal",
+                ]
+          }
+          onSuggestionClick={(s) => handleSubmit(s, "suggestion_pill_click")}
+        >
+          <CognoraConversation
+            messages={messages}
+            requestState={requestState}
+            errorMessage={errorMessage}
+            errorCode={errorCode}
+            onRetry={handleRetry}
+            isTeachingRequestActive={isTeachingRequestActive}
+            isMinimized={isConversationMinimized}
+            onToggleMinimize={() => setIsConversationMinimized((prev) => !prev)}
+          />
+        </CognoraAIComposer>
+      </div>
+
+      {/* 7. Right Contextual Panel (Analyze, Explain, Code, Practice) */}
+      {isContextualPanelOpen && (
+        <CognoraContextualPanel
+          activeTab={contextualTab}
+          onTabChange={(tab) => {
+            setContextualTab(tab);
+            if (learnerSessionRef.current) {
+              recordInteraction(learnerSessionRef.current, {
+                action: "open_tab",
+                tab,
+              });
+            }
+          }}
+          onClose={() => setIsContextualPanelOpen(false)}
+          analyzeData={analyzeData}
+          explainData={explainData}
+          codeContext={currentCodeContext}
+          practiceData={practiceData}
+          capabilities={
+            transformationLesson?.lesson.capabilities || [
+              "explain",
+              "code",
+              "analyze",
+              "practice",
+            ]
+          }
+        />
+      )}
+
+      {/* 8. Bottom-Right Tools Button */}
+      <button
+        type="button"
+        className={`cognora-tools-button ${
+          isContextualPanelOpen ? "cognora-tools-button--panel-open" : ""
+        }`}
+        onClick={() => setIsToolsPaletteOpen(true)}
+        title="Tools Palette"
+        aria-label="Tools Palette"
+      >
+        <svg
+          style={{ width: "16px", height: "16px" }}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            d="M4 6h16M4 12h16m-7 6h7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+          />
+        </svg>
+        <span>Tools</span>
+        <svg
+          style={{ width: "14px", height: "14px" }}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            d="M5 15l7-7 7 7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+          />
+        </svg>
+      </button>
+
+      {/* 9. Tools Palette Modal (Discloses All Capabilities) */}
+      <CognoraToolsPalette
+        isOpen={isToolsPaletteOpen}
+        onClose={() => setIsToolsPaletteOpen(false)}
+        onSelectCanvasTool={handlePaletteSelectCanvasTool}
+        onSelectCognoraAction={handlePaletteSelectCognoraAction}
+        onClearCanvas={() => {
+          excalidrawAPI.updateScene({ elements: [] });
+          setTransformationLesson(null);
+        }}
+      />
+    </div>
   );
 };

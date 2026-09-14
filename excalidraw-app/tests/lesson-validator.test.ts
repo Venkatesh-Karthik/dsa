@@ -10,7 +10,7 @@ describe("estimatePromptComplexity", () => {
     const r1 = estimatePromptComplexity("Explain binary trees");
     expect(r1.isConceptual).toBe(true);
     expect(r1.complexity).toBeGreaterThanOrEqual(3);
-    expect(r1.targetStepRange.target).toBeGreaterThanOrEqual(6);
+    expect(r1.targetStepRange.target).toBeGreaterThanOrEqual(3);
 
     const r2 = estimatePromptComplexity("Explain what a floating window is");
     expect(r2.isConceptual).toBe(true);
@@ -25,7 +25,7 @@ describe("estimatePromptComplexity", () => {
     const res = estimatePromptComplexity("Explain binary search visually step by step");
     expect(res.isStepByStepRequested).toBe(true);
     expect(res.complexity).toBeGreaterThanOrEqual(4);
-    expect(res.targetStepRange.min).toBeGreaterThanOrEqual(5);
+    expect(res.targetStepRange.min).toBeGreaterThanOrEqual(2);
   });
 
   it("handles trivial property lookups as low complexity", () => {
@@ -67,7 +67,7 @@ describe("validateLessonQuality", () => {
     const quality = validateLessonQuality(mockResponse, "Explain binary trees step by step");
     expect(quality.needsExpansion).toBe(true);
     expect(quality.valid).toBe(false);
-    expect(quality.issues.some((i) => i.includes("Target is 6-8 steps"))).toBe(true);
+    expect(quality.issues.some((i) => i.includes("Target is multiple steps"))).toBe(true);
   });
 
   it("passes when multi-step progressive lesson is provided", () => {

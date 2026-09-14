@@ -51,12 +51,33 @@ export interface TeachingRequestContext {
 export interface TeachingRequest {
   prompt: string;
   context?: TeachingRequestContext;
+  requestId?: string;
+  generationId?: string;
+  userAction?: string;
 }
 
 export interface TeachingErrorResponse {
   error: string;
   code?: string;
   details?: unknown;
+}
+
+export class TeachingServiceError extends Error {
+  readonly code?: string;
+  readonly statusCode: number;
+  readonly details?: unknown;
+
+  constructor(
+    message: string,
+    info: { statusCode: number; code?: string; details?: unknown },
+  ) {
+    super(message);
+    this.name = "TeachingServiceError";
+    this.statusCode = info.statusCode;
+    this.code = info.code;
+    this.details = info.details;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
 }
 
 export interface TeachingProviderInfo {

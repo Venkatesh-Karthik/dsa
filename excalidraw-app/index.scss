@@ -78,6 +78,15 @@
       color: var(--color-danger-text);
     }
   }
+
+  /* Favor Cognora stage design over duplicate legacy toolbars */
+  .App-toolbar,
+  .App-toolbar-content {
+    display: none !important;
+  }
+  .layer-ui__wrapper__footer-left {
+    display: none !important;
+  }
 }
 
 .excalidraw-app.is-collaborating {

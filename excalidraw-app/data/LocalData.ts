@@ -70,6 +70,53 @@ class LocalFileManager extends FileManager {
   };
 }
 
+const logStorageDiagnostics = (elements: readonly ExcalidrawElement[]) => {
+  try {
+    let totalStorageBytes = 0;
+    const keyBreakdown: Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key) {
+        const val = localStorage.getItem(key) || "";
+        const bytes = (key.length + val.length) * 2; // UTF-16
+        totalStorageBytes += bytes;
+        if (bytes > 50000) {
+          keyBreakdown[key] = `${(bytes / 1024).toFixed(1)}KB`;
+        }
+      }
+    }
+    const nonDeleted = getNonDeletedElements(elements);
+    const sceneSize = JSON.stringify(nonDeleted).length * 2;
+    console.warn(
+      `[COGNORA][STORAGE] usage=${(totalStorageBytes / 1024).toFixed(1)}KB, elementCount=${nonDeleted.length}, sceneSize=${(sceneSize / 1024).toFixed(1)}KB, heavyKeys=${JSON.stringify(keyBreakdown)}`,
+    );
+  } catch {
+    // Ignore diagnostic errors
+  }
+};
+
+/** Prunes non-essential transient metadata from elements before storing to localStorage */
+const pruneElementsForStorage = (
+  elements: readonly ExcalidrawElement[],
+): readonly ExcalidrawElement[] => {
+  return elements.map((el) => {
+    if (!el.customData) return el;
+    // Retain only core semantic identifiers, strip heavy nested trees or caches
+    const { dslId, semanticId, primitiveType, role, isAiTeaching } =
+      el.customData as any;
+    return {
+      ...el,
+      customData: {
+        dslId,
+        semanticId,
+        primitiveType,
+        role,
+        isAiTeaching,
+      },
+    };
+  });
+};
+
 const saveDataStateToLocalStorage = (
   elements: readonly ExcalidrawElement[],
   appState: AppState,
@@ -87,9 +134,12 @@ const saveDataStateToLocalStorage = (
       _appState.openSidebar = null;
     }
 
+    const nonDeleted = getNonDeletedElements(elements);
+    const pruned = pruneElementsForStorage(nonDeleted);
+
     localStorage.setItem(
       STORAGE_KEYS.LOCAL_STORAGE_ELEMENTS,
-      JSON.stringify(getNonDeletedElements(elements)),
+      JSON.stringify(pruned),
     );
     localStorage.setItem(
       STORAGE_KEYS.LOCAL_STORAGE_APP_STATE,
@@ -100,10 +150,58 @@ const saveDataStateToLocalStorage = (
       appJotaiStore.set(localStorageQuotaExceededAtom, false);
     }
   } catch (error: any) {
-    // Unable to access window.localStorage
-    console.error(error);
-    if (isQuotaExceededError(error) && !localStorageQuotaExceeded) {
-      appJotaiStore.set(localStorageQuotaExceededAtom, true);
+    // Log diagnostics
+    logStorageDiagnostics(elements);
+
+    if (isQuotaExceededError(error)) {
+      // Self-healing attempt: purge non-critical obsolete keys
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (
+            k &&
+            k !== STORAGE_KEYS.LOCAL_STORAGE_ELEMENTS &&
+            k !== STORAGE_KEYS.LOCAL_STORAGE_APP_STATE &&
+            (k.includes("test") || k.includes("debug") || k.includes("collab") || k.includes("cache"))
+          ) {
+            keysToRemove.push(k);
+          }
+        }
+        for (const k of keysToRemove) {
+          localStorage.removeItem(k);
+        }
+        console.warn(
+          `[COGNORA][STORAGE] Purged ${keysToRemove.length} obsolete localStorage keys. Retrying save...`,
+        );
+
+        // Retry saving pruned elements
+        const _appState = clearAppStateForLocalStorage(appState);
+        const nonDeleted = getNonDeletedElements(elements);
+        const pruned = pruneElementsForStorage(nonDeleted);
+        localStorage.setItem(
+          STORAGE_KEYS.LOCAL_STORAGE_ELEMENTS,
+          JSON.stringify(pruned),
+        );
+        localStorage.setItem(
+          STORAGE_KEYS.LOCAL_STORAGE_APP_STATE,
+          JSON.stringify(_appState),
+        );
+        if (localStorageQuotaExceeded) {
+          appJotaiStore.set(localStorageQuotaExceededAtom, false);
+        }
+        return;
+      } catch (retryError) {
+        console.warn(
+          "[COGNORA][STORAGE] Storage quota still exceeded after cleanup. In-memory lesson remains active and functional.",
+        );
+      }
+
+      if (!localStorageQuotaExceeded) {
+        appJotaiStore.set(localStorageQuotaExceededAtom, true);
+      }
+    } else {
+      console.error(error);
     }
   }
 };

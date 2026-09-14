@@ -8,14 +8,18 @@
  */
 
 import React, { useEffect } from "react";
+
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+
 import { renderTestBinarySearchDiagram } from "../ai/ai-canvas";
 
 export interface AITestTriggerProps {
   excalidrawAPI: ExcalidrawImperativeAPI;
 }
 
-export const AITestTrigger: React.FC<AITestTriggerProps> = ({ excalidrawAPI }) => {
+export const AITestTrigger: React.FC<AITestTriggerProps> = ({
+  excalidrawAPI,
+}) => {
   useEffect(() => {
     // Expose programmatic trigger for automated/console testing
     const win = window as any;

@@ -12,7 +12,6 @@ import { getShortcutKey } from "../shortcut";
 
 import { useExcalidrawActionManager } from "./App";
 import { Dialog } from "./Dialog";
-import { ExternalLinkIcon, GithubIcon, youtubeIcon } from "./icons";
 
 import "./HelpDialog.scss";
 
@@ -33,13 +32,31 @@ const Header = () => (
     }}
   >
     <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-      <strong style={{ fontSize: "1.1rem", color: "var(--color-primary, #4f46e5)", letterSpacing: "-0.02em" }}>
+      <strong
+        style={{
+          fontSize: "1.1rem",
+          color: "var(--color-primary, #4f46e5)",
+          letterSpacing: "-0.02em",
+        }}
+      >
         Cognora
       </strong>
-      <span style={{ fontSize: "0.85rem", color: "var(--text-secondary, #64748b)" }}>• Learn by seeing.</span>
+      <span
+        style={{ fontSize: "0.85rem", color: "var(--text-secondary, #64748b)" }}
+      >
+        • Learn by seeing.
+      </span>
     </div>
-    <p style={{ margin: 0, fontSize: "0.9rem", color: "var(--text-primary-color, #334155)", lineHeight: 1.5 }}>
-      Cognora is an AI-powered visual learning workspace. Ask a question and let Cognora explain it visually on the canvas.
+    <p
+      style={{
+        margin: 0,
+        fontSize: "0.9rem",
+        color: "var(--text-primary-color, #334155)",
+        lineHeight: 1.5,
+      }}
+    >
+      Cognora is an AI-powered visual learning workspace. Ask a question and let
+      Cognora explain it visually on the canvas.
     </p>
   </div>
 );

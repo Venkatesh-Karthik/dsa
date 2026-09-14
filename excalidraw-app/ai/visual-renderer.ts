@@ -54,8 +54,11 @@ import type {
   SemanticSize,
   SemanticPosition,
   ArrowDirection,
+  ConnectorRole,
+  BaseStyleOptions,
   CreateLinkedListAction,
   CreateStackAction,
+  CreateQueueAction,
   CreateTreeAction,
   CreateGraphAction,
   CreateMatrixAction,
@@ -71,12 +74,26 @@ import {
   computeSceneBounds,
   TREE_LAYOUT,
 } from "./layout-engine";
+import { createGenericEntity } from "./visual-primitives/generic-entity";
 import type {
   TreeNodeInput,
   GraphNodeInput,
   GraphEdgeInput,
   LayoutBounds
 } from "./layout-engine";
+
+import {
+  renderSemanticConnector,
+  type ConnectorEndpoint,
+} from "./connector-renderer";
+import { renderArrayGrammar } from "./visual-grammar/array";
+import { renderLinkedListGrammar } from "./visual-grammar/linked-list";
+import { renderStackGrammar } from "./visual-grammar/stack";
+import { renderQueueGrammar } from "./visual-grammar/queue";
+import { renderTreeGrammar } from "./visual-grammar/tree";
+import { renderGraphGrammar } from "./visual-grammar/graph";
+import { renderMatrixGrammar } from "./visual-grammar/matrix";
+import { TOKENS, FONT_FAMILY } from "./visual-primitives/design-tokens";
 
 // ============================================================================
 // Centralized Style Mappings
@@ -463,6 +480,24 @@ export class RenderContext {
     this.updateCursor(newBounds);
   }
 
+  updateEndpointElement(dslId: string, updatedEl: ExcalidrawElement): void {
+    const existing = this.getRecord(dslId);
+    if (!existing) {
+      return;
+    }
+    existing.primaryElement = updatedEl;
+    if (existing.allElements) {
+      existing.allElements = existing.allElements.map((e) =>
+        e.id === updatedEl.id ? updatedEl : e,
+      );
+    } else {
+      existing.allElements = [updatedEl];
+    }
+    this.allElements = this.allElements.map((e) =>
+      e.id === updatedEl.id ? updatedEl : e,
+    );
+  }
+
   deleteRecord(dslId: string): boolean {
     const existing = this.getRecord(dslId);
     if (!existing) {
@@ -698,54 +733,32 @@ function renderCreateBox(
     action.position,
   );
 
-  const strokeColor = mapStrokeColor(action.style?.color);
+  const strokeColor = action.style?.color
+    ? mapStrokeColor(action.style.color)
+    : undefined;
   const backgroundColor =
     action.style?.fill === "transparent"
       ? "transparent"
-      : mapBackgroundColor(action.style?.color);
-  const fillStyle = mapFillStyle(action.style?.fill);
-  const strokeStyle = mapStrokeStyle(action.style?.strokeStyle);
+      : action.style?.color
+      ? mapBackgroundColor(action.style.color)
+      : undefined;
 
-  const box = newElement({
-    type: "rectangle",
+  const primitive = createGenericEntity({
+    id: action.id,
     x,
     y,
     width: sizeConfig.width,
     height: sizeConfig.height,
+    label: action.label,
+    shape: "rectangle",
+    role: action.role,
     strokeColor,
     backgroundColor,
-    fillStyle,
-    strokeStyle,
-    strokeWidth: 2,
-    roughness: 1,
-    roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS },
-    customData: {
-      dslId: action.id,
-      role: action.role ?? "generic",
-    },
+    fillStyle: action.style?.fill ? mapFillStyle(action.style.fill) : undefined,
   });
 
-  const text = newTextElement({
-    text: action.label,
-    x: x + sizeConfig.width / 2,
-    y: y + sizeConfig.height / 2,
-    fontSize: sizeConfig.fontSize,
-    fontFamily: 1, // Virgil
-    textAlign: "center",
-    verticalAlign: "middle",
-    containerId: box.id,
-    strokeColor,
-    customData: {
-      dslId: `${action.id}-label`,
-    },
-  });
-
-  const boundBox = newElementWith(box, {
-    boundElements: [{ type: "text", id: text.id }],
-  });
-
-  context.register(action.id, boundBox, text, [boundBox, text]);
-  return [boundBox, text];
+  context.register(action.id, primitive.primaryElement, primitive.allElements.find(e => e.type === "text") as any, primitive.allElements);
+  return primitive.allElements;
 }
 
 function renderCreateCircle(
@@ -760,58 +773,32 @@ function renderCreateCircle(
     action.position,
   );
 
-  const strokeColor = mapStrokeColor(action.style?.color);
+  const strokeColor = action.style?.color
+    ? mapStrokeColor(action.style.color)
+    : undefined;
   const backgroundColor =
     action.style?.fill === "transparent"
       ? "transparent"
-      : mapBackgroundColor(action.style?.color);
-  const fillStyle = mapFillStyle(action.style?.fill);
-  const strokeStyle = mapStrokeStyle(action.style?.strokeStyle);
+      : action.style?.color
+      ? mapBackgroundColor(action.style.color)
+      : undefined;
 
-  const circle = newElement({
-    type: "ellipse",
+  const primitive = createGenericEntity({
+    id: action.id,
     x,
     y,
     width: sizeConfig.width,
     height: sizeConfig.height,
+    label: action.label ?? "",
+    shape: "ellipse",
+    role: action.role,
     strokeColor,
     backgroundColor,
-    fillStyle,
-    strokeStyle,
-    strokeWidth: 2,
-    roughness: 1,
-    customData: {
-      dslId: action.id,
-      role: action.role ?? "generic",
-    },
+    fillStyle: action.style?.fill ? mapFillStyle(action.style.fill) : undefined,
   });
 
-  if (action.label) {
-    const text = newTextElement({
-      text: action.label,
-      x: x + sizeConfig.width / 2,
-      y: y + sizeConfig.height / 2,
-      fontSize: sizeConfig.fontSize,
-      fontFamily: 1,
-      textAlign: "center",
-      verticalAlign: "middle",
-      containerId: circle.id,
-      strokeColor,
-      customData: {
-        dslId: `${action.id}-label`,
-      },
-    });
-
-    const boundCircle = newElementWith(circle, {
-      boundElements: [{ type: "text", id: text.id }],
-    });
-
-    context.register(action.id, boundCircle, text, [boundCircle, text]);
-    return [boundCircle, text];
-  }
-
-  context.register(action.id, circle, undefined, [circle]);
-  return [circle];
+  context.register(action.id, primitive.primaryElement, primitive.allElements.find(e => e.type === "text") as any, primitive.allElements);
+  return primitive.allElements;
 }
 
 function renderCreateText(
@@ -832,20 +819,23 @@ function renderCreateText(
     estHeight,
     action.position,
   );
-  const strokeColor = mapStrokeColor(action.style?.color);
+  
+  const isTitle = action.role === "title" || action.role === "heading";
+  const fontFamily = isTitle ? TOKENS.TYPOGRAPHY.Title.fontFamily : FONT_FAMILY.SANS;
+  const textColor = TOKENS.NODE.DEFAULT.textPrimary;
 
   const textEl = newTextElement({
     text: action.text,
     x,
     y,
-    fontSize,
-    fontFamily: action.role === "variable" ? 3 : 1, // Cascadia for variable, Virgil otherwise
-    strokeColor,
-    textAlign: "left",
-    verticalAlign: "top",
+    fontSize: isTitle ? TOKENS.TYPOGRAPHY.Title.fontSize : fontSize,
+    fontFamily,
+    textAlign: "center",
+    verticalAlign: "middle",
+    strokeColor: textColor,
     customData: {
       dslId: action.id,
-      role: action.role ?? "label",
+      role: action.role ?? "text",
     },
   });
 
@@ -853,84 +843,80 @@ function renderCreateText(
   return [textEl];
 }
 
+export function commitSemanticConnector(
+  context: RenderContext,
+  opts: {
+    id: string;
+    from: string;
+    to: string;
+    direction?: ArrowDirection;
+    role?: ConnectorRole;
+    label?: string;
+    style?: BaseStyleOptions & { elbowed?: boolean };
+  },
+): ExcalidrawElement[] {
+  const fromRecord = context.getRecord(opts.from);
+  const toRecord = context.getRecord(opts.to);
+
+  if (!fromRecord || !toRecord) {
+    const missing = !fromRecord
+      ? `source '${opts.from}'`
+      : `target '${opts.to}'`;
+    context.addError(`Connector '${opts.id}' could not resolve ${missing}`);
+    return [];
+  }
+
+  const obstacles: ConnectorEndpoint[] = [];
+  for (const [recId, rec] of context.getRegistry()) {
+    if (
+      recId !== opts.from &&
+      recId !== opts.to &&
+      rec.primaryElement.type !== "arrow"
+    ) {
+      obstacles.push({
+        primaryElement: rec.primaryElement,
+        bounds: rec.bounds,
+      });
+    }
+  }
+
+  const result = renderSemanticConnector(
+    {
+      id: opts.id,
+      from: opts.from,
+      to: opts.to,
+      direction: opts.direction,
+      role: opts.role,
+      label: opts.label,
+      style: opts.style,
+      elbowed: opts.style?.elbowed,
+    },
+    { primaryElement: fromRecord.primaryElement, bounds: fromRecord.bounds },
+    { primaryElement: toRecord.primaryElement, bounds: toRecord.bounds },
+    obstacles,
+  );
+
+  for (const [endId, updatedEl] of result.updatedEndpoints) {
+    context.updateEndpointElement(endId, updatedEl);
+  }
+
+  context.register(opts.id, result.primary, result.labelText, result.elements);
+  return result.elements;
+}
+
 function renderCreateArrow(
   action: CreateArrowAction,
   context: RenderContext,
 ): ExcalidrawElement[] {
-  const fromRecord = context.getRecord(action.from);
-  const toRecord = context.getRecord(action.to);
-
-  if (!fromRecord || !toRecord) {
-    const missing = !fromRecord
-      ? `source '${action.from}'`
-      : `target '${action.to}'`;
-    context.addError(`Arrow '${action.id}' could not resolve ${missing}`);
-    return [];
-  }
-
-  const { startX, startY, endX, endY } = computeConnectionPoints(
-    fromRecord.bounds,
-    toRecord.bounds,
-  );
-
-  const dx = endX - startX;
-  const dy = endY - startY;
-
-  const points: readonly LocalPoint[] = [
-    pointFrom<LocalPoint>(0, 0),
-    pointFrom<LocalPoint>(dx, dy),
-  ];
-
-  const { startArrowhead, endArrowhead } = resolveArrowheads(action.direction);
-  const strokeColor = mapStrokeColor(action.style?.color);
-  const strokeStyle = mapStrokeStyle(action.style?.strokeStyle);
-
-  const arrow = newArrowElement({
-    type: "arrow",
-    x: startX,
-    y: startY,
-    width: Math.max(Math.abs(dx), 1),
-    height: Math.max(Math.abs(dy), 1),
-    points,
-    startArrowhead,
-    endArrowhead,
-    elbowed: Boolean(action.style?.elbowed),
-    strokeColor,
-    strokeStyle,
-    strokeWidth: 2,
-    roughness: 1,
-    customData: {
-      dslId: action.id,
-      from: action.from,
-      to: action.to,
-    },
+  return commitSemanticConnector(context, {
+    id: action.id,
+    from: action.from,
+    to: action.to,
+    direction: action.direction,
+    role: action.role,
+    label: action.label,
+    style: action.style,
   });
-
-  const elements: ExcalidrawElement[] = [arrow];
-  let labelText: ExcalidrawTextElement | undefined;
-
-  if (action.label) {
-    const midX = Math.round((startX + endX) / 2);
-    const midY = Math.round((startY + endY) / 2);
-
-    labelText = newTextElement({
-      text: action.label,
-      x: midX,
-      y: midY - 14,
-      fontSize: 14,
-      fontFamily: 1,
-      textAlign: "center",
-      verticalAlign: "middle",
-      strokeColor,
-      customData: {
-        dslId: `${action.id}-label`,
-      },
-    });
-    elements.push(labelText);
-  }
-
-  context.register(action.id, arrow, labelText, elements);
-  return elements;
 }
 
 function renderHighlight(
@@ -1089,9 +1075,9 @@ function renderResize(
 // Semantic Array Renderer
 // ============================================================================
 
-/** Maps an ArrayElementHighlight to a SemanticColor for the cell stroke/bg */
+/** Maps an ArrayElementHighlight or SemanticColor to a SemanticColor for the cell stroke/bg */
 function highlightToColor(
-  h?: ArrayElementHighlight,
+  h?: ArrayElementHighlight | SemanticColor,
 ): SemanticColor | undefined {
   switch (h) {
     case "low":
@@ -1104,6 +1090,16 @@ function highlightToColor(
       return "success";
     case "eliminated":
       return "neutral";
+    case "default":
+    case "primary":
+    case "secondary":
+    case "accent":
+    case "neutral":
+    case "success":
+    case "warning":
+    case "danger":
+    case "info":
+      return h;
     default:
       return undefined;
   }
@@ -2077,7 +2073,7 @@ function renderCreateMatrix(
  *      ↓         ← arrow from target bottom-center downward, label below
  *   label text
  */
-function renderAnnotatePointer(
+export function renderAnnotatePointer(
   action: AnnotatePointerAction,
   context: RenderContext,
 ): ExcalidrawElement[] {
@@ -2486,17 +2482,19 @@ export function renderAction(
     case "resize":
       return renderResize(action, context);
     case "create_array":
-      return renderCreateArray(action, context);
+      return renderArrayGrammar(action, context);
     case "create_linked_list":
-      return renderCreateLinkedList(action, context);
+      return renderLinkedListGrammar(action, context);
     case "create_stack":
-      return renderCreateStack(action, context);
+      return renderStackGrammar(action, context);
+    case "create_queue":
+      return renderQueueGrammar(action, context);
     case "create_tree":
-      return renderCreateTree(action, context);
+      return renderTreeGrammar(action, context);
     case "create_graph":
-      return renderCreateGraph(action, context);
+      return renderGraphGrammar(action, context);
     case "create_matrix":
-      return renderCreateMatrix(action, context);
+      return renderMatrixGrammar(action, context);
     case "create_explanation_block":
       return renderCreateExplanationBlock(action, context);
     case "create_divider":

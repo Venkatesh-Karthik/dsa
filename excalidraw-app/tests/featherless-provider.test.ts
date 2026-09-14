@@ -63,9 +63,11 @@ function createMockReqRes(options: { method: string; body?: unknown }) {
 
 describe("FeatherlessTeachingProvider", () => {
   const originalEnvKey = process.env.FEATHERLESS_API_KEY;
+  const originalAiProvider = process.env.AI_PROVIDER;
 
   beforeEach(() => {
     delete process.env.FEATHERLESS_API_KEY;
+    delete process.env.AI_PROVIDER;
   });
 
   afterEach(() => {
@@ -73,6 +75,11 @@ describe("FeatherlessTeachingProvider", () => {
       process.env.FEATHERLESS_API_KEY = originalEnvKey;
     } else {
       delete process.env.FEATHERLESS_API_KEY;
+    }
+    if (originalAiProvider) {
+      process.env.AI_PROVIDER = originalAiProvider;
+    } else {
+      delete process.env.AI_PROVIDER;
     }
     setDefaultTeachingProvider(null);
   });
@@ -197,7 +204,7 @@ describe("FeatherlessTeachingProvider", () => {
       }>;
       expect(messages[0].role).toBe("system");
       expect(messages[0].content.toLowerCase()).toContain(
-        "ai visual learning tutor",
+        "visual learning tutor",
       );
       expect(messages[1].role).toBe("user");
       expect(messages[1].content).toContain(
@@ -566,16 +573,16 @@ describe("FeatherlessTeachingProvider", () => {
   });
 
   describe("Provider Auto-Selection in Server Handler", () => {
-    it("selects MockTeachingProvider when FEATHERLESS_API_KEY is not set", () => {
-      delete process.env.FEATHERLESS_API_KEY;
+    it("selects MockTeachingProvider when AI_PROVIDER=mock", () => {
+      process.env.AI_PROVIDER = "mock";
       setDefaultTeachingProvider(null);
 
       const resolved = getDefaultTeachingProvider();
       expect(resolved.id).toBe("mock");
     });
 
-    it("selects FeatherlessTeachingProvider when FEATHERLESS_API_KEY is present", () => {
-      process.env.FEATHERLESS_API_KEY = "live-test-key";
+    it("selects FeatherlessTeachingProvider when AI_PROVIDER=featherless", () => {
+      process.env.AI_PROVIDER = "featherless";
       setDefaultTeachingProvider(null);
 
       const resolved = getDefaultTeachingProvider();

@@ -22,6 +22,9 @@ const VALID_ACTION_TYPES = new Set<string>([
   "create_text",
   "create_circle",
   "create_arrow",
+  "connect",
+  "disconnect",
+  "update",
   "create_array",
   "create_linked_list",
   "create_stack",
@@ -631,6 +634,28 @@ export function normalizeVisualAction(action: unknown): unknown {
   }
   const act = { ...(action as Record<string, unknown>) };
 
+  // Convert connect -> create_arrow
+  if (act.type === "connect") {
+    act.type = "create_arrow";
+    act.from = act.from || act.source || "";
+    act.to = act.to || act.target || "";
+    act.id = act.id || `arrow-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  // Convert disconnect -> delete
+  if (act.type === "disconnect") {
+    act.type = "delete";
+    act.target = act.target || act.id || "";
+  }
+
+  // Convert update -> highlight with state / label message
+  if (act.type === "update") {
+    act.type = "highlight";
+    act.target = act.target || act.id || "";
+    act.color = act.color || "primary";
+    act.message = act.state || act.label || "";
+  }
+
   // Normalize style
   if (act.style && typeof act.style === "object" && !Array.isArray(act.style)) {
     const st = { ...(act.style as Record<string, unknown>) };
@@ -812,10 +837,53 @@ export function normalizeVisualAction(action: unknown): unknown {
  * Normalizes an entire TeachingResponse payload before validation.
  */
 export function normalizeTeachingResponse(input: unknown): unknown {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
+  if (!input || typeof input !== "object") {
     return input;
   }
+  if (Array.isArray(input)) {
+    const actions = input.map((act) => normalizeVisualAction(act));
+    return {
+      topic: "Visual Demonstration",
+      message: "Here is the visual demonstration.",
+      visual_actions: actions,
+      visualLesson: {
+        id: `vl-${Date.now()}`,
+        title: "Visual Demonstration",
+        initialScene: actions,
+        transformations: [],
+        capabilities: ["explain", "code", "analyze", "practice"],
+      },
+    };
+  }
   const res = { ...(input as Record<string, unknown>) };
+
+  // If model returned a single VisualAction directly (e.g. { type: "create_tree", ... })
+  if (
+    typeof res.type === "string" &&
+    (res.type.startsWith("create_") ||
+      res.type === "highlight" ||
+      res.type === "move" ||
+      res.type === "delete" ||
+      res.type === "annotate_pointer")
+  ) {
+    const singleAction = normalizeVisualAction(res);
+    const conceptTitle =
+      typeof res.id === "string" && res.id.length > 0
+        ? res.id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+        : "Visual Demonstration";
+    return {
+      topic: conceptTitle,
+      message: `Here is the visual demonstration of ${conceptTitle}.`,
+      visual_actions: [singleAction],
+      visualLesson: {
+        id: typeof res.id === "string" ? res.id : `vl-${Date.now()}`,
+        title: conceptTitle,
+        initialScene: [singleAction],
+        transformations: [],
+        capabilities: ["explain", "code", "analyze", "practice"],
+      },
+    };
+  }
 
   if (res.lesson && typeof res.lesson === "object" && !Array.isArray(res.lesson)) {
     const lessonObj = { ...(res.lesson as Record<string, unknown>) };
@@ -826,6 +894,23 @@ export function normalizeTeachingResponse(input: unknown): unknown {
       res.topic = lessonObj.title;
     }
     res.lesson = lessonObj;
+  }
+
+  // Map alternative fields for topic and message if present
+  if (typeof res.topic !== "string" || !res.topic.trim()) {
+    if (typeof (res.lesson as any)?.title === "string") {
+      res.topic = (res.lesson as any).title;
+    }
+  }
+
+  if (typeof res.message !== "string" || !res.message.trim()) {
+    if (typeof res.explanation === "string" && res.explanation.trim()) {
+      res.message = res.explanation;
+    } else if (typeof res.description === "string" && res.description.trim()) {
+      res.message = res.description;
+    } else if (Array.isArray(res.explanation_steps) && res.explanation_steps.length > 0) {
+      res.message = (res.explanation_steps as unknown[]).map(String).join(" ");
+    }
   }
 
   if (Array.isArray(res.visual_actions)) {
@@ -867,6 +952,172 @@ export function normalizeTeachingResponse(input: unknown): unknown {
         steps: stepsList,
       };
     }
+  }
+
+  // Handle flattened visual lesson where initialScene or transformations are at top-level
+  if (
+    !res.visualLesson &&
+    !res.visual_lesson &&
+    (Array.isArray(res.initialScene) ||
+      Array.isArray(res.initial_scene) ||
+      Array.isArray(res.transformations))
+  ) {
+    res.visualLesson = {
+      id: typeof res.id === "string" ? res.id : `vl-${Date.now()}`,
+      title:
+        typeof res.title === "string"
+          ? res.title
+          : typeof res.topic === "string"
+          ? res.topic
+          : "Visual Lesson",
+      initialScene: (res.initialScene || res.initial_scene || []) as unknown[],
+      transformations: (res.transformations || []) as unknown[],
+      capabilities: Array.isArray(res.capabilities)
+        ? res.capabilities
+        : ["explain", "code", "analyze", "practice"],
+    };
+  } else if (
+    !res.visualLesson &&
+    !res.visual_lesson &&
+    res.lesson &&
+    typeof res.lesson === "object" &&
+    !Array.isArray(res.lesson) &&
+    (Array.isArray((res.lesson as Record<string, unknown>).initialScene) ||
+      Array.isArray((res.lesson as Record<string, unknown>).initial_scene) ||
+      Array.isArray((res.lesson as Record<string, unknown>).transformations))
+  ) {
+    const l = res.lesson as Record<string, unknown>;
+    res.visualLesson = {
+      id: typeof l.id === "string" ? l.id : `vl-${Date.now()}`,
+      title:
+        typeof l.title === "string"
+          ? l.title
+          : typeof res.topic === "string"
+          ? res.topic
+          : "Visual Lesson",
+      initialScene: (l.initialScene || l.initial_scene || []) as unknown[],
+      transformations: (l.transformations || []) as unknown[],
+      capabilities: Array.isArray(l.capabilities)
+        ? l.capabilities
+        : ["explain", "code", "analyze", "practice"],
+    };
+  }
+
+  const rawLesson = (res.visualLesson || res.visual_lesson) as
+    | Record<string, unknown>
+    | undefined;
+  if (rawLesson && typeof rawLesson === "object") {
+    res.visualLesson = rawLesson;
+
+    if (typeof res.topic !== "string" || !res.topic.trim()) {
+      if (typeof rawLesson.title === "string" && rawLesson.title.trim()) {
+        res.topic = rawLesson.title;
+      } else if (
+        typeof rawLesson.concept === "string" &&
+        rawLesson.concept.trim()
+      ) {
+        res.topic = rawLesson.concept;
+      }
+    }
+
+    if (typeof res.message !== "string" || !res.message.trim()) {
+      if (
+        typeof rawLesson.explanation === "string" &&
+        rawLesson.explanation.trim()
+      ) {
+        res.message = rawLesson.explanation;
+      } else if (
+        typeof rawLesson.title === "string" &&
+        rawLesson.title.trim()
+      ) {
+        res.message = `Visual explanation of ${rawLesson.title}`;
+      } else if (typeof res.topic === "string" && res.topic.trim()) {
+        res.message = `Visual explanation of ${res.topic}`;
+      } else {
+        res.message = "Visual lesson generated successfully.";
+      }
+    }
+
+    if (
+      !res.visual_actions ||
+      !Array.isArray(res.visual_actions) ||
+      res.visual_actions.length === 0
+    ) {
+      const initialScene = (rawLesson.initialScene ||
+        rawLesson.initial_scene) as unknown[];
+      if (Array.isArray(initialScene)) {
+        res.visual_actions = initialScene.map((act) =>
+          normalizeVisualAction(act),
+        );
+      } else {
+        res.visual_actions = [];
+      }
+    }
+
+    const rawTransformations = rawLesson.transformations as unknown[];
+    if (Array.isArray(rawTransformations)) {
+      rawLesson.transformations = rawTransformations.map((trans, tIdx) => {
+        if (!trans || typeof trans !== "object") {
+          return trans;
+        }
+        const t = { ...(trans as Record<string, unknown>) };
+        if (Array.isArray(t.operations)) {
+          t.operations = t.operations.map((op, opIdx) => {
+            if (!op || typeof op !== "object") {
+              return op;
+            }
+            const o = normalizeVisualAction(op) as Record<string, unknown>;
+            if (typeof o.id !== "string" || o.id.trim().length === 0) {
+              o.id = `t${tIdx}-op${opIdx}`;
+            }
+            return o;
+          });
+        }
+        return t;
+      });
+    }
+  }
+
+  // Safety net: ensure message is present when visualLesson exists
+  if (
+    res.visualLesson &&
+    typeof res.visualLesson === "object" &&
+    (typeof res.message !== "string" || !res.message.trim())
+  ) {
+    if (typeof res.topic === "string" && res.topic.trim()) {
+      res.message = `Visual explanation of ${res.topic}`;
+    } else {
+      res.message = "Visual lesson generated successfully.";
+    }
+  }
+
+  // Safety net: ensure visual_actions is at least an empty array if visualLesson exists
+  if (res.visualLesson && (!res.visual_actions || !Array.isArray(res.visual_actions))) {
+    const vl = res.visualLesson as Record<string, unknown>;
+    const initScene = (vl.initialScene || vl.initial_scene) as unknown[];
+    res.visual_actions = Array.isArray(initScene)
+      ? initScene.map((act) => normalizeVisualAction(act))
+      : [];
+  }
+
+  // Safety net: ensure visualLesson exists whenever visual_actions are present
+  if (
+    !res.visualLesson &&
+    !res.visual_lesson &&
+    Array.isArray(res.visual_actions) &&
+    res.visual_actions.length > 0
+  ) {
+    const actList = res.visual_actions.map((act) => normalizeVisualAction(act));
+    res.visualLesson = {
+      id: `lesson-${Date.now()}`,
+      title:
+        typeof res.topic === "string" && res.topic.trim()
+          ? res.topic
+          : "Visual Lesson",
+      initialScene: actList,
+      transformations: [],
+      capabilities: ["explain", "code", "analyze", "practice"],
+    };
   }
 
   return res;
@@ -1670,21 +1921,33 @@ export function validateTeachingResponse(
   const res = normalizeTeachingResponse(input) as Record<string, unknown>;
 
   if (typeof res.message !== "string" || res.message.trim().length === 0) {
-    errors.push(
-      "Field 'message' must be a non-empty string explaining the concept.",
-    );
+    if (res.visualLesson && typeof res.visualLesson === "object") {
+      res.message = `Visual explanation of ${(res.visualLesson as Record<string, unknown>).title || res.topic || "concept"}`;
+    } else {
+      errors.push(
+        "Field 'message' must be a non-empty string explaining the concept.",
+      );
+    }
   }
 
   if (res.visual_actions === undefined) {
-    if (res.steps === undefined) {
+    if (res.visualLesson && typeof res.visualLesson === "object") {
+      const vl = res.visualLesson as Record<string, unknown>;
+      res.visual_actions = Array.isArray(vl.initialScene) ? vl.initialScene : [];
+    } else if (res.steps === undefined) {
       errors.push(
         "Field 'visual_actions' must be an array of VisualAction items.",
       );
     }
   } else if (!Array.isArray(res.visual_actions)) {
-    errors.push(
-      "Field 'visual_actions' must be an array of VisualAction items.",
-    );
+    if (res.visualLesson && typeof res.visualLesson === "object") {
+      const vl = res.visualLesson as Record<string, unknown>;
+      res.visual_actions = Array.isArray(vl.initialScene) ? vl.initialScene : [];
+    } else {
+      errors.push(
+        "Field 'visual_actions' must be an array of VisualAction items.",
+      );
+    }
   } else if (res.visual_actions.length > MAX_VISUAL_ACTIONS) {
     errors.push(
       `Field 'visual_actions' exceeds safety limit of ${MAX_VISUAL_ACTIONS} actions (received ${res.visual_actions.length}).`,
