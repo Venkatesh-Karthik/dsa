@@ -368,25 +368,32 @@ export function reconcileSceneState(
       resultElements.push(newArrow);
     }
 
-    // Edge label rendering
+    // Edge label rendering — floating capsule style
     if (rel.label) {
       const midPoint =
         points[Math.floor(points.length / 2)] || points[0];
-      const labelX = Math.round(arrowStartX + midPoint[0] - 20);
-      const labelY = Math.round(arrowStartY + midPoint[1] - 16);
+      const labelX = Math.round(arrowStartX + midPoint[0] - 18);
+      const labelY = Math.round(arrowStartY + midPoint[1] - 22);
 
       const labelEl = newTextElement({
         text: rel.label,
         x: labelX,
         y: labelY,
-        fontSize: 12,
-        strokeColor: "#334155",
+        fontSize: TOKENS.TYPOGRAPHY.EdgeWeight.fontSize,
+        fontFamily: TOKENS.TYPOGRAPHY.EdgeWeight.fontFamily,
+        textAlign: "center",
+        verticalAlign: "middle",
+        strokeColor: "#475569",
         backgroundColor: "#ffffff",
+        fillStyle: "solid" as const,
+        strokeWidth: 0,
+        roughness: 0,
         customData: {
           dslId: `${relId}-label`,
           semanticId: `${relId}-label`,
           lessonId,
           isAiTeaching: true,
+          isEdgeLabel: true,
         },
       });
       resultElements.push(labelEl);

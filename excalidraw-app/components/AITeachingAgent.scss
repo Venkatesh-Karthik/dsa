@@ -19,7 +19,7 @@
       padding: 9px 16px;
       font-size: 13px;
       font-weight: 600;
-      font-family: var(--ui-font, sans-serif);
+      font-family: var(--cognora-font-sans);
       cursor: pointer;
       box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35),
         0 1px 3px rgba(0, 0, 0, 0.1);
@@ -55,7 +55,7 @@
     display: flex;
     flex-direction: column;
     z-index: 15;
-    font-family: var(--ui-font, sans-serif);
+    font-family: var(--cognora-font-sans);
     color: var(--text-primary-color, #111827);
     pointer-events: auto;
     overflow: hidden;
@@ -541,7 +541,7 @@
           font-size: 12.5px;
           font-weight: 700;
           color: #4f46e5;
-          font-family: monospace;
+          font-family: var(--cognora-font-mono);
         }
 
         &__category {
@@ -555,7 +555,7 @@
         &__syntax {
           font-size: 11px;
           color: #4b5563;
-          font-family: monospace;
+          font-family: var(--cognora-font-mono);
         }
 
         &__desc {
@@ -760,7 +760,7 @@
       background: #f3f4f6;
       padding: 6px 12px;
       border-radius: 6px;
-      font-family: monospace;
+      font-family: var(--cognora-font-mono);
     }
 
     &__toggle-chat-btn,
@@ -816,7 +816,7 @@
 
     &__function {
       font-size: 12px;
-      font-family: monospace;
+      font-family: var(--cognora-font-mono);
       color: #818cf8;
       margin-right: auto;
     }
@@ -839,7 +839,7 @@
     &__code {
       margin: 0;
       padding: 12px 0;
-      font-family: monospace;
+      font-family: var(--cognora-font-mono);
       font-size: 12.5px;
       line-height: 1.55;
       color: #f9fafb;

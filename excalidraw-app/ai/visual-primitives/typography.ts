@@ -19,11 +19,11 @@ export const TYPOGRAPHY = {
   },
   ArrayCell: {
     primary: TOKENS.TYPOGRAPHY.NodePrimary,
-    index: { fontSize: 14, fontFamily: FONT_FAMILY.SANS }
+    index: TOKENS.TYPOGRAPHY.IndexLabel,
   },
   Annotation: TOKENS.TYPOGRAPHY.Annotation,
-  CodeBadge: { fontSize: 14, fontFamily: FONT_FAMILY.MONO },
+  CodeBadge: { fontSize: 13, fontFamily: FONT_FAMILY.MONO },
   Title: TOKENS.TYPOGRAPHY.Title,
-  Heading: { fontSize: 18, fontFamily: FONT_FAMILY.SANS },
-  Body: { fontSize: 16, fontFamily: FONT_FAMILY.SANS }
+  Heading: { fontSize: 16, fontFamily: FONT_FAMILY.SANS },
+  Body: { fontSize: 14, fontFamily: FONT_FAMILY.SANS }
 } as const;

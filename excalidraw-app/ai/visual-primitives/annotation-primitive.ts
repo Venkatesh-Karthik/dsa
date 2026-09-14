@@ -78,13 +78,13 @@ export function createAnnotationPrimitive(
 
   const textLabel = newTextElement({
     text: displayText,
-    x: x + 12,
+    x: x + 14,
     y: y + 10,
     fontSize,
     fontFamily: TOKENS.TYPOGRAPHY.Annotation.fontFamily,
     textAlign: "left",
     verticalAlign: "top",
-    strokeColor: "#1e293b",
+    strokeColor: "#0f172a",
     containerId: container.id,
     groupIds: [groupId],
     customData: { dslId: `${id}-text` },

@@ -13,6 +13,34 @@
 // Liquid Glass Design Tokens & Foundations (Unified System)
 // ============================================================================
 :root {
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     TYPOGRAPHY TOKENS
+     Single source of truth for all Cognora font decisions.
+     All Cognora UI components MUST use these variables.
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+  --cognora-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  --cognora-font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code",
+    "Menlo", monospace;
+
+  /* Type scale — use these for all font-size declarations */
+  --cognora-text-xs:   10px;   /* Labels, badges, kbd */
+  --cognora-text-sm:   11.5px; /* Captions, secondary metadata */
+  --cognora-text-base: 13px;   /* Body, inputs, list items */
+  --cognora-text-md:   14px;   /* Sub-headings, emphasis */
+  --cognora-text-lg:   15px;   /* Panel headings */
+  --cognora-text-xl:   18px;   /* Section headings */
+  --cognora-text-2xl:  22px;   /* Display */
+
+  /* Spacing tokens */
+  --cognora-space-1: 4px;
+  --cognora-space-2: 8px;
+  --cognora-space-3: 12px;
+  --cognora-space-4: 16px;
+  --cognora-space-5: 20px;
+  --cognora-space-6: 24px;
+  --cognora-space-8: 32px;
+
   /* True Physical Liquid Glass Surfaces (Layered translucency with canvas dot visibility) */
   --cognora-glass-surface: linear-gradient(
     135deg,
@@ -106,15 +134,14 @@
   }
 }
 
-// Force clean system font on Excalidraw welcome screen to prevent handwritten excalifont
+// Force clean Inter font on Excalidraw welcome screen to prevent handwritten excalifont
 .excalidraw .welcome-screen-center,
 .excalidraw .welcome-screen-center__logo,
 .excalidraw .welcome-screen-center__heading,
 .excalidraw .welcome-screen-decor,
 .excalidraw .excalifont.welcome-screen-center__heading,
 .excalidraw .excalifont.welcome-screen-center__logo {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif !important;
+  font-family: var(--cognora-font-sans) !important;
 }
 
 // Suppress default Excalidraw UI bars
@@ -149,8 +176,7 @@
   inset: 0;
   pointer-events: none;
   z-index: 20;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+  font-family: var(--cognora-font-sans);
   color: #0f172a;
 
   > * {
@@ -2081,33 +2107,36 @@
   }
 
   &__card {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(226, 232, 240, 0.9);
-    border-radius: 12px;
-    padding: 8px 14px;
-    box-shadow: 0 20px 30px -5px rgba(0, 0, 0, 0.07),
-      0 8px 10px -6px rgba(0, 0, 0, 0.03);
+    background: rgba(255, 255, 255, 0.97);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(203, 213, 225, 0.8);
+    border-radius: 14px;
+    padding: 10px 16px;
+    box-shadow: 0 16px 28px -4px rgba(0, 0, 0, 0.08),
+      0 6px 10px -4px rgba(0, 0, 0, 0.04),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
     text-align: center;
     max-width: 280px;
     white-space: normal;
     word-break: break-word;
+    font-family: var(--cognora-font-sans);
   }
 
   &__title {
-    font-size: 13px;
+    font-size: var(--cognora-text-base);
     font-weight: 700;
     color: #0f172a;
     line-height: 1.25;
+    letter-spacing: -0.015em;
   }
 
   &__subtitle {
-    font-size: 11px;
+    font-size: var(--cognora-text-sm);
     color: #64748b;
     font-weight: 500;
-    margin-top: 3px;
-    line-height: 1.35;
+    margin-top: 4px;
+    line-height: 1.45;
   }
 
   &__caret {
@@ -2115,15 +2144,16 @@
     height: 8px;
     margin-top: -1px;
     fill: #ffffff;
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.05));
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.08));
     transition: transform 0.2s ease;
   }
 
   &__pin {
     width: 2px;
     height: 14px;
-    background: #22c55e;
+    background: var(--cognora-accent);
     margin: 2px 0;
+    border-radius: 2px;
   }
 }
 

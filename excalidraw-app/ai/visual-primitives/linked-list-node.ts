@@ -1,6 +1,7 @@
 import { newElement, newTextElement } from "@excalidraw/element";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 import { TOKENS, mapSemanticStateToNodeTokens } from "./design-tokens";
+import { ROUNDNESS } from "@excalidraw/common";
 
 export interface LinkedListNodeProps {
   id: string;
@@ -35,7 +36,7 @@ export function createLinkedListNode(props: LinkedListNodeProps): LinkedListNode
     fillStyle: "solid",
     strokeWidth: style.strokeWidth,
     roughness: 0,
-    roundness: null, // typically LL nodes are rectangles
+    roundness: { type: ROUNDNESS.ADAPTIVE_RADIUS }, // Subtle rounding like other nodes
     groupIds: [groupId],
     customData: {
       dslId: id,

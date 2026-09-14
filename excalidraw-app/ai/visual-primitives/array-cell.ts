@@ -79,9 +79,9 @@ export function createArrayCell(props: ArrayCellProps): ArrayCellPrimitive {
     const indexLabel = newTextElement({
       text: String(index),
       x: x + width / 2,
-      y: y + height + 8, // OFFSET
-      fontSize: TOKENS.TYPOGRAPHY.NodeSecondary.fontSize,
-      fontFamily: TOKENS.TYPOGRAPHY.NodeSecondary.fontFamily,
+      y: y + height + 6, // OFFSET
+      fontSize: TOKENS.TYPOGRAPHY.IndexLabel.fontSize,
+      fontFamily: TOKENS.TYPOGRAPHY.IndexLabel.fontFamily,
       textAlign: "center",
       verticalAlign: "top",
       strokeColor: PALETTE.slate300, // Neutral gray

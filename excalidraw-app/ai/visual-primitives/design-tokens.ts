@@ -56,28 +56,28 @@ export const TOKENS = {
       stroke: PALETTE.slate300,
       textPrimary: PALETTE.slate800,
       textSecondary: PALETTE.slate700,
-      strokeWidth: 2,
+      strokeWidth: 1.5,
     },
     VISITED: {
       fill: PALETTE.blue50,
       stroke: PALETTE.blue500,
       textPrimary: PALETTE.blue600,
       textSecondary: PALETTE.blue600,
-      strokeWidth: 2,
+      strokeWidth: 1.5,
     },
     CURRENT: {
       fill: PALETTE.green50,
       stroke: PALETTE.green500,
       textPrimary: PALETTE.green600,
       textSecondary: PALETTE.green600,
-      strokeWidth: 3, // Thicker for active
+      strokeWidth: 2.5, // Thicker for active
     },
     TARGET: {
       fill: PALETTE.purple50,
       stroke: PALETTE.purple500,
       textPrimary: PALETTE.purple600,
       textSecondary: PALETTE.purple600,
-      strokeWidth: 3,
+      strokeWidth: 2.5,
     },
     SELECTED: {
       fill: PALETTE.amber50,
@@ -91,7 +91,7 @@ export const TOKENS = {
       stroke: PALETTE.amber500,
       textPrimary: PALETTE.amber600,
       textSecondary: PALETTE.amber600,
-      strokeWidth: 3,
+      strokeWidth: 2.5,
     }
   },
 
@@ -99,19 +99,19 @@ export const TOKENS = {
   EDGE: {
     DEFAULT: {
       stroke: PALETTE.slate300,
-      strokeWidth: 2,
+      strokeWidth: 1.5,
     },
     VISITED: {
       stroke: PALETTE.blue500,
-      strokeWidth: 2,
+      strokeWidth: 1.5,
     },
     IN_PATH: {
       stroke: PALETTE.amber500,
-      strokeWidth: 3,
+      strokeWidth: 2.5,
     },
     ACTIVE: {
       stroke: PALETTE.green500,
-      strokeWidth: 3,
+      strokeWidth: 2.5,
     }
   },
 
@@ -141,20 +141,29 @@ export const TOKENS = {
 
   // TYPOGRAPHY SCALES
   TYPOGRAPHY: {
-    Title: { fontSize: 24, fontFamily: FONT_FAMILY.SANS },
-    NodePrimary: { fontSize: 20, fontFamily: FONT_FAMILY.SANS },
-    NodeSecondary: { fontSize: 14, fontFamily: FONT_FAMILY.MONO },
-    EdgeWeight: { fontSize: 14, fontFamily: FONT_FAMILY.MONO },
-    Annotation: { fontSize: 14, fontFamily: FONT_FAMILY.SANS },
-    Callout: { fontSize: 16, fontFamily: FONT_FAMILY.SANS },
+    Title: { fontSize: 22, fontFamily: FONT_FAMILY.SANS },
+    NodePrimary: { fontSize: 16, fontFamily: FONT_FAMILY.SANS },
+    NodeSecondary: { fontSize: 12, fontFamily: FONT_FAMILY.MONO },
+    EdgeWeight: { fontSize: 12, fontFamily: FONT_FAMILY.MONO },
+    Annotation: { fontSize: 13, fontFamily: FONT_FAMILY.SANS },
+    Callout: { fontSize: 15, fontFamily: FONT_FAMILY.SANS },
+    IndexLabel: { fontSize: 11, fontFamily: FONT_FAMILY.MONO },
   },
 
   // GEOMETRY
   GEOMETRY: {
-    cornerRadius: 8,
-    nodeDiameter: 65,
-    cellWidth: 60,
-    cellHeight: 60,
+    cornerRadius: 10,
+    nodeDiameter: 68,
+    cellWidth: 64,
+    cellHeight: 64,
+  },
+
+  // STROKE WEIGHTS
+  STROKE: {
+    thin: 1,
+    default: 1.5,
+    medium: 2,
+    thick: 2.5,
   },
 
   // ANIMATION
