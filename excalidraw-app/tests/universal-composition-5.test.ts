@@ -401,7 +401,7 @@ describe("Cognora Universal Visual Rendering Intelligence 5.0", () => {
             const elB = primaryEls[j];
 
             // Sub-elements belonging to the same entity (e.g. bound text, header, or same group)
-            if (elA.containerId === elB.id || elB.containerId === elA.id) continue;
+            if ((elA as any).containerId === elB.id || (elB as any).containerId === elA.id) continue;
             if (elA.id.startsWith(elB.id) || elB.id.startsWith(elA.id)) continue;
             if (
               elA.groupIds?.length &&

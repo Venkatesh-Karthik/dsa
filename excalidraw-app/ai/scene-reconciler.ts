@@ -215,6 +215,28 @@ export function reconcileSceneState(
   };
 
   const placedLabelBoxes: BoundingBox[] = [];
+
+  // Pre-compute parallel lane assignments for all relationships ONCE before the loop.
+  // This guarantees stable, consistent lane indices regardless of Map iteration order.
+  const endpointPairCounts = new Map<string, number>();
+  const relationshipLanes = new Map<string, { laneIndex: number; totalLanes: number }>();
+  if (targetState.graph.relationships) {
+    for (const [rId, r] of targetState.graph.relationships.entries()) {
+      const key = [r.sourceEntityId, r.targetEntityId].sort().join("<->");
+      endpointPairCounts.set(key, (endpointPairCounts.get(key) ?? 0) + 1);
+    }
+    const currentLaneCounter = new Map<string, number>();
+    for (const [rId, r] of targetState.graph.relationships.entries()) {
+      const key = [r.sourceEntityId, r.targetEntityId].sort().join("<->");
+      const laneIndex = currentLaneCounter.get(key) ?? 0;
+      currentLaneCounter.set(key, laneIndex + 1);
+      relationshipLanes.set(rId, {
+        laneIndex,
+        totalLanes: endpointPairCounts.get(key) ?? 1,
+      });
+    }
+  }
+
   if (targetState.graph.relationships) {
     for (const [relId, rel] of targetState.graph.relationships.entries()) {
     const sourceEl = resolvePrimaryElement(rel.sourceEntityId);
@@ -286,26 +308,6 @@ export function reconcileSceneState(
     const sourceBounds = getEntityFullBounds(rel.sourceEntityId, sourceEl);
     const targetBounds = getEntityFullBounds(rel.targetEntityId, targetEl);
 
-    // Pre-calculate relationship lanes for parallel connectors
-    const endpointPairCounts = new Map<string, number>();
-    const relationshipLanes = new Map<string, { laneIndex: number; totalLanes: number }>();
-    if (targetState.graph.relationships) {
-      for (const [rId, r] of targetState.graph.relationships.entries()) {
-        const key = [r.sourceEntityId, r.targetEntityId].sort().join("<->");
-        endpointPairCounts.set(key, (endpointPairCounts.get(key) ?? 0) + 1);
-      }
-      const currentLaneCounter = new Map<string, number>();
-      for (const [rId, r] of targetState.graph.relationships.entries()) {
-        const key = [r.sourceEntityId, r.targetEntityId].sort().join("<->");
-        const laneIndex = currentLaneCounter.get(key) ?? 0;
-        currentLaneCounter.set(key, laneIndex + 1);
-        relationshipLanes.set(rId, {
-          laneIndex,
-          totalLanes: endpointPairCounts.get(key) ?? 1,
-        });
-      }
-    }
-
     // Obstacle avoidance check: include full entity footprints (both containers and text elements)
     const obstacleBoxes: BoundingBox[] = [];
     for (const [k, els] of entityElementMap.entries()) {
@@ -316,6 +318,7 @@ export function reconcileSceneState(
       }
     }
 
+    // Use pre-computed lane assignments (hoisted above this loop for consistency)
     const laneInfo = relationshipLanes.get(relId) || { laneIndex: 0, totalLanes: 1 };
     const route = computeOptimalRoute(
       sourceBounds,
@@ -490,8 +493,8 @@ export function reconcileSceneState(
           }
           const calloutPos = computeOptimalCalloutPosition({
             anchorBounds,
-            calloutWidth: 140,
-            calloutHeight: 32,
+            calloutWidth: Math.max(140, (ann.text || "").length * 7.5 + 24),
+            calloutHeight: (ann.text || "").split("\n").length > 1 ? 52 : 32,
             obstacles: obstacleBoxes,
             preferredPlacement: (ann.placement as any) || "above",
           });

@@ -14,7 +14,6 @@
  */
 
 import type { AuthoritativeSemanticModel } from "../authoritative-model";
-import type { Entity, Relationship } from "../semantic-world";
 import type {
   InformationPriority,
   VisualEvidenceItem,
@@ -80,16 +79,40 @@ export class VisualEvidencePlanner {
       const isMutated = affectedEntitySet.has(ent.id);
       const isRoot = ent.semanticRole === "root" || i === 0;
 
+      // An entity is only suppressed as a transient action if it:
+      // 1. Has an action-verb label AND
+      // 2. Has no structural/persistent type that indicates it is a real canvas entity AND
+      // 3. Has no persistent properties (columns, rows, values, state, etc.)
+      const hasPersistentType =
+        ent.type === "Table" ||
+        ent.type === "Record" ||
+        ent.type === "MemoryBlock" ||
+        ent.type === "StackFrame" ||
+        ent.type === "Packet" ||
+        ent.type === "MessagePacket" ||
+        ent.type === "TreeNode" ||
+        ent.type === "ArrayCell" ||
+        ent.type === "LinkedListNode";
+      const hasPersistentProperties =
+        ent.properties &&
+        (ent.properties.columns !== undefined ||
+          ent.properties.rows !== undefined ||
+          ent.properties.values !== undefined ||
+          ent.properties.state !== undefined ||
+          ent.properties.capacity !== undefined);
+      const isTrulyTransient =
+        isAction && !hasPersistentType && !hasPersistentProperties;
+
       let priority: InformationPriority = "SUPPORTING";
       let reason = "Supporting conceptual element";
       let visualWeight: "heavy" | "medium" | "light" | "hidden" = "medium";
       let shouldRender = true;
 
-      if (isAction) {
-        // Actions/operations shouldn't be rendered as permanent boxes!
+      if (isTrulyTransient) {
+        // Pure transient action/operation: suppress the box but keep as metadata
         priority = "TEMPORARY";
         reason =
-          "Represents an operation or state transition; should appear as a temporary flow/badge during transformation.";
+          "Pure transient operation; should appear as a temporary flow indicator, not a permanent box.";
         visualWeight = "hidden";
         shouldRender = false;
         temporaryEntityIds.push(ent.id);
@@ -157,6 +180,8 @@ export class VisualEvidencePlanner {
       let priority: InformationPriority = "SUPPORTING";
       let reason = "Structural relationship between entities.";
       let visualWeight: "heavy" | "medium" | "light" | "hidden" = "medium";
+      // Relationships involving suppressed entities are kept rendered to preserve connector chains.
+      // A relationship is only suppressed if BOTH endpoints are redundant (not just one).
       let shouldRender = true;
 
       if (isBothPrimary) {
@@ -167,12 +192,14 @@ export class VisualEvidencePlanner {
         priority = "TEMPORARY";
         reason = "Flow of operation or message across entities.";
         visualWeight = "medium";
+        // Keep shouldRender=true: even transient flows need a visible connector
       } else if (
-        sourceItem?.priority === "REDUNDANT" ||
+        sourceItem?.priority === "REDUNDANT" &&
         targetItem?.priority === "REDUNDANT"
       ) {
+        // Only suppress when BOTH endpoints are redundant (e.g. alias pairs)
         priority = "REDUNDANT";
-        reason = "Connects redundant entity; suppressed.";
+        reason = "Connects two redundant entities; suppressed.";
         visualWeight = "hidden";
         shouldRender = false;
       }

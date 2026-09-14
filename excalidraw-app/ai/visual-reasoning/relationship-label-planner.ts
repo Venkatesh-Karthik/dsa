@@ -276,41 +276,48 @@ export function planRelationshipLabel(params: {
   candidates.sort((a, b) => a.cost - b.cost);
   let best = candidates[0];
 
-  // Hard safety guarantee: if best still collides, force guaranteed clearance slot
+  // Hard safety guarantee: if best still collides, try clearance slots in order.
   const bestBox = getBoxForCenter(best.cx, best.cy);
   if (
     boxesOverlap(bestBox, sourceBounds, 2) ||
     boxesOverlap(bestBox, targetBounds, 2) ||
     obstacles.some((o) => boxesOverlap(bestBox, o, 2))
   ) {
-    const clearAbove = {
-      cx: midPt.x,
-      cy: minY - pillH / 2 - 14,
-      cost: 0,
-      description: "forced-clearance-above",
-    };
-    const clearBelow = {
-      cx: midPt.x,
-      cy: maxY + pillH / 2 + 14,
-      cost: 0,
-      description: "forced-clearance-below",
+    const clearAboveCenter = { cx: midPt.x, cy: minY - pillH / 2 - 14 };
+    const clearBelowCenter = { cx: midPt.x, cy: maxY + pillH / 2 + 14 };
+    const clearRightCenter = { cx: maxX + pillW / 2 + 14, cy: midPt.y };
+    const clearLeftCenter  = { cx: minX - pillW / 2 - 14, cy: midPt.y };
+
+    const collidesAt = (cx: number, cy: number): boolean => {
+      const b = getBoxForCenter(cx, cy);
+      return (
+        boxesOverlap(b, sourceBounds, 2) ||
+        boxesOverlap(b, targetBounds, 2) ||
+        obstacles.some((o) => boxesOverlap(b, o, 2))
+      );
     };
 
-    const aboveCollides =
-      boxesOverlap(getBoxForCenter(clearAbove.cx, clearAbove.cy), sourceBounds, 2) ||
-      boxesOverlap(getBoxForCenter(clearAbove.cx, clearAbove.cy), targetBounds, 2) ||
-      obstacles.some((o) => boxesOverlap(getBoxForCenter(clearAbove.cx, clearAbove.cy), o, 2));
-
-    if (!aboveCollides) {
-      best = clearAbove;
-    } else {
-      best = clearBelow;
+    // Try each clearance slot; pick first that is truly collision-free
+    const fallbacks = [clearAboveCenter, clearBelowCenter, clearRightCenter, clearLeftCenter];
+    let picked = clearBelowCenter; // last-resort default
+    for (const fb of fallbacks) {
+      if (!collidesAt(fb.cx, fb.cy)) {
+        picked = fb;
+        break;
+      }
     }
+    best = { ...picked, cost: 0, description: "forced-clearance" };
   }
 
   const finalBox = getBoxForCenter(best.cx, best.cy);
 
   // 4. Create Excalidraw Elements: Pill backdrop + text
+  //
+  // IMPORTANT: newTextElement with textAlign:"center" / verticalAlign:"middle" expects the
+  // TOP-LEFT corner of the text bounding box (NOT the center). Excalidraw internally
+  // subtracts width/2 and height/2 when aligning. We must therefore pass the top-left:
+  //   x = cx - pillW/2,  y = cy - pillH/2
+  // to end up with the text centered at (cx, cy).
   const strokeColor =
     highlight === "failure"
       ? "#ef4444"
@@ -343,6 +350,9 @@ export function planRelationshipLabel(params: {
     },
   });
 
+  // Pass center coordinates to newTextElement: for textAlign: "center" and
+  // verticalAlign: "middle", newTextElement automatically subtracts 0.5 * metrics.width
+  // and 0.5 * metrics.height so the text element is centered at (best.cx, best.cy).
   const labelTextEl = newTextElement({
     text: displayText,
     x: best.cx,
