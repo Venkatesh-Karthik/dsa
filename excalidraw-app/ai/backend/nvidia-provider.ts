@@ -40,6 +40,10 @@ import {
 } from "./prompts";
 import { validateLessonQuality } from "./lesson-validator";
 import { enrichCodingResponse } from "./coding-solver";
+import type { AIProvider } from "./ai-provider";
+import type { TeachingProvider } from "./teaching-provider";
+import type { TeachingRequest, TeachingResponse } from "../teaching-contract";
+
 export function safeParseJson(text: string): any {
   try {
     return JSON.parse(text);
@@ -63,10 +67,6 @@ export function safeParseJson(text: string): any {
     throw new Error("No JSON found in response");
   }
 }
-
-import type { AIProvider } from "./ai-provider";
-import type { TeachingProvider } from "./teaching-provider";
-import type { TeachingRequest, TeachingResponse } from "../teaching-contract";
 
 export const NVIDIA_DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
@@ -621,49 +621,64 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       max_tokens: this.maxTokens,
     };
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    let rawResponse: Response | null = null;
+    const maxRetries = 3;
 
-    let rawResponse: Response;
-    try {
-      rawResponse = await this.fetchFn(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify(bodyObj),
-        signal: controller.signal,
-      });
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        rawResponse = await this.fetchFn(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(bodyObj),
+          signal: controller.signal,
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
+          console.error(
+            `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Request timed out after ${timeoutMs}ms"`,
+          );
+          throw new ProviderTimeoutError(timeoutMs, this.name);
+        }
+        const errMessage = err instanceof Error ? err.message : "Network error";
         console.error(
-          `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Request timed out after ${timeoutMs}ms"`,
+          `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Network error: ${errMessage}"`,
         );
-        throw new ProviderTimeoutError(timeoutMs, this.name);
+        throw new ProviderNetworkError(
+          `Failed to connect to NVIDIA NIM: ${errMessage}`,
+          this.name,
+        );
+      } finally {
+        clearTimeout(timeoutId);
       }
-      const errMessage = err instanceof Error ? err.message : "Network error";
-      console.error(
-        `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Network error: ${errMessage}"`,
-      );
-      throw new ProviderNetworkError(
-        `Failed to connect to NVIDIA NIM: ${errMessage}`,
-        this.name,
-      );
-    } finally {
-      clearTimeout(timeoutId);
+
+      if (rawResponse.status === 503 || rawResponse.status === 429) {
+        if (attempt < maxRetries) {
+          console.warn(
+            `[COGNORA][AI][NVIDIA] Transient HTTP ${rawResponse.status} on requestId=${requestId} (attempt ${attempt}/${maxRetries}). Retrying in ${attempt * 2000}ms...`,
+          );
+          const delayMs = process.env.NODE_ENV === "test" ? 10 : attempt * 2000;
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    if (!rawResponse) {
+      throw new ProviderNetworkError("No response received from NVIDIA", this.name);
     }
 
     const durationMs = Date.now() - tStart;
     console.info(
       `[COGNORA][AI][NVIDIA][RESPONSE] requestId=${requestId} status=${rawResponse.status} durationMs=${durationMs}`,
     );
-
-    if (rawResponse.status === 503) {
-      console.warn(
-        `[COGNORA][AI][NVIDIA] Service overloaded (HTTP 503) on requestId=${requestId}. Failing fast to fallback provider.`,
-      );
-    }
 
     if (!rawResponse.ok) {
       let errorMessage = `NVIDIA API returned HTTP ${rawResponse.status}`;

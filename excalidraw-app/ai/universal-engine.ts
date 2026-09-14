@@ -153,12 +153,20 @@ export class UniversalConceptIntelligenceEngine {
     const state0Rels = new Map<string, Relationship>();
     candidateRelationships.forEach((r) => state0Rels.set(r.id, { ...r }));
 
+    let initialRootId: string | undefined;
+    for (const ent of state0Entities.values()) {
+      if (ent.semanticRole === "root") {
+        initialRootId = ent.id;
+        break;
+      }
+    }
+
     const initialSemanticState = createSemanticState(0, "state-0", {
       name: `${understanding.concept} Baseline`,
       description: "Initial state of the concept",
       entities: state0Entities,
       relationships: state0Rels,
-      properties: { phase: "initial" },
+      properties: { phase: "initial", rootEntityId: initialRootId },
     });
 
     const states: SemanticState[] = [initialSemanticState];
@@ -310,14 +318,213 @@ export class UniversalConceptIntelligenceEngine {
         ) {
           const entId = op.entityId || op.id || op.target;
           if (entId) {
-            nextEntities.delete(entId);
-            for (const [rid, r] of nextRels.entries()) {
-              if (r.source === entId || r.target === entId) {
-                nextRels.delete(rid);
+            if (nextEntities.has(entId)) {
+              nextEntities.delete(entId);
+              for (const [rid, r] of nextRels.entries()) {
+                if (r.source === entId || r.target === entId) {
+                  nextRels.delete(rid);
+                }
+              }
+              affectedEntities.push(entId);
+            } else {
+              // Container target (e.g. 'avl-tree' matching 'avl-tree-n30', etc.)
+              for (const id of Array.from(nextEntities.keys())) {
+                if (id.startsWith(`${entId}-`)) {
+                  nextEntities.delete(id);
+                  for (const [rid, r] of nextRels.entries()) {
+                    if (r.source === id || r.target === id) {
+                      nextRels.delete(rid);
+                    }
+                  }
+                  affectedEntities.push(id);
+                }
               }
             }
-            affectedEntities.push(entId);
           }
+        } else if (
+          opType === "create_tree" &&
+          Array.isArray((op as any).nodes)
+        ) {
+          const tree = op as any;
+          const treeId = tree.id || "tree";
+          const rootNodeId = tree.root
+            ? tree.root.startsWith(`${treeId}-`)
+              ? tree.root
+              : `${treeId}-${tree.root}`
+            : undefined;
+
+          // Clear existing tree hierarchy relationships
+          for (const [rid, r] of nextRels.entries()) {
+            if (
+              r.type === "leftOf" ||
+              r.type === "rightOf" ||
+              r.type === "parentOf" ||
+              r.type === "left" ||
+              r.type === "right"
+            ) {
+              nextRels.delete(rid);
+            }
+          }
+
+          for (const node of tree.nodes) {
+            const nodeId = node.id.startsWith(`${treeId}-`)
+              ? node.id
+              : `${treeId}-${node.id}`;
+            const existing = nextEntities.get(nodeId);
+            const isRoot = node.id === tree.root || nodeId === rootNodeId;
+            nextEntities.set(nodeId, {
+              id: nodeId,
+              type: "TreeNode",
+              label: String(node.value ?? node.id),
+              value: node.value,
+              semanticRole: isRoot ? "root" : "tree-node",
+              properties: {
+                ...(existing?.properties || {}),
+                rawId: node.id,
+                treeId,
+                highlight: node.highlight ?? existing?.properties?.highlight,
+                left: node.left
+                  ? node.left.startsWith(`${treeId}-`)
+                    ? node.left
+                    : `${treeId}-${node.left}`
+                  : undefined,
+                right: node.right
+                  ? node.right.startsWith(`${treeId}-`)
+                    ? node.right
+                    : `${treeId}-${node.right}`
+                  : undefined,
+              },
+            });
+            affectedEntities.push(nodeId);
+
+            if (node.left) {
+              const leftId = node.left.startsWith(`${treeId}-`)
+                ? node.left
+                : `${treeId}-${node.left}`;
+              const relId = `rel-${nodeId}-${leftId}`;
+              nextRels.set(relId, {
+                id: relId,
+                source: nodeId,
+                target: leftId,
+                type: "leftOf",
+                direction: "forward",
+                label: "L",
+                properties: { directed: true },
+              });
+            }
+
+            if (node.right) {
+              const rightId = node.right.startsWith(`${treeId}-`)
+                ? node.right
+                : `${treeId}-${node.right}`;
+              const relId = `rel-${nodeId}-${rightId}`;
+              nextRels.set(relId, {
+                id: relId,
+                source: nodeId,
+                target: rightId,
+                type: "rightOf",
+                direction: "forward",
+                label: "R",
+                properties: { directed: true },
+              });
+            }
+
+            if (node.children && Array.isArray(node.children)) {
+              for (const child of node.children) {
+                const childId = child.startsWith(`${treeId}-`)
+                  ? child
+                  : `${treeId}-${child}`;
+                const relId = `rel-${nodeId}-${childId}`;
+                nextRels.set(relId, {
+                  id: relId,
+                  source: nodeId,
+                  target: childId,
+                  type: "parentOf",
+                  direction: "forward",
+                  properties: { directed: true },
+                });
+              }
+            }
+          }
+        } else if (
+          opType === "create_array" &&
+          Array.isArray((op as any).elements)
+        ) {
+          const arr = op as any;
+          const arrId = arr.id || "array";
+          for (let elIdx = 0; elIdx < arr.elements.length; elIdx++) {
+            const el = arr.elements[elIdx];
+            const cellId = `${arrId}-${elIdx}`;
+            const existing = nextEntities.get(cellId);
+            nextEntities.set(cellId, {
+              id: cellId,
+              type: "ArrayCell",
+              label: String(el.value ?? elIdx),
+              value: el.value,
+              semanticRole: "array-element",
+              properties: {
+                ...(existing?.properties || {}),
+                index: elIdx,
+                containerId: arrId,
+                highlight: el.highlight ?? existing?.properties?.highlight,
+              },
+            });
+            affectedEntities.push(cellId);
+          }
+        } else if (
+          opType === "create_graph" &&
+          Array.isArray((op as any).nodes)
+        ) {
+          const g = op as any;
+          const graphId = g.id || "graph";
+          for (const node of g.nodes) {
+            const nodeId = node.id.startsWith(`${graphId}-`)
+              ? node.id
+              : `${graphId}-${node.id}`;
+            const existing = nextEntities.get(nodeId);
+            nextEntities.set(nodeId, {
+              id: nodeId,
+              type: "GraphNode",
+              label: node.label || String(node.value ?? node.id),
+              value: node.value ?? node.label,
+              semanticRole: "graph-node",
+              properties: {
+                ...(existing?.properties || {}),
+                rawId: node.id,
+                graphId,
+                highlight: node.highlight ?? existing?.properties?.highlight,
+              },
+            });
+            affectedEntities.push(nodeId);
+          }
+          if (Array.isArray(g.edges)) {
+            for (const edge of g.edges) {
+              const fromId = edge.from.startsWith(`${graphId}-`)
+                ? edge.from
+                : `${graphId}-${edge.from}`;
+              const toId = edge.to.startsWith(`${graphId}-`)
+                ? edge.to
+                : `${graphId}-${edge.to}`;
+              const relId = edge.id || `rel-${fromId}-${toId}`;
+              nextRels.set(relId, {
+                id: relId,
+                source: fromId,
+                target: toId,
+                type: edge.label || "connects",
+                direction: edge.directed === false ? "none" : "forward",
+                label: edge.label,
+                properties: { directed: edge.directed !== false, weight: edge.weight },
+              });
+            }
+          }
+        }
+      }
+
+      let stepRootId: string | undefined;
+      for (const ent of nextEntities.values()) {
+        if (ent.semanticRole === "root") {
+          stepRootId = ent.id;
+          break;
         }
       }
 
@@ -326,7 +533,7 @@ export class UniversalConceptIntelligenceEngine {
         description: s.explanation,
         entities: nextEntities,
         relationships: nextRels,
-        properties: { step: nextIndex },
+        properties: { step: nextIndex, rootEntityId: stepRootId },
       });
 
       states.push(nextState);
@@ -356,8 +563,20 @@ export class UniversalConceptIntelligenceEngine {
       currentState = nextState;
     }
 
+    const allWorldEntities = new Map<string, Entity>();
+    for (const ent of candidateEntities) {
+      allWorldEntities.set(ent.id, ent);
+    }
+    for (const st of states) {
+      for (const ent of st.entities.values()) {
+        if (!allWorldEntities.has(ent.id)) {
+          allWorldEntities.set(ent.id, ent);
+        }
+      }
+    }
+
     const world: SemanticWorld = {
-      entities: candidateEntities,
+      entities: Array.from(allWorldEntities.values()),
       relationships: candidateRelationships,
       properties: {},
       states,

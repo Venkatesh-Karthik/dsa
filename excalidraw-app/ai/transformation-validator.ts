@@ -708,6 +708,7 @@ export function validateTransformationTimeline(
           domain: domainModule.domain,
           states: finalTimeline.states,
           entities: Array.from(finalTimeline.states[sIdx].graph.entities.values()),
+          relationships: Array.from(finalTimeline.states[sIdx].graph.relationships.values()),
         };
         const pass = inv.check(
           {

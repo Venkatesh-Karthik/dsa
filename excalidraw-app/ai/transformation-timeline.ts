@@ -93,6 +93,15 @@ export function compileAuthoritativeTimeline(
 
   for (let sIdx = 0; sIdx < model.states.length; sIdx++) {
     const semState = model.states[sIdx];
+    let stateRootId: string | undefined = semState.properties?.rootEntityId as string | undefined;
+    if (!stateRootId) {
+      for (const ent of semState.entities.values()) {
+        if (ent.semanticRole === "root") {
+          stateRootId = ent.id;
+          break;
+        }
+      }
+    }
     const graph: SceneGraph = {
       entities: new Map(),
       relationships: new Map(),
@@ -100,6 +109,7 @@ export function compileAuthoritativeTimeline(
       metadata: {
         conceptType,
         title: semState.name || model.problem?.objective,
+        rootEntityId: stateRootId,
       },
     };
 

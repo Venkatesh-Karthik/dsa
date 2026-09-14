@@ -121,6 +121,15 @@ export const DsaDomainModule: DomainKnowledgeModule = {
           description: "AVL Tree balance factor constraint",
           rule: "For every node N: |height(left) - height(right)| <= 1 at equilibrium.",
           check: (state, model) => {
+            // AVL balance factor equilibrium constraint applies to the completed/equilibrium state
+            if (
+              state.stateIndex !== undefined &&
+              model.states &&
+              state.stateIndex < model.states.length - 1
+            ) {
+              return true;
+            }
+
             const activeRels = (model.relationships || []).filter((r) => state.activeRelationshipIds?.includes(r.id));
             const leftChildren = new Map<string, string>();
             const rightChildren = new Map<string, string>();

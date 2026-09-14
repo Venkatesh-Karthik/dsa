@@ -254,12 +254,17 @@ export function reconcileSceneState(
     }
   }
 
-  // 5. Preserve unmanaged manual user elements
-  for (const el of unmanagedElements) {
-    resultElements.push(el);
+  // 6. Deduplicate by element ID to strictly preserve ElementsDelta invariants
+  const seenIds = new Set<string>();
+  const deduplicated: ExcalidrawElement[] = [];
+  for (const el of resultElements) {
+    if (!seenIds.has(el.id)) {
+      seenIds.add(el.id);
+      deduplicated.push(el);
+    }
   }
 
-  const finalSynchronized = syncInvalidIndices(resultElements);
+  const finalSynchronized = syncInvalidIndices(deduplicated);
 
   return {
     elements: finalSynchronized,

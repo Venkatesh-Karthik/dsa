@@ -155,6 +155,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
           {capabilities.includes("analyze") && (
             <button
               type="button"
+              data-tab="analyze"
               className={`cognora-contextual-panel__tab-btn ${
                 activeTab === "analyze" ? "active" : ""
               }`}
@@ -166,6 +167,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
           {capabilities.includes("explain") && (
             <button
               type="button"
+              data-tab="explain"
               className={`cognora-contextual-panel__tab-btn ${
                 activeTab === "explain" ? "active" : ""
               }`}
@@ -189,6 +191,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
           {capabilities.includes("practice") && (
             <button
               type="button"
+              data-tab="practice"
               className={`cognora-contextual-panel__tab-btn ${
                 activeTab === "practice" ? "active" : ""
               }`}

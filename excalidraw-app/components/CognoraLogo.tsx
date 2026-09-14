@@ -5,7 +5,8 @@ export const CognoraMark: React.FC<{
   className?: string;
   color?: string;
 }> = ({ size = 32, className, color = "#0f172a" }) => {
-  const maskId = React.useId ? React.useId().replace(/:/g, "_") : "cognora-notch-mask";
+  const rawId = React.useId();
+  const maskId = rawId.replace(/:/g, "_");
   return (
     <svg
       width={size}

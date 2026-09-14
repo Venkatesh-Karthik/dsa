@@ -388,6 +388,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       if (playbackControllerRef.current) {
         playbackControllerRef.current.destroy();
         playbackControllerRef.current = null;
+        excalidrawAPI.updateScene({ elements: [] });
       }
 
       // 3. Create single authoritative LessonPlaybackController
@@ -438,6 +439,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      (window as any).__excalidrawAPI = excalidrawAPI;
       (window as any).__cognoraStartSampleLesson = (type = "binarySearch") => {
         const lesson =
           type === "dijkstra"

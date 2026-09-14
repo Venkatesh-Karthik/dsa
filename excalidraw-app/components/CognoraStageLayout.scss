@@ -18,7 +18,7 @@
     135deg,
     rgba(255, 255, 255, 0.45) 0%,
     rgba(255, 255, 255, 0.22) 50%,
-    rgba(240, 246, 255, 0.30) 100%
+    rgba(240, 246, 255, 0.3) 100%
   );
   --cognora-glass-surface-subtle: linear-gradient(
     135deg,
@@ -49,26 +49,20 @@
   --cognora-glass-border-dark: rgba(148, 163, 184, 0.22);
 
   /* Multi-Layered Optical Glass Inset Highlights (Light passing through glass rim) */
-  --cognora-glass-highlight: 
-    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.92),
+  --cognora-glass-highlight: inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.92),
     inset 0 0 0 1px rgba(255, 255, 255, 0.35),
     inset 0 -1.5px 2px 0 rgba(15, 23, 42, 0.03);
-  --cognora-glass-highlight-subtle: 
-    inset 0 1px 1px 0 rgba(255, 255, 255, 0.80),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.20);
+  --cognora-glass-highlight-subtle: inset 0 1px 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 
   /* Soft Ambient Diffuse Floating Shadows (Multi-Tier) */
-  --cognora-glass-shadow-sm: 
-    0 4px 12px -2px rgba(15, 23, 42, 0.04),
+  --cognora-glass-shadow-sm: 0 4px 12px -2px rgba(15, 23, 42, 0.04),
     0 1px 3px 0 rgba(15, 23, 42, 0.02);
-  --cognora-glass-shadow-md: 
-    0 10px 24px -4px rgba(15, 23, 42, 0.07),
+  --cognora-glass-shadow-md: 0 10px 24px -4px rgba(15, 23, 42, 0.07),
     0 3px 8px -2px rgba(15, 23, 42, 0.03);
-  --cognora-glass-shadow-lg: 
-    0 18px 38px -6px rgba(15, 23, 42, 0.09),
+  --cognora-glass-shadow-lg: 0 18px 38px -6px rgba(15, 23, 42, 0.09),
     0 6px 14px -3px rgba(15, 23, 42, 0.04);
-  --cognora-glass-shadow-floating: 
-    0 24px 48px -8px rgba(15, 23, 42, 0.10),
+  --cognora-glass-shadow-floating: 0 24px 48px -8px rgba(15, 23, 42, 0.1),
     0 8px 18px -4px rgba(15, 23, 42, 0.05);
 
   /* Optical Blur & Refraction Simulation */
@@ -295,7 +289,8 @@
     color: var(--cognora-accent);
     background: var(--cognora-accent-light);
     border: 1px solid rgba(191, 219, 254, 0.85);
-    box-shadow: var(--cognora-glass-shadow-sm), var(--cognora-glass-highlight-subtle);
+    box-shadow: var(--cognora-glass-shadow-sm),
+      var(--cognora-glass-highlight-subtle);
     cursor: pointer;
     transition: all var(--cognora-liquid-time) var(--cognora-liquid-ease);
     margin-right: 4px;
@@ -693,7 +688,8 @@
     backdrop-filter: blur(var(--cognora-glass-blur-lg)) saturate(160%);
     -webkit-backdrop-filter: blur(var(--cognora-glass-blur-lg)) saturate(160%);
     border-radius: 32px;
-    box-shadow: var(--cognora-glass-shadow-floating), var(--cognora-glass-highlight);
+    box-shadow: var(--cognora-glass-shadow-floating),
+      var(--cognora-glass-highlight);
     border: 1px solid var(--cognora-glass-border);
     border-bottom-color: var(--cognora-glass-border-dark);
     border-right-color: var(--cognora-glass-border-dark);
@@ -841,7 +837,8 @@
     border: 1px solid var(--cognora-glass-border);
     border-bottom-color: var(--cognora-glass-border-dark);
     border-right-color: var(--cognora-glass-border-dark);
-    box-shadow: var(--cognora-glass-shadow-sm), var(--cognora-glass-highlight-subtle);
+    box-shadow: var(--cognora-glass-shadow-sm),
+      var(--cognora-glass-highlight-subtle);
     white-space: nowrap;
     cursor: pointer;
     transition: all var(--cognora-liquid-time) var(--cognora-liquid-ease);
@@ -1320,7 +1317,8 @@
   border: 1px solid var(--cognora-glass-border);
   border-bottom-color: var(--cognora-glass-border-dark);
   border-right-color: var(--cognora-glass-border-dark);
-  box-shadow: var(--cognora-glass-shadow-floating), var(--cognora-glass-highlight);
+  box-shadow: var(--cognora-glass-shadow-floating),
+    var(--cognora-glass-highlight);
   display: flex;
   flex-direction: column;
   z-index: 70; // Layer 7
@@ -1491,7 +1489,11 @@
   }
 
   &__operation-banner {
-    background: linear-gradient(135deg, rgba(239, 246, 255, 0.9) 0%, rgba(219, 234, 254, 0.7) 100%);
+    background: linear-gradient(
+      135deg,
+      rgba(239, 246, 255, 0.9) 0%,
+      rgba(219, 234, 254, 0.7) 100%
+    );
     border: 1px solid rgba(191, 219, 254, 0.9);
     border-radius: var(--cognora-radius-md);
     padding: 12px 14px;
@@ -2108,7 +2110,8 @@
   -webkit-backdrop-filter: blur(var(--cognora-glass-blur-lg));
   border: 1px solid var(--cognora-glass-border);
   border-radius: var(--cognora-radius-xl);
-  box-shadow: var(--cognora-glass-shadow-floating), var(--cognora-glass-highlight);
+  box-shadow: var(--cognora-glass-shadow-floating),
+    var(--cognora-glass-highlight);
   width: 92%;
   max-width: 660px;
   max-height: 82vh;
@@ -2193,7 +2196,8 @@
     align-items: center;
     justify-content: center;
     transition: all var(--cognora-liquid-time) var(--cognora-liquid-ease);
-    box-shadow: 0 2px 6px -1px rgba(15, 23, 42, 0.08), inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
+    box-shadow: 0 2px 6px -1px rgba(15, 23, 42, 0.08),
+      inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
     outline: none;
     user-select: none;
 
@@ -2201,7 +2205,8 @@
       background: rgba(255, 255, 255, 0.92);
       border-color: #ffffff;
       transform: scale(1.05) translateY(-0.5px);
-      box-shadow: 0 4px 10px -2px rgba(15, 23, 42, 0.12), inset 0 1px 1px 0 #ffffff;
+      box-shadow: 0 4px 10px -2px rgba(15, 23, 42, 0.12),
+        inset 0 1px 1px 0 #ffffff;
     }
 
     &:active {
@@ -2263,7 +2268,8 @@
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     border: 1px solid rgba(255, 255, 255, 0.75);
-    box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.05),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
     cursor: pointer;
     text-align: left;
     transition: all var(--cognora-liquid-time) var(--cognora-liquid-ease);
@@ -2274,7 +2280,8 @@
       background: rgba(255, 255, 255, 0.85);
       border-color: rgba(59, 130, 246, 0.5);
       transform: translateY(-1.5px) scale(1.01);
-      box-shadow: 0 6px 18px -4px rgba(59, 130, 246, 0.18), inset 0 1px 0 #ffffff;
+      box-shadow: 0 6px 18px -4px rgba(59, 130, 246, 0.18),
+        inset 0 1px 0 #ffffff;
 
       .cognora-tools-palette__card-name span {
         color: #1d4ed8;
@@ -2302,7 +2309,8 @@
       &.selected {
         border-color: rgba(239, 68, 68, 0.5);
         background: rgba(254, 242, 242, 0.85);
-        box-shadow: 0 6px 18px -4px rgba(239, 68, 68, 0.18), inset 0 1px 0 #ffffff;
+        box-shadow: 0 6px 18px -4px rgba(239, 68, 68, 0.18),
+          inset 0 1px 0 #ffffff;
 
         .cognora-tools-palette__card-name span {
           color: #dc2626;

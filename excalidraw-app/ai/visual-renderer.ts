@@ -74,6 +74,7 @@ import {
   computeSceneBounds,
   TREE_LAYOUT,
 } from "./layout-engine";
+import { createGenericEntity } from "./visual-primitives/generic-entity";
 import type {
   TreeNodeInput,
   GraphNodeInput,
@@ -719,8 +720,6 @@ export function resolveArrowheads(direction?: ArrowDirection): {
 // ============================================================================
 // Action Handlers
 // ============================================================================
-
-import { createGenericEntity } from "./visual-primitives/generic-entity";
 
 function renderCreateBox(
   action: CreateBoxAction,
