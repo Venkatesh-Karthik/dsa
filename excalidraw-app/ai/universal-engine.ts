@@ -60,6 +60,7 @@ import {
   type CompiledTimeline,
 } from "./transformation-timeline";
 import { createSceneGraphFromActions } from "./scene-state";
+import { ConceptualJourneyOptimizer } from "./conceptual-journey-optimizer";
 
 export class UniversalConceptIntelligenceEngine {
   /**
@@ -246,7 +247,7 @@ export class UniversalConceptIntelligenceEngine {
     const states: SemanticState[] = [initialSemanticState];
     const rawTransformations: AuthoritativeTransformation[] = [];
 
-    // If steps or transformations exist, map them into semantic states
+    // If steps or transformations exist, optimize them into meaningful conceptual milestones
     const rawSteps =
       rawProposal?.steps ||
       rawProposal?.transformations ||
@@ -254,9 +255,18 @@ export class UniversalConceptIntelligenceEngine {
       (rawProposal as any)?.visual_lesson?.transformations ||
       [];
 
+    const milestones = ConceptualJourneyOptimizer.optimize({
+      concept: understanding.concept,
+      intent: understanding.userIntent || problem.intent,
+      targetGoal: problem.objective,
+      initialEntities: filteredEntities,
+      initialRelationships: candidateRelationships,
+      rawSteps,
+    });
+
     let currentState = initialSemanticState;
-    for (let i = 0; i < rawSteps.length; i++) {
-      const s = rawSteps[i];
+    for (let i = 0; i < milestones.length; i++) {
+      const s = milestones[i];
       const nextIndex = i + 1;
 
       // Mutate state for step
@@ -281,7 +291,9 @@ export class UniversalConceptIntelligenceEngine {
         ...(s.visual_actions || []),
       ];
       for (const op of allOperations) {
-        if (!op || typeof op !== "object") continue;
+        if (!op || typeof op !== "object") {
+          continue;
+        }
         const opType = (op.type || "").toLowerCase();
 
         if (
@@ -756,7 +768,7 @@ export class UniversalConceptIntelligenceEngine {
               role: (e.semanticRole as any) || "component",
             })),
       transformations: model.transformations.map((t, idx) => {
-        const matchingStep = rawSteps[idx];
+        const matchingStep = milestones[idx];
         return {
           id: t.id,
           title: t.title,
@@ -793,7 +805,9 @@ export class UniversalConceptIntelligenceEngine {
     stepIndex: number = 0,
   ) {
     const ent = model.world.entities.find((e) => e.id === entityId);
-    if (!ent) return null;
+    if (!ent) {
+      return null;
+    }
 
     const currentState = model.states[stepIndex] || model.states[0];
     const stateEnt = currentState?.entities.get(entityId) || ent;

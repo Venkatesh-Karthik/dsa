@@ -8,15 +8,21 @@
  * 4. Playback lifecycle (play, pause, replay, speed cycling).
  * 5. Instant recovery via reconcileSceneToState().
  */
-
+// @vitest-environment jsdom
+import "vitest-canvas-mock";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
+
 import { LessonPlaybackController } from "../ai/lesson-playback-controller";
 import { compileVisualLesson } from "../ai/transformation-timeline";
+
 import type { VisualLesson } from "../ai/visual-dsl";
 
-function createMockExcalidrawAPI(initialElements: ExcalidrawElement[] = []): ExcalidrawImperativeAPI {
+function createMockExcalidrawAPI(
+  initialElements: ExcalidrawElement[] = [],
+): ExcalidrawImperativeAPI {
   let sceneElements: ExcalidrawElement[] = [...initialElements];
 
   return {
@@ -24,7 +30,9 @@ function createMockExcalidrawAPI(initialElements: ExcalidrawElement[] = []): Exc
     id: "mock-playback-api",
     getSceneElementsIncludingDeleted: vi.fn(() => sceneElements),
     getSceneElements: vi.fn(() => sceneElements.filter((el) => !el.isDeleted)),
-    getAppState: vi.fn(() => ({ zoom: { value: 1 }, scrollX: 0, scrollY: 0 } as any)),
+    getAppState: vi.fn(
+      () => ({ zoom: { value: 1 }, scrollX: 0, scrollY: 0 } as any),
+    ),
     getFiles: vi.fn(() => ({})),
     getName: vi.fn(() => "test"),
     updateScene: vi.fn((data: any) => {
@@ -84,7 +92,13 @@ const mockLesson: VisualLesson = {
           id: "tree-root",
           root: "n20",
           nodes: [
-            { id: "n20", value: 20, left: "n10", right: "n30", highlight: "success" },
+            {
+              id: "n20",
+              value: 20,
+              left: "n10",
+              right: "n30",
+              highlight: "success",
+            },
             { id: "n10", value: 10 },
             { id: "n30", value: 30 },
           ],
@@ -132,9 +146,13 @@ describe("LessonPlaybackController", () => {
     const elements = mockApi.getSceneElementsIncludingDeleted();
     expect(elements.length).toBeGreaterThan(0);
     // Initial root node 30 should exist in elements
-    const rootEl = elements.find((el) => el.customData?.semanticId === "tree-root-n30");
+    const rootEl = elements.find(
+      (el) => el.customData?.semanticId === "tree-root-n30",
+    );
     expect(rootEl).toBeDefined();
-    expect(controller.getCurrentSceneState().graph.metadata?.rootEntityId).toBe("tree-root-n30");
+    expect(controller.getCurrentSceneState().graph.metadata?.rootEntityId).toBe(
+      "tree-root-n30",
+    );
 
     controller.destroy();
   });
@@ -150,7 +168,9 @@ describe("LessonPlaybackController", () => {
     expect(controller.getCurrentIndex()).toBe(1);
     expect(controller.getState().canPrev).toBe(true);
     expect(controller.getState().canNext).toBe(true);
-    expect(controller.getCurrentSceneState().graph.metadata?.rootEntityId).toBe("tree-root-n20");
+    expect(controller.getCurrentSceneState().graph.metadata?.rootEntityId).toBe(
+      "tree-root-n20",
+    );
 
     // Step 1 -> Step 2
     controller.next(false);
@@ -241,7 +261,9 @@ describe("LessonPlaybackController", () => {
     // Force canvas reconcile to guarantee authoritative state consistency
     controller.reconcileSceneToState();
 
-    const elements = mockApi.getSceneElementsIncludingDeleted().filter((el) => !el.isDeleted);
+    const elements = mockApi
+      .getSceneElementsIncludingDeleted()
+      .filter((el) => !el.isDeleted);
     // Check that every element has valid finite coordinates (no NaN, undefined, or corrupt geometry)
     for (const el of elements) {
       expect(Number.isFinite(el.x)).toBe(true);
@@ -264,10 +286,14 @@ describe("LessonPlaybackController", () => {
 
     // Initial subscribe call
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ currentIndex: 0 }));
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ currentIndex: 0 }),
+    );
 
     controller.next(false);
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ currentIndex: 1 }));
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ currentIndex: 1 }),
+    );
 
     unsubscribe();
     controller.next(false);
@@ -332,9 +358,13 @@ describe("LessonPlaybackController", () => {
     // Run recovery
     controller.reconcileSceneToState();
 
-    const recoveredElements = mockApi.getSceneElementsIncludingDeleted().filter((el) => !el.isDeleted);
+    const recoveredElements = mockApi
+      .getSceneElementsIncludingDeleted()
+      .filter((el) => !el.isDeleted);
     // Corrupted element with no semantic data is removed or cleaned up, valid lesson nodes are present
-    const rootEl = recoveredElements.find((el) => el.customData?.semanticId === "tree-root-n30");
+    const rootEl = recoveredElements.find(
+      (el) => el.customData?.semanticId === "tree-root-n30",
+    );
     expect(rootEl).toBeDefined();
     expect(Number.isFinite(rootEl!.x)).toBe(true);
     expect(Number.isFinite(rootEl!.y)).toBe(true);

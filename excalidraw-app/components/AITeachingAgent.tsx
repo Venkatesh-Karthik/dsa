@@ -451,7 +451,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               messageId: options.messageId,
               lessonId: timeline.lessonId,
               topic: options.topic,
-              lesson,
+              lesson: processed.visualLesson || lesson,
               timeline,
               currentTransformationIndex: state.currentIndex,
               playbackSpeed: state.speed,
@@ -651,8 +651,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       return;
     }
     const app = (excalidrawAPI as any).app;
-    if (app?.actionManager?.actions?.["undo"]) {
-      app.actionManager.executeAction(app.actionManager.actions["undo"], "ui");
+    if (app?.actionManager?.actions?.undo) {
+      app.actionManager.executeAction(app.actionManager.actions.undo, "ui");
       return;
     }
     const doc = getOwnerDoc();
@@ -671,8 +671,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       return;
     }
     const app = (excalidrawAPI as any).app;
-    if (app?.actionManager?.actions?.["redo"]) {
-      app.actionManager.executeAction(app.actionManager.actions["redo"], "ui");
+    if (app?.actionManager?.actions?.redo) {
+      app.actionManager.executeAction(app.actionManager.actions.redo, "ui");
       return;
     }
     const doc = getOwnerDoc();
@@ -1294,7 +1294,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     : [];
 
   const conceptModel = React.useMemo(() => {
-    if (!transformationLesson) return null;
+    if (!transformationLesson) {
+      return null;
+    }
     return extractConceptModelFromVisualLesson(transformationLesson.lesson);
   }, [transformationLesson]);
 
@@ -1303,11 +1305,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     transformationLesson?.currentTransformationIndex ?? 0,
   );
   const activeT =
-    transformationLesson?.lesson.transformations[activeIndex] ||
-    transformationLesson?.lesson.transformations[0];
+    transformationLesson?.lesson.transformations?.[activeIndex] ||
+    transformationLesson?.lesson.transformations?.[0];
 
   const analyzeData: AnalyzeModel | undefined = (() => {
-    if (!transformationLesson) return undefined;
+    if (!transformationLesson) {
+      return undefined;
+    }
 
     const topic =
       currentTopic ||
@@ -1526,7 +1530,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   };
 
   const practiceData: PracticeModel | undefined = (() => {
-    if (!transformationLesson) return undefined;
+    if (!transformationLesson) {
+      return undefined;
+    }
 
     if (authoritativeModel) {
       const quiz = UniversalConceptIntelligenceEngine.getPracticeQuiz(
@@ -1542,7 +1548,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           setPracticeFeedback(null);
         },
         onCheckAnswer: () => {
-          if (selectedPracticeOption === null) return;
+          if (selectedPracticeOption === null) {
+            return;
+          }
           const isCorrect = selectedPracticeOption === quiz.correctIndex;
           setPracticeFeedback({
             isCorrect,
@@ -1566,7 +1574,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       };
     }
 
-    if (!conceptModel) return undefined;
+    if (!conceptModel) {
+      return undefined;
+    }
     const item = derivePracticeItem(conceptModel, activeIndex);
 
     return {
@@ -1578,7 +1588,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         setPracticeFeedback(null);
       },
       onCheckAnswer: () => {
-        if (selectedPracticeOption === null) return;
+        if (selectedPracticeOption === null) {
+          return;
+        }
         const isCorrect = selectedPracticeOption === item.correctIndex;
         setPracticeFeedback({
           isCorrect,
