@@ -9,6 +9,7 @@
 import {
   newArrowElement,
   newElementWith,
+  newTextElement,
   syncInvalidIndices,
 } from "@excalidraw/element";
 import { pointFrom, type LocalPoint } from "@excalidraw/math";
@@ -19,7 +20,11 @@ import type {
 
 import type { SceneState } from "./scene-state";
 import type { SemanticEntityId } from "./scene-graph";
-import { computePerimeterPoint } from "./connector-renderer";
+import {
+  computePerimeterPoint,
+  detectObstaclesBetween,
+  type ConnectorEndpoint,
+} from "./connector-renderer";
 import {
   createVisualPrimitive,
   updateVisualPrimitive,
@@ -122,12 +127,43 @@ export function reconcileSceneState(
   // 3. Reconcile Relationships (Connectors follow entities)
   const activeRelationshipIds = new Set<string>();
 
+  // Helper to resolve entity element with multi-pass lookup (exact ID, lowercase, label, alias, or suffix)
+  const resolvePrimaryElement = (
+    idOrLabel: string,
+  ): ExcalidrawElement | undefined => {
+    if (!idOrLabel) return undefined;
+    if (primaryElementMap.has(idOrLabel)) {
+      return primaryElementMap.get(idOrLabel);
+    }
+    const needle = idOrLabel.trim().toLowerCase();
+    for (const [k, el] of primaryElementMap.entries()) {
+      if (k.toLowerCase() === needle) return el;
+    }
+    for (const [k, ent] of targetState.graph.entities.entries()) {
+      const entLabel = (ent.label || "").trim().toLowerCase();
+      const entVal = String(ent.value ?? "").trim().toLowerCase();
+      const rawId = (
+        ent.properties?.rawId as string | undefined
+      )?.toLowerCase();
+      if (entLabel === needle || entVal === needle || rawId === needle) {
+        return primaryElementMap.get(k);
+      }
+      if (
+        k.toLowerCase().includes(needle) ||
+        needle.includes(k.toLowerCase())
+      ) {
+        return primaryElementMap.get(k);
+      }
+    }
+    return undefined;
+  };
+
   for (const [relId, rel] of targetState.graph.relationships.entries()) {
     activeRelationshipIds.add(relId);
-    const sourceEl = primaryElementMap.get(rel.sourceEntityId);
-    const targetEl = primaryElementMap.get(rel.targetEntityId);
+    const sourceEl = resolvePrimaryElement(rel.sourceEntityId);
+    const targetEl = resolvePrimaryElement(rel.targetEntityId);
 
-    if (!sourceEl || !targetEl) {
+    if (!sourceEl || !targetEl || sourceEl.id === targetEl.id) {
       continue;
     }
 
@@ -162,12 +198,99 @@ export function reconcileSceneState(
       targetShape,
     );
 
-    const arrowStartX = startPt.x;
-    const arrowStartY = startPt.y;
-    const arrowDx = endPt.x - startPt.x;
-    const arrowDy = endPt.y - startPt.y;
+    const sourceBounds = {
+      x: sourceEl.x,
+      y: sourceEl.y,
+      width: sourceEl.width,
+      height: sourceEl.height,
+    };
+    const targetBounds = {
+      x: targetEl.x,
+      y: targetEl.y,
+      width: targetEl.width,
+      height: targetEl.height,
+    };
 
-    const edgeStyle = mapSemanticStateToEdgeTokens(rel.properties?.highlight as string | undefined);
+    // Obstacle avoidance check
+    const obstacles: ConnectorEndpoint[] = [];
+    for (const [k, el] of primaryElementMap.entries()) {
+      if (el.id !== sourceEl.id && el.id !== targetEl.id) {
+        obstacles.push({
+          primaryElement: el,
+          bounds: { x: el.x, y: el.y, width: el.width, height: el.height },
+        });
+      }
+    }
+
+    const blockingObstacles = detectObstaclesBetween(
+      sourceBounds,
+      targetBounds,
+      obstacles,
+    );
+
+    let points: readonly LocalPoint[];
+    let arrowStartX: number;
+    let arrowStartY: number;
+    let isElbowed = Boolean(rel.properties?.elbowed);
+
+    if (blockingObstacles.length > 0) {
+      isElbowed = true;
+      const isVertical =
+        Math.abs(targetBounds.y - sourceBounds.y) >=
+        Math.abs(targetBounds.x - sourceBounds.x);
+      if (isVertical) {
+        let maxRight = Math.max(
+          sourceBounds.x + sourceBounds.width,
+          targetBounds.x + targetBounds.width,
+        );
+        for (const obs of blockingObstacles) {
+          maxRight = Math.max(maxRight, obs.bounds.x + obs.bounds.width);
+        }
+        const flankX = maxRight + 36;
+        arrowStartX = sourceBounds.x + sourceBounds.width;
+        arrowStartY = sourceBounds.y + sourceBounds.height / 2;
+        const arrowEndX = targetBounds.x + targetBounds.width;
+        const arrowEndY = targetBounds.y + targetBounds.height / 2;
+
+        points = [
+          pointFrom(0, 0) as LocalPoint,
+          pointFrom(flankX - arrowStartX, 0) as LocalPoint,
+          pointFrom(flankX - arrowStartX, arrowEndY - arrowStartY) as LocalPoint,
+          pointFrom(arrowEndX - arrowStartX, arrowEndY - arrowStartY) as LocalPoint,
+        ];
+      } else {
+        let maxBottom = Math.max(
+          sourceBounds.y + sourceBounds.height,
+          targetBounds.y + targetBounds.height,
+        );
+        for (const obs of blockingObstacles) {
+          maxBottom = Math.max(maxBottom, obs.bounds.y + obs.bounds.height);
+        }
+        const flankY = maxBottom + 36;
+        arrowStartX = sourceBounds.x + sourceBounds.width / 2;
+        arrowStartY = sourceBounds.y + sourceBounds.height;
+        const arrowEndX = targetBounds.x + targetBounds.width / 2;
+        const arrowEndY = targetBounds.y + targetBounds.height;
+
+        points = [
+          pointFrom(0, 0) as LocalPoint,
+          pointFrom(0, flankY - arrowStartY) as LocalPoint,
+          pointFrom(arrowEndX - arrowStartX, flankY - arrowStartY) as LocalPoint,
+          pointFrom(arrowEndX - arrowStartX, arrowEndY - arrowStartY) as LocalPoint,
+        ];
+      }
+    } else {
+      arrowStartX = startPt.x;
+      arrowStartY = startPt.y;
+      points = [
+        pointFrom(0, 0) as LocalPoint,
+        pointFrom(endPt.x - startPt.x, endPt.y - startPt.y) as LocalPoint,
+      ];
+    }
+
+    const edgeStyle = mapSemanticStateToEdgeTokens(
+      rel.properties?.highlight as string | undefined,
+    );
     const strokeColor =
       (rel.properties?.color as string | undefined) ?? edgeStyle.stroke;
     const isDirected = rel.properties?.directed !== false;
@@ -176,37 +299,38 @@ export function reconcileSceneState(
 
     if (existingArrow) {
       // Immutable update existing connector
-      const updatedArrow = newElementWith(existingArrow as ExcalidrawArrowElement, {
-        x: arrowStartX,
-        y: arrowStartY,
-        points: [
-          pointFrom(0, 0) as LocalPoint,
-          pointFrom(arrowDx, arrowDy) as LocalPoint,
-        ],
-        strokeColor,
-        strokeWidth: edgeStyle.strokeWidth,
-        isDeleted: false,
-        endArrowhead: isDirected ? "arrow" : null,
-        startBinding: {
-          elementId: sourceEl.id,
-          fixedPoint: [0.5, 0.5],
-          mode: "orbit",
+      const updatedArrow = newElementWith(
+        existingArrow as ExcalidrawArrowElement,
+        {
+          x: arrowStartX,
+          y: arrowStartY,
+          points,
+          elbowed: isElbowed,
+          strokeColor,
+          strokeWidth: edgeStyle.strokeWidth,
+          isDeleted: false,
+          endArrowhead: isDirected ? "arrow" : null,
+          startBinding: {
+            elementId: sourceEl.id,
+            fixedPoint: [0.5, 0.5],
+            mode: "orbit",
+          },
+          endBinding: {
+            elementId: targetEl.id,
+            fixedPoint: [0.5, 0.5],
+            mode: "orbit",
+          },
+          customData: {
+            ...(existingArrow.customData ?? {}),
+            dslId: relId,
+            semanticId: relId,
+            sourceEntityId: rel.sourceEntityId,
+            targetEntityId: rel.targetEntityId,
+            lessonId,
+            isAiTeaching: true,
+          },
         },
-        endBinding: {
-          elementId: targetEl.id,
-          fixedPoint: [0.5, 0.5],
-          mode: "orbit",
-        },
-        customData: {
-          ...(existingArrow.customData ?? {}),
-          dslId: relId,
-          semanticId: relId,
-          sourceEntityId: rel.sourceEntityId,
-          targetEntityId: rel.targetEntityId,
-          lessonId,
-          isAiTeaching: true,
-        },
-      });
+      );
       resultElements.push(updatedArrow);
     } else {
       // Create new connector arrow with native Excalidraw bindings
@@ -214,10 +338,8 @@ export function reconcileSceneState(
         type: "arrow",
         x: arrowStartX,
         y: arrowStartY,
-        points: [
-          pointFrom(0, 0) as LocalPoint,
-          pointFrom(arrowDx, arrowDy) as LocalPoint,
-        ],
+        points,
+        elbowed: isElbowed,
         strokeColor,
         strokeWidth: edgeStyle.strokeWidth,
         endArrowhead: isDirected ? "arrow" : null,
@@ -244,6 +366,30 @@ export function reconcileSceneState(
         },
       });
       resultElements.push(newArrow);
+    }
+
+    // Edge label rendering
+    if (rel.label) {
+      const midPoint =
+        points[Math.floor(points.length / 2)] || points[0];
+      const labelX = Math.round(arrowStartX + midPoint[0] - 20);
+      const labelY = Math.round(arrowStartY + midPoint[1] - 16);
+
+      const labelEl = newTextElement({
+        text: rel.label,
+        x: labelX,
+        y: labelY,
+        fontSize: 12,
+        strokeColor: "#334155",
+        backgroundColor: "#ffffff",
+        customData: {
+          dslId: `${relId}-label`,
+          semanticId: `${relId}-label`,
+          lessonId,
+          isAiTeaching: true,
+        },
+      });
+      resultElements.push(labelEl);
     }
   }
 

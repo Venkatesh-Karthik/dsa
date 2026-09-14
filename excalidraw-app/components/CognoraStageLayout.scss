@@ -2023,7 +2023,7 @@
 // ============================================================================
 .cognora-node-callout {
   position: absolute;
-  transform: translate(-50%, -100%);
+  transform: translate(-50%, calc(-100% - 10px));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2032,7 +2032,52 @@
   transition: transform var(--cognora-liquid-time) var(--cognora-liquid-ease);
 
   &:hover {
-    transform: translate(-50%, -100%) scale(1.04);
+    transform: translate(-50%, calc(-100% - 10px)) scale(1.04);
+  }
+
+  &--above {
+    transform: translate(-50%, calc(-100% - 10px));
+    flex-direction: column;
+    &:hover {
+      transform: translate(-50%, calc(-100% - 10px)) scale(1.04);
+    }
+  }
+
+  &--below {
+    transform: translate(-50%, 10px);
+    flex-direction: column-reverse;
+    &:hover {
+      transform: translate(-50%, 10px) scale(1.04);
+    }
+    .cognora-node-callout__caret {
+      transform: rotate(180deg);
+      margin-top: 0;
+      margin-bottom: -1px;
+    }
+  }
+
+  &--right {
+    transform: translate(10px, -50%);
+    flex-direction: row-reverse;
+    &:hover {
+      transform: translate(10px, -50%) scale(1.04);
+    }
+    .cognora-node-callout__caret {
+      transform: rotate(90deg);
+      margin: 0 -4px;
+    }
+  }
+
+  &--left {
+    transform: translate(calc(-100% - 10px), -50%);
+    flex-direction: row;
+    &:hover {
+      transform: translate(calc(-100% - 10px), -50%) scale(1.04);
+    }
+    .cognora-node-callout__caret {
+      transform: rotate(-90deg);
+      margin: 0 -4px;
+    }
   }
 
   &__card {
@@ -2045,21 +2090,24 @@
     box-shadow: 0 20px 30px -5px rgba(0, 0, 0, 0.07),
       0 8px 10px -6px rgba(0, 0, 0, 0.03);
     text-align: center;
-    white-space: nowrap;
+    max-width: 280px;
+    white-space: normal;
+    word-break: break-word;
   }
 
   &__title {
     font-size: 13px;
     font-weight: 700;
     color: #0f172a;
-    line-height: 1.2;
+    line-height: 1.25;
   }
 
   &__subtitle {
     font-size: 11px;
     color: #64748b;
     font-weight: 500;
-    margin-top: 2px;
+    margin-top: 3px;
+    line-height: 1.35;
   }
 
   &__caret {
@@ -2068,6 +2116,7 @@
     margin-top: -1px;
     fill: #ffffff;
     filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.05));
+    transition: transform 0.2s ease;
   }
 
   &__pin {

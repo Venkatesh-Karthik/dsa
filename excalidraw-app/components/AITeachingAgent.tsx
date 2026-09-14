@@ -1912,15 +1912,72 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       const appState = excalidrawAPI.getAppState();
       const zoom = appState.zoom.value;
-      const screenX =
-        (targetEl.x + targetEl.width / 2 + appState.scrollX) * zoom;
-      const screenY = (targetEl.y + appState.scrollY) * zoom;
+
+      const containerRect = rootContainerRef.current?.getBoundingClientRect();
+      const containerW = containerRect ? containerRect.width : window.innerWidth;
+      const containerH = containerRect ? containerRect.height : window.innerHeight;
+
+      // Check if there are other scene elements directly above targetEl within 130px
+      const hasObstacleAbove = elements.some((other) => {
+        if (other.id === targetEl.id || other.isDeleted) return false;
+        const xOverlap =
+          Math.max(
+            0,
+            Math.min(targetEl.x + targetEl.width + 30, other.x + other.width + 30) -
+              Math.max(targetEl.x - 30, other.x - 30),
+          );
+        if (xOverlap <= 0) return false;
+        const yDistAbove = targetEl.y - (other.y + other.height);
+        return yDistAbove >= -20 && yDistAbove <= 130;
+      });
+
+      const rawScreenY = (targetEl.y + appState.scrollY) * zoom;
+      const nearTopBoundary = rawScreenY < 130;
+
+      let placement: "above" | "below" | "right" | "left" = "above";
+      let posX = (targetEl.x + targetEl.width / 2 + appState.scrollX) * zoom;
+      let posY = rawScreenY;
+
+      if (hasObstacleAbove || nearTopBoundary) {
+        const hasObstacleBelow = elements.some((other) => {
+          if (other.id === targetEl.id || other.isDeleted) return false;
+          const xOverlap =
+            Math.max(
+              0,
+              Math.min(targetEl.x + targetEl.width + 30, other.x + other.width + 30) -
+                Math.max(targetEl.x - 30, other.x - 30),
+            );
+          if (xOverlap <= 0) return false;
+          const yDistBelow = other.y - (targetEl.y + targetEl.height);
+          return yDistBelow >= -20 && yDistBelow <= 130;
+        });
+        const nearBottomBoundary =
+          (targetEl.y + targetEl.height + appState.scrollY) * zoom > containerH - 180;
+
+        if (!hasObstacleBelow && !nearBottomBoundary) {
+          placement = "below";
+          posY = (targetEl.y + targetEl.height + appState.scrollY) * zoom;
+        } else {
+          const nearRightBoundary =
+            (targetEl.x + targetEl.width + appState.scrollX) * zoom > containerW - 280;
+          if (!nearRightBoundary) {
+            placement = "right";
+            posX = (targetEl.x + targetEl.width + appState.scrollX) * zoom;
+            posY = (targetEl.y + targetEl.height / 2 + appState.scrollY) * zoom;
+          } else {
+            placement = "left";
+            posX = (targetEl.x + appState.scrollX) * zoom;
+            posY = (targetEl.y + targetEl.height / 2 + appState.scrollY) * zoom;
+          }
+        }
+      }
 
       return {
-        x: screenX,
-        y: screenY,
+        x: posX,
+        y: posY,
+        placement,
         title: activeT.title,
-        subtitle: activeT.explanation?.slice(0, 45) || "Active element",
+        subtitle: activeT.explanation?.slice(0, 90) || "Active element",
       };
     } catch {
       return null;
@@ -1965,10 +2022,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       {/* Dynamic Active Node Callout Pin */}
       {activeCallout && (
         <div
-          className="cognora-node-callout"
+          className={`cognora-node-callout cognora-node-callout--${activeCallout.placement}`}
           style={{
             left: `${activeCallout.x}px`,
-            top: `${activeCallout.y - 12}px`,
+            top: `${activeCallout.y}px`,
           }}
         >
           <div className="cognora-node-callout__card">

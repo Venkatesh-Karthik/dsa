@@ -3,7 +3,7 @@
  * Computes coordinates and bounds for various data structures without external dependencies.
  */
 
-import type { SceneGraph } from "./scene-graph";
+import type { SceneGraph, SemanticEntity } from "./scene-graph";
 
 // ==========================================
 // Types
@@ -1121,124 +1121,300 @@ export function computeSceneGraphLayout(
     };
   }
 
-  // 7. Generic / Arbitrary Concept Layout (Flow, Pipeline, Cycle, or DAG)
-  // Handles completely arbitrary subjects (e.g. Refrigerator, Photosynthesis, HTTP, SQL)
+  // 7. Universal Generic Concept Layout (Flow, Pipeline, Cycle, Grid, or Multi-Rank DAG)
+  // Handles completely arbitrary subjects (e.g. Rainbow, Photosynthesis, Refrigerator, HTTP, SQL, etc.)
+  const annotations = entityList.filter(
+    (e) => e.primitiveType === "Annotation" || e.primitiveType === "Callout",
+  );
+  const primaryEntities = entityList.filter(
+    (e) => e.primitiveType !== "Annotation" && e.primitiveType !== "Callout",
+  );
+  const activeEntities =
+    primaryEntities.length > 0 ? primaryEntities : entityList;
+
+  // Normalized entity lookup for robust relationship endpoint matching
+  const entityIdMap = new Map<string, string>(); // alias/label/normalized -> canonical entity id
+  for (const ent of activeEntities) {
+    entityIdMap.set(ent.id, ent.id);
+    entityIdMap.set(ent.id.toLowerCase(), ent.id);
+    if (ent.label) {
+      entityIdMap.set(ent.label.trim().toLowerCase(), ent.id);
+    }
+    const rawId = ent.properties?.rawId as string | undefined;
+    if (rawId) {
+      entityIdMap.set(rawId.toLowerCase(), ent.id);
+    }
+  }
+
+  const resolveEntityId = (idOrLabel: string): string => {
+    return (
+      entityIdMap.get(idOrLabel) ||
+      entityIdMap.get(idOrLabel.toLowerCase()) ||
+      idOrLabel
+    );
+  };
+
   const inDegrees = new Map<string, number>();
   const outDegrees = new Map<string, number>();
 
-  for (const entity of entityList) {
+  for (const entity of activeEntities) {
     inDegrees.set(entity.id, 0);
     outDegrees.set(entity.id, 0);
   }
 
   for (const rel of graph.relationships.values()) {
-    inDegrees.set(
-      rel.targetEntityId,
-      (inDegrees.get(rel.targetEntityId) ?? 0) + 1,
-    );
-    outDegrees.set(
-      rel.sourceEntityId,
-      (outDegrees.get(rel.sourceEntityId) ?? 0) + 1,
-    );
+    const src = resolveEntityId(rel.sourceEntityId);
+    const tgt = resolveEntityId(rel.targetEntityId);
+    if (inDegrees.has(tgt) && outDegrees.has(src)) {
+      inDegrees.set(tgt, (inDegrees.get(tgt) ?? 0) + 1);
+      outDegrees.set(src, (outDegrees.get(src) ?? 0) + 1);
+    }
   }
 
-  // Check for 4-node or closed cycle (e.g. Refrigerator compressor -> condenser -> expansion -> evaporator)
+  // Check for closed loop / cycle (e.g. Thermodynamic / Metabolic cycle)
   const isLoop =
-    entityList.length >= 3 &&
-    entityList.length <= 6 &&
+    activeEntities.length >= 3 &&
+    activeEntities.length <= 8 &&
     Array.from(inDegrees.values()).every((d) => d >= 1) &&
     Array.from(outDegrees.values()).every((d) => d >= 1);
 
   if (isLoop) {
-    // Layout in a clear cycle / 2x2 perimeter loop
-    const n = entityList.length;
-    const radius = 140;
-    const cx = origin.x + radius;
-    const cy = origin.y + radius;
+    // Dynamically size the cycle radius so circumference accommodates all node bounding boxes
+    const totalSpan = activeEntities.reduce((sum, e) => {
+      const b = deriveEntityBounds(e);
+      return sum + Math.max(b.width, b.height) + 40;
+    }, 0);
+    const radius = Math.max(160, Math.round(totalSpan / (2 * Math.PI)));
+    const cx = origin.x + radius + 40;
+    const cy = origin.y + radius + 20;
+    const n = activeEntities.length;
 
     for (let i = 0; i < n; i++) {
-      const prevPos = previousLayout?.get(entityList[i].id);
+      const ent = activeEntities[i];
+      const prevPos = previousLayout?.get(ent.id);
       if (prevPos) {
-        positions.set(entityList[i].id, prevPos);
+        positions.set(ent.id, prevPos);
       } else {
         const angle = (2 * Math.PI * i) / n - Math.PI / 2;
-        const x = cx + radius * Math.cos(angle) - 60;
-        const y = cy + radius * Math.sin(angle) - 30;
-        positions.set(entityList[i].id, { x, y });
+        const b = deriveEntityBounds(ent);
+        const x = Math.round(cx + radius * Math.cos(angle) - b.width / 2);
+        const y = Math.round(cy + radius * Math.sin(angle) - b.height / 2);
+        positions.set(ent.id, { x, y });
+      }
+    }
+  } else {
+    // Multi-Rank DAG / Pipeline Layout
+    const ranks = new Map<string, number>();
+    for (const entity of activeEntities) {
+      if ((inDegrees.get(entity.id) ?? 0) === 0) {
+        ranks.set(entity.id, 0);
       }
     }
 
-    return {
-      positions,
-      bounds: {
-        x: origin.x,
-        y: origin.y,
-        width: radius * 2 + 120,
-        height: radius * 2 + 60,
-      },
-    };
+    // Propagate ranks along outgoing relationships
+    for (let iter = 0; iter < activeEntities.length; iter++) {
+      for (const rel of graph.relationships.values()) {
+        const src = resolveEntityId(rel.sourceEntityId);
+        const tgt = resolveEntityId(rel.targetEntityId);
+        const srcRank = ranks.get(src);
+        if (srcRank != null && inDegrees.has(tgt)) {
+          const currTargetRank = ranks.get(tgt) ?? 0;
+          ranks.set(tgt, Math.max(currTargetRank, srcRank + 1));
+        }
+      }
+    }
+
+    // Fallback: any entity with unset rank defaults to 0
+    for (const entity of activeEntities) {
+      if (!ranks.has(entity.id)) {
+        ranks.set(entity.id, 0);
+      }
+    }
+
+    // Group by rank
+    const rankGroups = new Map<number, SemanticEntity[]>();
+    for (const entity of activeEntities) {
+      const rank = ranks.get(entity.id) ?? 0;
+      const group = rankGroups.get(rank) ?? [];
+      group.push(entity);
+      rankGroups.set(rank, group);
+    }
+
+    const distinctRanks = Array.from(rankGroups.keys()).sort((a, b) => a - b);
+    const allAtRankZero = distinctRanks.length === 1 && distinctRanks[0] === 0;
+
+    if (allAtRankZero && activeEntities.length > 4) {
+      // Balanced 2D Grid Layout for disconnected or parallel entities
+      const cols = Math.min(4, Math.ceil(Math.sqrt(activeEntities.length)));
+      const cellGapX = 40;
+      const cellGapY = 32;
+
+      // Compute column widths and row heights dynamically
+      const colWidths: number[] = new Array(cols).fill(120);
+      const rowHeights: number[] = [];
+
+      for (let i = 0; i < activeEntities.length; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const b = deriveEntityBounds(activeEntities[i]);
+        colWidths[col] = Math.max(colWidths[col], b.width);
+        rowHeights[row] = Math.max(rowHeights[row] ?? 0, b.height);
+      }
+
+      for (let i = 0; i < activeEntities.length; i++) {
+        const ent = activeEntities[i];
+        const prevPos = previousLayout?.get(ent.id);
+        if (prevPos) {
+          positions.set(ent.id, prevPos);
+        } else {
+          const col = i % cols;
+          const row = Math.floor(i / cols);
+          let x = origin.x;
+          for (let c = 0; c < col; c++) {
+            x += colWidths[c] + cellGapX;
+          }
+          let y = origin.y;
+          for (let r = 0; r < row; r++) {
+            y += rowHeights[r] + cellGapY;
+          }
+          positions.set(ent.id, { x, y });
+        }
+      }
+    } else {
+      // Multi-Rank DAG / Pipeline Layout
+      let currentX = origin.x;
+      const colGap = 50;
+      const rowGap = 30;
+
+      // Compute total height for each rank to vertically center groups
+      const rankHeights = new Map<number, number>();
+      const rankMaxWidths = new Map<number, number>();
+
+      for (const [rank, ents] of rankGroups.entries()) {
+        let maxW = 100;
+        let totalH = 0;
+        for (let i = 0; i < ents.length; i++) {
+          const b = deriveEntityBounds(ents[i]);
+          maxW = Math.max(maxW, b.width);
+          totalH += b.height + (i > 0 ? rowGap : 0);
+        }
+        rankMaxWidths.set(rank, maxW);
+        rankHeights.set(rank, totalH);
+      }
+
+      const maxOverallHeight = Math.max(
+        ...Array.from(rankHeights.values()),
+        120,
+      );
+      const centerY = origin.y + maxOverallHeight / 2;
+
+      for (const rank of distinctRanks) {
+        const ents = rankGroups.get(rank) ?? [];
+        const colW = rankMaxWidths.get(rank) ?? 140;
+        const totalH = rankHeights.get(rank) ?? 100;
+        let currentY = Math.max(origin.y, centerY - totalH / 2);
+
+        for (const ent of ents) {
+          const b = deriveEntityBounds(ent);
+          const prevPos = previousLayout?.get(ent.id);
+          if (prevPos) {
+            positions.set(ent.id, prevPos);
+          } else {
+            // Horizontally center node within column
+            const nodeX = currentX + Math.round((colW - b.width) / 2);
+            positions.set(ent.id, { x: nodeX, y: currentY });
+          }
+          currentY += b.height + rowGap;
+        }
+
+        currentX += colW + colGap;
+      }
+    }
   }
 
-  // Linear / Topological Rank Pipeline (Input -> Process -> Output)
-  const ranks = new Map<string, number>();
+  // Position annotations and callouts adaptively without occluding primary entities
+  const placedPrimaryBounds: LayoutBounds[] = [];
+  for (const ent of activeEntities) {
+    const pos = positions.get(ent.id);
+    if (pos) {
+      placedPrimaryBounds.push(deriveEntityBounds(ent, pos));
+    }
+  }
+
+  for (const ann of annotations) {
+    const prevPos = previousLayout?.get(ann.id);
+    if (prevPos) {
+      positions.set(ann.id, prevPos);
+      continue;
+    }
+
+    const annBounds = deriveEntityBounds(ann);
+    const targetId = ann.properties?.targetEntityId as string | undefined;
+    const targetEntity = targetId
+      ? activeEntities.find((e) => e.id === targetId || e.id === resolveEntityId(targetId))
+      : null;
+
+    if (targetEntity && positions.has(targetEntity.id)) {
+      const anchorPos = positions.get(targetEntity.id)!;
+      const anchorBounds = deriveEntityBounds(targetEntity, anchorPos);
+      const bestPos = findBestAnnotationPosition(
+        anchorBounds,
+        annBounds,
+        placedPrimaryBounds,
+        "above",
+        24,
+      );
+      positions.set(ann.id, bestPos);
+      placedPrimaryBounds.push({ ...annBounds, x: bestPos.x, y: bestPos.y });
+    } else {
+      // Place in top-right or lower-right region alongside scene
+      const sceneB = computeSceneBounds(placedPrimaryBounds);
+      const annX = sceneB.width > 0 ? sceneB.x + sceneB.width + 40 : origin.x;
+      const annY = sceneB.y > 0 ? sceneB.y : origin.y;
+      positions.set(ann.id, { x: annX, y: annY });
+      placedPrimaryBounds.push({ ...annBounds, x: annX, y: annY });
+    }
+  }
+
+  // Collision resolution pass across all entities
+  const collisionBoxes: CollisionBox[] = [];
   for (const entity of entityList) {
-    if ((inDegrees.get(entity.id) ?? 0) === 0) {
-      ranks.set(entity.id, 0);
-    }
+    const pos = positions.get(entity.id);
+    if (!pos) continue;
+    const isAnn =
+      entity.primitiveType === "Annotation" ||
+      entity.primitiveType === "Callout";
+    const b = deriveEntityBounds(entity, pos);
+    collisionBoxes.push({
+      id: entity.id,
+      x: pos.x,
+      y: pos.y,
+      width: b.width,
+      height: b.height,
+      fixed: !isAnn,
+      priority: isAnn ? 1 : 10,
+    });
   }
 
-  // Propagate ranks along outgoing relationships
-  for (let iter = 0; iter < entityList.length; iter++) {
-    for (const rel of graph.relationships.values()) {
-      const srcRank = ranks.get(rel.sourceEntityId);
-      if (srcRank != null) {
-        const currTargetRank = ranks.get(rel.targetEntityId) ?? 0;
-        ranks.set(rel.targetEntityId, Math.max(currTargetRank, srcRank + 1));
-      }
-    }
+  const resolved = resolveLayoutCollisions(collisionBoxes, 20);
+  for (const [id, pos] of resolved) {
+    positions.set(id, pos);
   }
 
-  // Group by rank
-  const rankGroups = new Map<number, string[]>();
+  // Compute total scene bounds
+  const allFinalBounds: LayoutBounds[] = [];
   for (const entity of entityList) {
-    const rank = ranks.get(entity.id) ?? 0;
-    const group = rankGroups.get(rank) ?? [];
-    group.push(entity.id);
-    rankGroups.set(rank, group);
-  }
-
-  const colWidth = 220;
-  const rowHeight = 110;
-  let maxX = origin.x;
-  let maxY = origin.y;
-
-  for (const [rank, ids] of rankGroups.entries()) {
-    const x = origin.x + rank * colWidth;
-    for (let row = 0; row < ids.length; row++) {
-      const id = ids[row];
-      // Layout stability: if entity had previous position, ALWAYS preserve it
-      const prevPos = previousLayout?.get(id);
-      if (prevPos) {
-        positions.set(id, prevPos);
-        maxX = Math.max(maxX, prevPos.x + 140);
-        maxY = Math.max(maxY, prevPos.y + 70);
-      } else {
-        const y = origin.y + row * rowHeight;
-        positions.set(id, { x, y });
-        maxX = Math.max(maxX, x + 140);
-        maxY = Math.max(maxY, y + 70);
-      }
+    const pos = positions.get(entity.id);
+    if (pos) {
+      allFinalBounds.push(deriveEntityBounds(entity, pos));
     }
   }
+
+  const totalBounds = computeSceneBounds(allFinalBounds);
 
   return {
     positions,
-    bounds: {
-      x: origin.x,
-      y: origin.y,
-      width: Math.max(140, maxX - origin.x),
-      height: Math.max(70, maxY - origin.y),
-    },
+    bounds: totalBounds,
   };
 }
 
@@ -1354,6 +1530,228 @@ export function computeAdaptiveAnnotationBounds(
     y: 0,
     width: Math.min(380, Math.max(120, contentWidth + hPadding)),
     height: Math.max(48, contentHeight + vPadding),
+  };
+}
+
+/**
+ * Computes exact content-aware bounding box for any semantic entity based on its primitive type,
+ * value length, role, and properties.
+ */
+export function deriveEntityBounds(
+  entity: SemanticEntity,
+  pos: LayoutPoint = { x: 0, y: 0 },
+): LayoutBounds {
+  const pType = entity.primitiveType;
+  let w = 120;
+  let h = 60;
+
+  switch (pType) {
+    case "TreeNode": {
+      const baseDiameter = (entity.properties?.diameter as number) ?? 70;
+      const label = entity.label || String(entity.value ?? "");
+      if (label && label.length > 3) {
+        const tm = measureTextBounds(label, 14, 20);
+        w = Math.max(baseDiameter, tm.width + 24);
+        h = Math.max(baseDiameter, tm.height + 20);
+      } else {
+        w = baseDiameter;
+        h = baseDiameter;
+      }
+      break;
+    }
+    case "GraphNode": {
+      const baseDiameter = (entity.properties?.diameter as number) ?? 60;
+      const label = entity.label || String(entity.value ?? "");
+      if (label && label.length > 3) {
+        const tm = measureTextBounds(label, 13, 20);
+        w = Math.max(baseDiameter, tm.width + 24);
+        h = Math.max(baseDiameter, tm.height + 20);
+      } else {
+        w = baseDiameter;
+        h = baseDiameter;
+      }
+      break;
+    }
+    case "Container":
+    case "Box":
+    case "Rectangle":
+    case "Group": {
+      w = (entity.properties?.width as number) ?? 200;
+      h = (entity.properties?.height as number) ?? 140;
+      break;
+    }
+    case "ArrayCell":
+      w = (entity.properties?.width as number) ?? 60;
+      h = (entity.properties?.height as number) ?? 40;
+      break;
+    case "LinkedListNode":
+      w = (entity.properties?.width as number) ?? 80;
+      h = (entity.properties?.height as number) ?? 40;
+      break;
+    case "StackFrame":
+    case "CallFrame":
+      w = (entity.properties?.width as number) ?? 140;
+      h = (entity.properties?.height as number) ?? 40;
+      break;
+    case "Client":
+    case "ClientNode":
+    case "Server":
+    case "ServerNode":
+      w = (entity.properties?.width as number) ?? 120;
+      h = (entity.properties?.height as number) ?? 60;
+      break;
+    case "Actor":
+      w = (entity.properties?.width as number) ?? 110;
+      h = (entity.properties?.height as number) ?? 54;
+      break;
+    case "Packet":
+    case "Message":
+      w = (entity.properties?.width as number) ?? 90;
+      h = (entity.properties?.height as number) ?? 36;
+      break;
+    case "DatabaseNode":
+    case "Table":
+      w = (entity.properties?.width as number) ?? 140;
+      h = (entity.properties?.height as number) ?? 70;
+      break;
+    case "StateNode":
+      w = (entity.properties?.width as number) ?? 90;
+      h = (entity.properties?.height as number) ?? 50;
+      break;
+    case "ProcessNode":
+      w = (entity.properties?.width as number) ?? 130;
+      h = (entity.properties?.height as number) ?? 56;
+      break;
+    case "MemoryBlock":
+      w = (entity.properties?.width as number) ?? 120;
+      h = (entity.properties?.height as number) ?? 48;
+      break;
+    case "Annotation":
+    case "Callout": {
+      const text =
+        (entity.properties?.text as string) ||
+        entity.label ||
+        String(entity.value ?? "");
+      const title = entity.properties?.title as string | undefined;
+      const b = computeAdaptiveAnnotationBounds(text, title, 13);
+      w = b.width;
+      h = b.height;
+      break;
+    }
+    default: {
+      const label = entity.label || String(entity.value ?? "");
+      if (label) {
+        const tm = measureTextBounds(label, 14, 28);
+        w = Math.min(260, Math.max(100, tm.width + 36));
+        h = Math.max(52, tm.height + 24);
+      } else {
+        w = 120;
+        h = 56;
+      }
+      break;
+    }
+  }
+
+  return { x: pos.x, y: pos.y, width: w, height: h };
+}
+
+/**
+ * Evaluates candidate positions for annotations/callouts (above, below, right, left, quadrants)
+ * to guarantee that the annotation never occludes the primary entity or other canvas obstacles.
+ */
+export function findBestAnnotationPosition(
+  anchorBounds: LayoutBounds,
+  annotationBounds: LayoutBounds,
+  existingObstacles: LayoutBounds[],
+  preferredDirection: "above" | "below" | "right_of" | "left_of" = "above",
+  margin = 20,
+): LayoutPoint {
+  const candidates: Array<{ dir: string; pos: LayoutPoint }> = [];
+
+  const addCand = (dir: string, x: number, y: number) => {
+    candidates.push({
+      dir,
+      pos: { x: Math.max(20, Math.round(x)), y: Math.max(20, Math.round(y)) },
+    });
+  };
+
+  const cx = anchorBounds.x + (anchorBounds.width - annotationBounds.width) / 2;
+  const cy =
+    anchorBounds.y + (anchorBounds.height - annotationBounds.height) / 2;
+
+  // 1. Primary cardinal directions
+  if (preferredDirection === "above") {
+    addCand("above", cx, anchorBounds.y - annotationBounds.height - margin);
+    addCand("right_of", anchorBounds.x + anchorBounds.width + margin, cy);
+    addCand("below", cx, anchorBounds.y + anchorBounds.height + margin);
+    addCand("left_of", anchorBounds.x - annotationBounds.width - margin, cy);
+  } else if (preferredDirection === "below") {
+    addCand("below", cx, anchorBounds.y + anchorBounds.height + margin);
+    addCand("right_of", anchorBounds.x + anchorBounds.width + margin, cy);
+    addCand("above", cx, anchorBounds.y - annotationBounds.height - margin);
+    addCand("left_of", anchorBounds.x - annotationBounds.width - margin, cy);
+  } else if (preferredDirection === "right_of") {
+    addCand("right_of", anchorBounds.x + anchorBounds.width + margin, cy);
+    addCand("above", cx, anchorBounds.y - annotationBounds.height - margin);
+    addCand("below", cx, anchorBounds.y + anchorBounds.height + margin);
+    addCand("left_of", anchorBounds.x - annotationBounds.width - margin, cy);
+  } else {
+    addCand("left_of", anchorBounds.x - annotationBounds.width - margin, cy);
+    addCand("above", cx, anchorBounds.y - annotationBounds.height - margin);
+    addCand("below", cx, anchorBounds.y + anchorBounds.height + margin);
+    addCand("right_of", anchorBounds.x + anchorBounds.width + margin, cy);
+  }
+
+  // 2. Diagonal quadrant fallbacks
+  addCand(
+    "top_right",
+    anchorBounds.x + anchorBounds.width + margin,
+    anchorBounds.y - annotationBounds.height / 2,
+  );
+  addCand(
+    "top_left",
+    anchorBounds.x - annotationBounds.width - margin,
+    anchorBounds.y - annotationBounds.height / 2,
+  );
+  addCand(
+    "bottom_right",
+    anchorBounds.x + anchorBounds.width + margin,
+    anchorBounds.y + anchorBounds.height / 2,
+  );
+  addCand(
+    "bottom_left",
+    anchorBounds.x - annotationBounds.width - margin,
+    anchorBounds.y + anchorBounds.height / 2,
+  );
+
+  // Evaluate candidate with 0 collision against anchor and all obstacles
+  const allObstacles = [anchorBounds, ...existingObstacles];
+
+  for (const cand of candidates) {
+    const candBounds: LayoutBounds = {
+      x: cand.pos.x,
+      y: cand.pos.y,
+      width: annotationBounds.width,
+      height: annotationBounds.height,
+    };
+
+    let hasCollision = false;
+    for (const obs of allObstacles) {
+      if (checkAABBCollision(candBounds, obs, 8)) {
+        hasCollision = true;
+        break;
+      }
+    }
+
+    if (!hasCollision) {
+      return cand.pos;
+    }
+  }
+
+  // Fallback: place directly to the right or below anchor with clearance
+  return {
+    x: Math.max(20, anchorBounds.x + anchorBounds.width + margin),
+    y: Math.max(20, anchorBounds.y),
   };
 }
 
