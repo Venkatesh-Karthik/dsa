@@ -14,7 +14,10 @@ import { CaptureUpdateAction } from "@excalidraw/element";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import type { SceneState } from "./scene-state";
-import type { CompiledTimeline, TransformationMeta } from "./transformation-timeline";
+import type {
+  CompiledTimeline,
+  TransformationMeta,
+} from "./transformation-timeline";
 import { reconcileSceneState } from "./scene-reconciler";
 import {
   animateSceneTransition,
@@ -111,6 +114,10 @@ export class LessonPlaybackController {
     return this.transitionId;
   }
 
+  public getStatus(): PlaybackStatus {
+    return this.status;
+  }
+
   private emitStateChange(): void {
     const state = this.getState();
     for (const listener of this.listeners) {
@@ -130,7 +137,8 @@ export class LessonPlaybackController {
 
     cancelActiveSceneAnimation();
     const targetState = this.timeline.states[this.currentIndex];
-    const currentElements = this.excalidrawAPI.getSceneElementsIncludingDeleted();
+    const currentElements =
+      this.excalidrawAPI.getSceneElementsIncludingDeleted();
 
     const reconcileRes = reconcileSceneState(
       targetState,
@@ -234,7 +242,8 @@ export class LessonPlaybackController {
 
     // 3. Fetch authoritative target SceneState (NEVER inferred from canvas coordinates)
     const targetState = this.timeline.states[targetIndex];
-    const currentElements = this.excalidrawAPI.getSceneElementsIncludingDeleted();
+    const currentElements =
+      this.excalidrawAPI.getSceneElementsIncludingDeleted();
 
     // 4. Reconcile complete target SceneState against current elements
     const reconcileRes = reconcileSceneState(
@@ -285,7 +294,7 @@ export class LessonPlaybackController {
     this.timeline.currentIndex = targetIndex;
     this.status = this.playbackTimer ? "PLAYING" : "IDLE";
 
-    this.focusActiveElements();
+    // Viewport camera is NEVER moved on transitions; scenes transform strictly in place
     this.emitStateChange();
 
     console.log(
@@ -368,7 +377,8 @@ export class LessonPlaybackController {
       state ??
       this.timeline.states[this.pendingTargetIndex] ??
       this.authoritativeState;
-    const currentElements = this.excalidrawAPI.getSceneElementsIncludingDeleted();
+    const currentElements =
+      this.excalidrawAPI.getSceneElementsIncludingDeleted();
     const reconcileRes = reconcileSceneState(
       effectiveState,
       currentElements,
@@ -385,7 +395,7 @@ export class LessonPlaybackController {
     this.timeline.currentIndex = this.currentIndex;
     this.status = this.playbackTimer ? "PLAYING" : "IDLE";
 
-    this.focusActiveElements();
+    // Camera is not moved during self-healing reconciliation
     this.emitStateChange();
     console.log(`[COGNORA][RECONCILE] canvas repaired to authoritative state`);
   }

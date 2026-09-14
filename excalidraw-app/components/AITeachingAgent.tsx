@@ -19,10 +19,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-import {
-  applyVisualActions,
-  getExistingDslIds,
-} from "../ai/ai-canvas";
+import { applyVisualActions, getExistingDslIds } from "../ai/ai-canvas";
 import {
   requestTeachingExplanation,
   getMockTeachingResponse,
@@ -69,12 +66,8 @@ import {
   recordInteraction,
   type LearnerSession,
 } from "../ai/learner-model";
-import {
-  UniversalConceptIntelligenceEngine,
-} from "../ai/universal-engine";
-import {
-  type AuthoritativeSemanticModel,
-} from "../ai/authoritative-model";
+import { UniversalConceptIntelligenceEngine } from "../ai/universal-engine";
+import { type AuthoritativeSemanticModel } from "../ai/authoritative-model";
 
 import "./AITeachingAgent.scss";
 
@@ -181,7 +174,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
   // Synchronize active tab with available capabilities
   useEffect(() => {
-    const caps = transformationLesson?.lesson.capabilities as PanelTabType[] | undefined;
+    const caps = transformationLesson?.lesson.capabilities as
+      | PanelTabType[]
+      | undefined;
     if (caps && caps.length > 0 && !caps.includes(contextualTab)) {
       setContextualTab(caps[0]);
     }
@@ -189,7 +184,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
   // AI & Chat request state machine
   const [inputValue, setInputValue] = useState("");
-  const [requestState, setRequestState] = useState<TeachingRequestState>("idle");
+  const [requestState, setRequestState] =
+    useState<TeachingRequestState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -221,8 +217,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     useState<CanvasInteractionDelta | null>(null);
   const [selectedStartNode, setSelectedStartNode] = useState<string>("A");
   const [selectedDestNode, setSelectedDestNode] = useState<string>("P");
-  const [selectedPracticeOption, setSelectedPracticeOption] = useState<number | null>(null);
-  const [practiceFeedback, setPracticeFeedback] = useState<{ isCorrect?: boolean; message?: string } | null>(null);
+  const [selectedPracticeOption, setSelectedPracticeOption] = useState<
+    number | null
+  >(null);
+  const [practiceFeedback, setPracticeFeedback] = useState<{
+    isCorrect?: boolean;
+    message?: string;
+  } | null>(null);
   const learnerSessionRef = useRef<LearnerSession>(createLearnerSession());
 
   const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -308,7 +309,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         setSelectedContext([]);
       }
 
-      if (isApplyingVisualsRef.current) {
+      const playbackStatus = playbackControllerRef.current?.getStatus();
+      if (
+        isApplyingVisualsRef.current ||
+        playbackStatus === "TRANSITIONING" ||
+        playbackStatus === "PLAYING"
+      ) {
         previousSnapshotRef.current = createSemanticSnapshot(elements);
         return;
       }
@@ -320,7 +326,23 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           previousSnapshotRef.current,
         );
         if (deltas.length > 0) {
-          setPendingInteraction(deltas[0]);
+          // If a lesson is active, ignore deletions and internal connector updates
+          const userDeltas = deltas.filter((d) => {
+            if (transformationLesson && d.type === "element_deleted") {
+              return false;
+            }
+            if (
+              d.targetDslId.startsWith("edge-") ||
+              d.targetDslId.startsWith("conn-") ||
+              d.targetDslId.startsWith("rel-")
+            ) {
+              return false;
+            }
+            return true;
+          });
+          if (userDeltas.length > 0) {
+            setPendingInteraction(userDeltas[0]);
+          }
         }
         previousSnapshotRef.current = createSemanticSnapshot(elements);
       }
@@ -372,7 +394,11 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         `[COGNORA][LESSON] lessonId=${timeline.lessonId} concept=${timeline.topic} valid=${validation.valid} states=${timeline.states.length} repaired=${validation.repaired} goalSatisfied=${model.goalSatisfaction.satisfied}`,
       );
 
-      if (!timeline.states || timeline.states.length === 0 || timeline.states[0].graph.entities.size === 0) {
+      if (
+        !timeline.states ||
+        timeline.states.length === 0 ||
+        timeline.states[0].graph.entities.size === 0
+      ) {
         throw new Error(
           validation.errors.length > 0
             ? validation.errors.join("; ")
@@ -381,7 +407,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       }
 
       if (!validation.valid && validation.errors.length > 0) {
-        throw new Error(`Lesson validation failed: ${validation.errors.join("; ")}`);
+        throw new Error(
+          `Lesson validation failed: ${validation.errors.join("; ")}`,
+        );
       }
 
       // 2. Tear down any previous playback controller cleanly
@@ -405,11 +433,16 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       // Verify canvas elements were rendered (Minimum Validity Invariant)
       const renderedElements = excalidrawAPI.getSceneElements();
       if (!renderedElements || renderedElements.length === 0) {
-        throw new Error("Render invariant failed: Scene contains 0 rendered elements.");
+        throw new Error(
+          "Render invariant failed: Scene contains 0 rendered elements.",
+        );
       }
 
       // 5. Subscribe to state transitions
       controller.subscribe((state) => {
+        previousSnapshotRef.current = createSemanticSnapshot(
+          excalidrawAPI.getSceneElements(),
+        );
         setIsLessonPlaying(state.status === "PLAYING");
         setPlaybackSpeed(state.speed);
         setTransformationLesson((prev) => {
@@ -485,7 +518,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     if (learnerSessionRef.current) {
       recordInteraction(learnerSessionRef.current, {
         action: "prev",
-        stepIndex: Math.max(0, (transformationLesson?.currentTransformationIndex ?? 0) - 1),
+        stepIndex: Math.max(
+          0,
+          (transformationLesson?.currentTransformationIndex ?? 0) - 1,
+        ),
       });
     }
     playbackControllerRef.current?.prev(true);
@@ -522,7 +558,6 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       setPlaybackSpeed(nextSpeed);
     }
   };
-
 
   // ============================================================================
   // Canvas Tools & Canvas Interactions
@@ -844,7 +879,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       const duration = Math.round(performance.now() - startTime);
       console.log(
-        `[COGNORA][TEACH][SUCCESS] generationId=${generationId} requestId=${requestId} duration=${duration}ms topic="${response.topic || ""}"`,
+        `[COGNORA][TEACH][SUCCESS] generationId=${generationId} requestId=${requestId} duration=${duration}ms topic="${
+          response.topic || ""
+        }"`,
       );
 
       if (pendingInteraction) {
@@ -883,8 +920,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       // Fallback: construct visualLesson from steps if top-level visualLesson was omitted
       if (!visualLesson && response.steps && response.steps.length > 0) {
         const firstStep = response.steps[0];
-        const initialActions = firstStep.visual_actions || response.visual_actions || [];
-        const restSteps = response.steps.length > 1 ? response.steps.slice(1) : [];
+        const initialActions =
+          firstStep.visual_actions || response.visual_actions || [];
+        const restSteps =
+          response.steps.length > 1 ? response.steps.slice(1) : [];
         visualLesson = {
           id: `lesson-${Date.now()}`,
           title: response.topic || "",
@@ -900,7 +939,11 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             insight: s.insight,
           })),
         };
-      } else if (!visualLesson && response.visual_actions && response.visual_actions.length > 0) {
+      } else if (
+        !visualLesson &&
+        response.visual_actions &&
+        response.visual_actions.length > 0
+      ) {
         visualLesson = {
           id: `lesson-${Date.now()}`,
           title: response.topic || "",
@@ -934,9 +977,14 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           focusViewport: true,
         });
       } else {
-        throw new Error("Teaching model produced no visual entities or lesson.");
+        throw new Error(
+          "Teaching model produced no visual entities or lesson.",
+        );
       }
-      const tSemantic = Math.max(1, Math.round(performance.now() - tSemanticStart));
+      const tSemantic = Math.max(
+        1,
+        Math.round(performance.now() - tSemanticStart),
+      );
 
       const tTotal = Math.round(performance.now() - startTime);
       const semVal = Math.max(2, Math.round(tSemantic * 0.35));
@@ -946,16 +994,16 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       console.log(
         `[COGNORA TRACE] generationId=${generationId}\n` +
-        `intent: ${tIntent}ms\n` +
-        `request-build: ${tReqBuild}ms\n` +
-        `provider: ${tProvider}ms\n` +
-        `parse: ${tParse}ms\n` +
-        `semantic-validation: ${semVal}ms\n` +
-        `normalization: 2ms\n` +
-        `visual-projection: ${visProj}ms\n` +
-        `layout: ${lay}ms\n` +
-        `render: ${ren}ms\n` +
-        `total: ${tTotal}ms`,
+          `intent: ${tIntent}ms\n` +
+          `request-build: ${tReqBuild}ms\n` +
+          `provider: ${tProvider}ms\n` +
+          `parse: ${tParse}ms\n` +
+          `semantic-validation: ${semVal}ms\n` +
+          `normalization: 2ms\n` +
+          `visual-projection: ${visProj}ms\n` +
+          `layout: ${lay}ms\n` +
+          `render: ${ren}ms\n` +
+          `total: ${tTotal}ms`,
       );
 
       const assistantMessage: ChatMessage = {
@@ -1076,22 +1124,26 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           "AI provider authentication failed. Check API key configuration.";
       } else if (isRateLimit) {
         errCode = "RATE_LIMIT";
-        friendlyError = "Rate limit reached. Please wait a moment and try again.";
+        friendlyError =
+          "Rate limit reached. Please wait a moment and try again.";
       } else if (isTimeout) {
         errCode = "TIMEOUT";
         friendlyError = "AI generation timed out. Please try again.";
       } else if (isNetwork) {
         errCode = "NETWORK_ERROR";
-        friendlyError = "Network connection failed. Please check your internet connection.";
+        friendlyError =
+          "Network connection failed. Please check your internet connection.";
       } else if (isStructuredOutput) {
         errCode = "STRUCTURED_OUTPUT_ERROR";
         friendlyError = "Visual lesson formatting error. Please try again.";
       } else if (isProviderUnavailable) {
         errCode = "PROVIDER_UNAVAILABLE";
-        friendlyError = "AI provider is temporarily overloaded or unavailable. Please try again in a moment.";
+        friendlyError =
+          "AI provider is temporarily overloaded or unavailable. Please try again in a moment.";
       } else if (isCreditCapacity) {
         errCode = "PROVIDER_CAPACITY";
-        friendlyError = "AI provider credit limit or quota reached. Please check your account.";
+        friendlyError =
+          "AI provider credit limit or quota reached. Please check your account.";
       } else {
         errCode = errCode || "UNKNOWN_PROVIDER_ERROR";
         friendlyError =
@@ -1246,7 +1298,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     return extractConceptModelFromVisualLesson(transformationLesson.lesson);
   }, [transformationLesson]);
 
-  const activeIndex = Math.max(0, transformationLesson?.currentTransformationIndex ?? 0);
+  const activeIndex = Math.max(
+    0,
+    transformationLesson?.currentTransformationIndex ?? 0,
+  );
   const activeT =
     transformationLesson?.lesson.transformations[activeIndex] ||
     transformationLesson?.lesson.transformations[0];
@@ -1269,18 +1324,34 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       const targetId = first.dslId || first.label;
 
       if (authoritativeModel && targetId) {
-        const inspected = UniversalConceptIntelligenceEngine.inspectEntity(targetId, authoritativeModel, activeIndex);
+        const inspected = UniversalConceptIntelligenceEngine.inspectEntity(
+          targetId,
+          authoritativeModel,
+          activeIndex,
+        );
         if (inspected) {
           return {
             title: `Selected: ${inspected.label}`,
-            subtitle: `${inspected.type}${inspected.role ? ` (${inspected.role})` : ""}`,
+            subtitle: `${inspected.type}${
+              inspected.role ? ` (${inspected.role})` : ""
+            }`,
             conceptType: domainModule.domain,
             operation: `Step ${currentStepNum} semantic state inspection`,
-            statusBadge: inspected.state ? `State: ${inspected.state}` : `Entity: ${inspected.id}`,
+            statusBadge: inspected.state
+              ? `State: ${inspected.state}`
+              : `Entity: ${inspected.id}`,
             metrics: [
-              ...(inspected.value !== undefined ? [{ label: "Value", value: String(inspected.value) }] : []),
-              { label: "Inbound Links", value: inspected.incomingConnections.length },
-              { label: "Outbound Links", value: inspected.outgoingConnections.length },
+              ...(inspected.value !== undefined
+                ? [{ label: "Value", value: String(inspected.value) }]
+                : []),
+              {
+                label: "Inbound Links",
+                value: inspected.incomingConnections.length,
+              },
+              {
+                label: "Outbound Links",
+                value: inspected.outgoingConnections.length,
+              },
             ],
             properties: [
               ...inspected.incomingConnections.map((c, i) => ({
@@ -1306,18 +1377,34 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       }
 
       if (conceptModel && targetId) {
-        const inspected = inspectSelectedEntity(targetId, conceptModel, activeIndex);
+        const inspected = inspectSelectedEntity(
+          targetId,
+          conceptModel,
+          activeIndex,
+        );
         if (inspected) {
           return {
             title: `Selected: ${inspected.label}`,
-            subtitle: `${inspected.type}${inspected.role ? ` (${inspected.role})` : ""}`,
+            subtitle: `${inspected.type}${
+              inspected.role ? ` (${inspected.role})` : ""
+            }`,
             conceptType: domainModule.domain,
             operation: inspected.purposeInCurrentStep,
-            statusBadge: inspected.state ? `State: ${inspected.state}` : `Entity: ${inspected.id}`,
+            statusBadge: inspected.state
+              ? `State: ${inspected.state}`
+              : `Entity: ${inspected.id}`,
             metrics: [
-              ...(inspected.value !== undefined ? [{ label: "Value", value: String(inspected.value) }] : []),
-              { label: "Inbound Links", value: inspected.incomingConnections.length },
-              { label: "Outbound Links", value: inspected.outgoingConnections.length },
+              ...(inspected.value !== undefined
+                ? [{ label: "Value", value: String(inspected.value) }]
+                : []),
+              {
+                label: "Inbound Links",
+                value: inspected.incomingConnections.length,
+              },
+              {
+                label: "Outbound Links",
+                value: inspected.outgoingConnections.length,
+              },
             ],
             properties: [
               ...inspected.incomingConnections.map((c, i) => ({
@@ -1329,7 +1416,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
                 value: `${c.toId} (${c.type})`,
               })),
             ],
-            resultSummary: inspected.nextChangeSummary || "Entity remains stable in subsequent transformations.",
+            resultSummary:
+              inspected.nextChangeSummary ||
+              "Entity remains stable in subsequent transformations.",
             stepperSteps,
             onSelectStep: (idx) => {
               playbackControllerRef.current?.seek(idx, true);
@@ -1353,10 +1442,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     // Extract dynamic inspector metrics via Domain Knowledge or fallback
     const extracted =
       explicitInspector ||
-      domainModule.extractInspectorData(
-        currentState as any,
-        activeT as any,
-      );
+      domainModule.extractInspectorData(currentState as any, activeT as any);
 
     return {
       title: transformationLesson.lesson.title || "Lesson Analysis",
@@ -1365,18 +1451,35 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         `${domainModule.name} — Step-by-step state inspection`,
       conceptType: domainModule.domain,
       operation: extracted.operation || activeT?.title,
-      statusBadge: extracted.statusBadge || `Step ${currentStepNum} of ${totalStepsCount}`,
+      statusBadge:
+        extracted.statusBadge || `Step ${currentStepNum} of ${totalStepsCount}`,
       metrics: extracted.metrics || [],
       properties: extracted.properties || [],
       resultSummary: extracted.resultSummary || activeT?.explanation,
-      hasInteractiveControls: extracted.hasInteractiveControls || Boolean((activeT as any)?.interactiveControls),
+      hasInteractiveControls:
+        extracted.hasInteractiveControls ||
+        Boolean((activeT as any)?.interactiveControls),
       contextAction: extracted.contextAction,
       startNodes: authoritativeModel
         ? authoritativeModel.world.entities.map((e) => e.label || e.id)
-        : Array.from(transformationLesson?.timeline?.states[activeIndex]?.graph.entities.values() || []).map((e) => e.label || e.id),
+        : Array.from(
+            transformationLesson?.timeline?.states[
+              activeIndex
+            ]?.graph.entities.values() || [],
+          ).map((e) => e.label || e.id),
       destNodes: authoritativeModel
-        ? authoritativeModel.world.entities.map((e) => e.label || e.id).slice().reverse()
-        : Array.from(transformationLesson?.timeline?.states[activeIndex]?.graph.entities.values() || []).map((e) => e.label || e.id).slice().reverse(),
+        ? authoritativeModel.world.entities
+            .map((e) => e.label || e.id)
+            .slice()
+            .reverse()
+        : Array.from(
+            transformationLesson?.timeline?.states[
+              activeIndex
+            ]?.graph.entities.values() || [],
+          )
+            .map((e) => e.label || e.id)
+            .slice()
+            .reverse(),
       selectedStart: selectedStartNode,
       selectedDest: selectedDestNode,
       onStartChange: setSelectedStartNode,
@@ -1393,12 +1496,16 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   })();
 
   const fromSceneState =
-    activeIndex > 0 ? transformationLesson?.timeline?.states[activeIndex - 1] : undefined;
-  const toSceneState =
-    transformationLesson?.timeline?.states[activeIndex];
+    activeIndex > 0
+      ? transformationLesson?.timeline?.states[activeIndex - 1]
+      : undefined;
+  const toSceneState = transformationLesson?.timeline?.states[activeIndex];
 
   const derivedWhatChanged = authoritativeModel
-    ? UniversalConceptIntelligenceEngine.getWhatChanged(activeIndex, authoritativeModel)?.whatChanged
+    ? UniversalConceptIntelligenceEngine.getWhatChanged(
+        activeIndex,
+        authoritativeModel,
+      )?.whatChanged
     : activeT
     ? deriveWhatChangedExplanation(activeT as any, fromSceneState, toSceneState)
     : undefined;
@@ -1422,7 +1529,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     if (!transformationLesson) return undefined;
 
     if (authoritativeModel) {
-      const quiz = UniversalConceptIntelligenceEngine.getPracticeQuiz(activeIndex, authoritativeModel);
+      const quiz = UniversalConceptIntelligenceEngine.getPracticeQuiz(
+        activeIndex,
+        authoritativeModel,
+      );
       return {
         question: quiz.question,
         options: quiz.options,
@@ -1436,7 +1546,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           const isCorrect = selectedPracticeOption === quiz.correctIndex;
           setPracticeFeedback({
             isCorrect,
-            message: isCorrect ? quiz.explanation : `Not quite. ${quiz.explanation}`,
+            message: isCorrect
+              ? quiz.explanation
+              : `Not quite. ${quiz.explanation}`,
           });
           if (learnerSessionRef.current) {
             recordInteraction(learnerSessionRef.current, {
@@ -1506,8 +1618,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         if (Array.isArray(transformationLesson.lesson.codeContexts)) {
           return transformationLesson.lesson.codeContexts[0];
         }
-        const firstKey = Object.keys(transformationLesson.lesson.codeContexts)[0];
-        return firstKey ? transformationLesson.lesson.codeContexts[firstKey] : undefined;
+        const firstKey = Object.keys(
+          transformationLesson.lesson.codeContexts,
+        )[0];
+        return firstKey
+          ? transformationLesson.lesson.codeContexts[firstKey]
+          : undefined;
       }
     }
     return undefined;
@@ -1581,7 +1697,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         onRedo={handleRedo}
         onToggleMore={() => setIsToolsPaletteOpen((prev) => !prev)}
         isMoreOpen={isToolsPaletteOpen}
-        onToggleContextualPanel={() => setIsContextualPanelOpen((prev) => !prev)}
+        onToggleContextualPanel={() =>
+          setIsContextualPanelOpen((prev) => !prev)
+        }
         isContextualPanelOpen={isContextualPanelOpen}
         hasActiveLesson={Boolean(transformationLesson)}
       />
@@ -1737,7 +1855,14 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           explainData={explainData}
           codeContext={currentCodeContext}
           practiceData={practiceData}
-          capabilities={transformationLesson?.lesson.capabilities || ["explain", "code", "analyze", "practice"]}
+          capabilities={
+            transformationLesson?.lesson.capabilities || [
+              "explain",
+              "code",
+              "analyze",
+              "practice",
+            ]
+          }
         />
       )}
 

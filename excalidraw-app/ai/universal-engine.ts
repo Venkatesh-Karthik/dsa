@@ -15,7 +15,10 @@
  * ↓ LOCAL PLAYBACK & ADAPTATION
  */
 
-import { understandQuestion, type QuestionUnderstandingResult } from "./question-understanding";
+import {
+  understandQuestion,
+  type QuestionUnderstandingResult,
+} from "./question-understanding";
 import { formalizeProblem, type ProblemModel } from "./problem-model";
 import { createConfidence } from "./confidence-model";
 import {
@@ -32,13 +35,30 @@ import {
   type AuthoritativeSemanticModel,
   type AuthoritativeTransformation,
 } from "./authoritative-model";
-import { ExplanationEngine, type SemanticExplanation } from "./explanation-engine";
+import {
+  ExplanationEngine,
+  type SemanticExplanation,
+} from "./explanation-engine";
 import { SemanticWorldGraph, WhyEngine } from "./world-graph";
-import { CounterfactualEngine, type CounterfactualMutation, type CounterfactualResult } from "./counterfactual-engine";
-import { ComparisonEngine, type SemanticComparisonReport } from "./comparison-engine";
+import {
+  CounterfactualEngine,
+  type CounterfactualMutation,
+  type CounterfactualResult,
+} from "./counterfactual-engine";
+import {
+  ComparisonEngine,
+  type SemanticComparisonReport,
+} from "./comparison-engine";
 import { VisualSemanticValidator } from "./visual-semantic-validator";
-import { type VisualLesson, type VisualAction, type Transformation } from "./visual-dsl";
-import { compileAuthoritativeTimeline, type CompiledTimeline } from "./transformation-timeline";
+import {
+  type VisualLesson,
+  type VisualAction,
+  type Transformation,
+} from "./visual-dsl";
+import {
+  compileAuthoritativeTimeline,
+  type CompiledTimeline,
+} from "./transformation-timeline";
 import { createSceneGraphFromActions } from "./scene-state";
 
 export class UniversalConceptIntelligenceEngine {
@@ -66,7 +86,11 @@ export class UniversalConceptIntelligenceEngine {
         insight?: string;
       }>;
       transformations?: any[];
-      invariants?: Array<{ statement?: string; description?: string; rule?: string }>;
+      invariants?: Array<{
+        statement?: string;
+        description?: string;
+        rule?: string;
+      }>;
       misconceptions?: any[];
     },
   ): {
@@ -80,7 +104,9 @@ export class UniversalConceptIntelligenceEngine {
 
     // 2. Formalize the Problem
     const candidateEntities: Entity[] = [...(rawProposal?.entities || [])];
-    const candidateRelationships: Relationship[] = [...(rawProposal?.relationships || [])];
+    const candidateRelationships: Relationship[] = [
+      ...(rawProposal?.relationships || []),
+    ];
 
     // Identify all sources of initial visual actions
     const initialActions: VisualAction[] =
@@ -112,15 +138,34 @@ export class UniversalConceptIntelligenceEngine {
           source: rel.sourceEntityId,
           target: rel.targetEntityId,
           type: rel.type || "connects",
-          direction: (rel.properties?.directed !== false) ? "forward" : "none",
+          direction: rel.properties?.directed !== false ? "forward" : "none",
           label: rel.label,
           properties: rel.properties || {},
         });
       }
 
+      // Define composite container action types that should not be extracted as visual node entities
+      const CONTAINER_ACTION_TYPES = new Set([
+        "create_tree",
+        "create_graph",
+        "create_array",
+        "create_linked_list",
+        "create_stack",
+        "create_queue",
+        "create_matrix",
+        "create_container",
+        "create_system",
+        "create_timeline",
+      ]);
+
       // Universal fallback for any action with an id not captured by scene graph
       for (const act of initialActions) {
         if ("id" in act && typeof (act as any).id === "string") {
+          const actType = (act as any).type;
+          if (CONTAINER_ACTION_TYPES.has(actType)) {
+            // Composite container definitions are structural layouts, not individual shape primitives
+            continue;
+          }
           const actId = (act as any).id;
           if (!candidateEntities.some((e) => e.id === actId)) {
             const label =
@@ -141,15 +186,44 @@ export class UniversalConceptIntelligenceEngine {
       }
     }
 
+    // Collect all container IDs to prevent composite layout structures from leaking as visual entities
+    const containerIds = new Set<string>();
+    for (const act of initialActions) {
+      if (
+        (act as any).type &&
+        (act as any).type.startsWith("create_") &&
+        [
+          "create_tree",
+          "create_graph",
+          "create_array",
+          "create_linked_list",
+          "create_stack",
+          "create_queue",
+          "create_matrix",
+          "create_container",
+          "create_system",
+          "create_timeline",
+        ].includes((act as any).type) &&
+        "id" in act &&
+        typeof (act as any).id === "string"
+      ) {
+        containerIds.add((act as any).id);
+      }
+    }
+
+    const filteredEntities = candidateEntities.filter(
+      (e) => !containerIds.has(e.id),
+    );
+
     const problem = formalizeProblem(understanding, {
-      entities: candidateEntities,
+      entities: filteredEntities,
       relationships: candidateRelationships,
       objective: `Understand and verify ${understanding.concept}`,
     });
 
     // 3. Construct Semantic World
     const state0Entities = new Map<string, Entity>();
-    candidateEntities.forEach((e) => state0Entities.set(e.id, { ...e }));
+    filteredEntities.forEach((e) => state0Entities.set(e.id, { ...e }));
     const state0Rels = new Map<string, Relationship>();
     candidateRelationships.forEach((r) => state0Rels.set(r.id, { ...r }));
 
@@ -192,14 +266,20 @@ export class UniversalConceptIntelligenceEngine {
       }
       const nextRels = new Map<string, Relationship>();
       for (const [id, r] of currentState.relationships.entries()) {
-        nextRels.set(id, { ...r, properties: r.properties ? { ...r.properties } : undefined });
+        nextRels.set(id, {
+          ...r,
+          properties: r.properties ? { ...r.properties } : undefined,
+        });
       }
 
       // Mark affected entities from operations and visual actions
       const affectedEntities: string[] = [];
 
       // Combine operations and visual actions into a unified operational stream
-      const allOperations = [...(s.operations || []), ...(s.visual_actions || [])];
+      const allOperations = [
+        ...(s.operations || []),
+        ...(s.visual_actions || []),
+      ];
       for (const op of allOperations) {
         if (!op || typeof op !== "object") continue;
         const opType = (op.type || "").toLowerCase();
@@ -220,7 +300,8 @@ export class UniversalConceptIntelligenceEngine {
               properties: {
                 ...existing.properties,
                 ...(op.properties || {}),
-                color: op.color ?? op.style?.color ?? existing.properties?.color,
+                color:
+                  op.color ?? op.style?.color ?? existing.properties?.color,
                 highlight:
                   op.style?.color ??
                   op.properties?.highlight ??
@@ -234,7 +315,8 @@ export class UniversalConceptIntelligenceEngine {
           const tgt = op.target || op.entityId || op.id;
           const existing = nextEntities.get(tgt);
           if (existing) {
-            existing.properties.highlight = op.color || op.highlight || "accent";
+            existing.properties.highlight =
+              op.color || op.highlight || "accent";
             affectedEntities.push(tgt);
           }
         } else if (opType === "unhighlight") {
@@ -255,7 +337,8 @@ export class UniversalConceptIntelligenceEngine {
           const tgt = op.target || op.to;
           if (src && tgt) {
             const relId =
-              op.id || `rel-${src}-${tgt}-${Math.random().toString(36).slice(2, 6)}`;
+              op.id ||
+              `rel-${src}-${tgt}-${Math.random().toString(36).slice(2, 6)}`;
             nextRels.set(relId, {
               id: relId,
               source: src,
@@ -305,7 +388,8 @@ export class UniversalConceptIntelligenceEngine {
                 (opType === "create_circle" ? "CircleEntity" : "GenericEntity"),
               label: op.label || op.entity?.label || entId,
               value: op.value ?? op.entity?.value,
-              properties: op.properties || op.entity?.properties || op.style || {},
+              properties:
+                op.properties || op.entity?.properties || op.style || {},
               semanticRole: op.role || op.semanticRole || "component",
             });
             affectedEntities.push(entId);
@@ -513,7 +597,10 @@ export class UniversalConceptIntelligenceEngine {
                 type: edge.label || "connects",
                 direction: edge.directed === false ? "none" : "forward",
                 label: edge.label,
-                properties: { directed: edge.directed !== false, weight: edge.weight },
+                properties: {
+                  directed: edge.directed !== false,
+                  weight: edge.weight,
+                },
               });
             }
           }
@@ -550,7 +637,10 @@ export class UniversalConceptIntelligenceEngine {
         affectedRelationships: [],
         fromStateIndex: i,
         toStateIndex: nextIndex,
-        whatChanged: affectedEntities.length > 0 ? `Entities updated: ${affectedEntities.join(", ")}` : s.title,
+        whatChanged:
+          affectedEntities.length > 0
+            ? `Entities updated: ${affectedEntities.join(", ")}`
+            : s.title,
         whyChanged: s.explanation || "State transition required",
         learnerObservation: `Observe the transition to step ${nextIndex}`,
         consequence: "Preserves invariant integrity",
@@ -582,7 +672,13 @@ export class UniversalConceptIntelligenceEngine {
       states,
       rules: [],
       constraints: problem.constraints,
-      goals: [{ id: "goal-main", description: problem.objective, targetCondition: "Final verified state" }],
+      goals: [
+        {
+          id: "goal-main",
+          description: problem.objective,
+          targetCondition: "Final verified state",
+        },
+      ],
       observations: [],
       derivedValues: [],
       dependencies: [],
@@ -591,21 +687,25 @@ export class UniversalConceptIntelligenceEngine {
     };
 
     // 4. Invariants
-    const customInvariants: Invariant[] = (rawProposal?.invariants || []).map((inv, idx) => ({
-      id: `inv-custom-${idx + 1}`,
-      statement: inv.statement || inv.rule || inv.description || "System Invariant",
-      scope: "global",
-      severity: "critical",
-      source: "proposal",
-    }));
-
-    const { model: authoritativeModel, report } = CorrectnessEngine.validateAndSynthesize(
-      problem,
-      world,
-      rawTransformations,
-      [],
-      customInvariants,
+    const customInvariants: Invariant[] = (rawProposal?.invariants || []).map(
+      (inv, idx) => ({
+        id: `inv-custom-${idx + 1}`,
+        statement:
+          inv.statement || inv.rule || inv.description || "System Invariant",
+        scope: "global",
+        severity: "critical",
+        source: "proposal",
+      }),
     );
+
+    const { model: authoritativeModel, report } =
+      CorrectnessEngine.validateAndSynthesize(
+        problem,
+        world,
+        rawTransformations,
+        [],
+        customInvariants,
+      );
 
     const model: AuthoritativeSemanticModel = authoritativeModel ?? {
       id: `unverified-${problem.id}`,
@@ -619,11 +719,21 @@ export class UniversalConceptIntelligenceEngine {
       goalSatisfaction: {
         satisfied: false,
         objective: problem.objective,
-        verifiedCriteria: [{ criterion: problem.objective, passed: false, evidence: "Validation failed critical checks" }],
+        verifiedCriteria: [
+          {
+            criterion: problem.objective,
+            passed: false,
+            evidence: "Validation failed critical checks",
+          },
+        ],
         summary: "Validation failed critical checks",
       },
       strategy: problem.intent,
-      confidence: createConfidence(0.2, "UNCERTAIN", "Rejected by correctness engine"),
+      confidence: createConfidence(
+        0.2,
+        "UNCERTAIN",
+        "Rejected by correctness engine",
+      ),
       timestamp: Date.now(),
     };
 
@@ -689,8 +799,12 @@ export class UniversalConceptIntelligenceEngine {
     const stateEnt = currentState?.entities.get(entityId) || ent;
 
     // Outgoing & incoming connections
-    const incoming = model.world.relationships.filter((r) => r.target === entityId);
-    const outgoing = model.world.relationships.filter((r) => r.source === entityId);
+    const incoming = model.world.relationships.filter(
+      (r) => r.target === entityId,
+    );
+    const outgoing = model.world.relationships.filter(
+      (r) => r.source === entityId,
+    );
 
     const relevantInvariants = model.invariants.filter(
       (inv) => inv.scope === "global" || inv.scope === entityId,
@@ -704,8 +818,14 @@ export class UniversalConceptIntelligenceEngine {
       value: stateEnt.value,
       state: stateEnt.state,
       properties: stateEnt.properties,
-      incomingConnections: incoming.map((r) => ({ from: r.source, type: r.type })),
-      outgoingConnections: outgoing.map((r) => ({ to: r.target, type: r.type })),
+      incomingConnections: incoming.map((r) => ({
+        from: r.source,
+        type: r.type,
+      })),
+      outgoingConnections: outgoing.map((r) => ({
+        to: r.target,
+        type: r.type,
+      })),
       invariants: relevantInvariants.map((i) => i.statement),
     };
   }
@@ -724,7 +844,12 @@ export class UniversalConceptIntelligenceEngine {
     const fromState = model.states[t.fromStateIndex];
     const toState = model.states[t.toStateIndex];
 
-    return ExplanationEngine.deriveExplanation(t, fromState, toState, model.invariants);
+    return ExplanationEngine.deriveExplanation(
+      t,
+      fromState,
+      toState,
+      model.invariants,
+    );
   }
 
   /**
@@ -753,7 +878,10 @@ export class UniversalConceptIntelligenceEngine {
   /**
    * Local Interactive Practice Quiz derived from model invariants (0 AI calls)
    */
-  public static getPracticeQuiz(stepIndex: number, model: AuthoritativeSemanticModel) {
+  public static getPracticeQuiz(
+    stepIndex: number,
+    model: AuthoritativeSemanticModel,
+  ) {
     const inv = model.invariants[0];
     const question = `Which fundamental invariant must remain true throughout ${model.problem.objective}?`;
     const correctAnswer = inv

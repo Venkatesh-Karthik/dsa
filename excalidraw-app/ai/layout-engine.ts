@@ -29,8 +29,8 @@ export interface LayoutBounds {
 export interface TreeNodeInput {
   id: string;
   value: string | number;
-  left?: string;       // ID of left child
-  right?: string;      // ID of right child
+  left?: string; // ID of left child
+  right?: string; // ID of right child
   children?: string[]; // For general trees
 }
 
@@ -83,16 +83,16 @@ export interface GridLayoutResult {
 export const TREE_LAYOUT = {
   NODE_RADIUS: 35,
   NODE_DIAMETER: 70,
-  LEVEL_GAP: 100,     // vertical gap between levels
-  SIBLING_GAP: 25,    // minimum horizontal gap between siblings
-  SUBTREE_GAP: 50,    // minimum horizontal gap between subtrees
+  LEVEL_GAP: 100, // vertical gap between levels
+  SIBLING_GAP: 25, // minimum horizontal gap between siblings
+  SUBTREE_GAP: 50, // minimum horizontal gap between subtrees
 } as const;
 
 export const GRAPH_LAYOUT = {
   NODE_RADIUS: 30,
   NODE_DIAMETER: 60,
-  CIRCLE_RADIUS: 120,  // radius of circular arrangement
-  GRID_GAP: 100,       // gap for grid fallback
+  CIRCLE_RADIUS: 120, // radius of circular arrangement
+  GRID_GAP: 100, // gap for grid fallback
   MAX_CIRCLE_NODES: 12,
 } as const;
 
@@ -100,7 +100,7 @@ export const GRID_LAYOUT = {
   CELL_WIDTH: 60,
   CELL_HEIGHT: 40,
   CELL_GAP: 2,
-  HEADER_OFFSET: 30,   // space for row/col headers
+  HEADER_OFFSET: 30, // space for row/col headers
 } as const;
 
 // ==========================================
@@ -109,7 +109,7 @@ export const GRID_LAYOUT = {
 
 /**
  * Computes a Reingold-Tilford inspired layout for trees.
- * 
+ *
  * @param nodes List of nodes in the tree
  * @param rootId ID of the root node
  * @param origin Starting coordinate for the layout
@@ -118,7 +118,7 @@ export const GRID_LAYOUT = {
 export function computeTreeLayout(
   nodes: TreeNodeInput[],
   rootId: string,
-  origin: LayoutPoint
+  origin: LayoutPoint,
 ): TreeLayoutResult {
   const nodeMap = new Map<string, TreeNodeInput>();
   for (const n of nodes) {
@@ -169,7 +169,7 @@ export function computeTreeLayout(
       // Binary tree handling
       let leftNode: LayoutNode | null = null;
       let rightNode: LayoutNode | null = null;
-      
+
       if (node.left) {
         leftNode = buildTree(node.left, depth + 1);
         if (leftNode) {
@@ -197,7 +197,7 @@ export function computeTreeLayout(
     return {
       id,
       width: Math.max(width, TREE_LAYOUT.NODE_DIAMETER),
-      children
+      children,
     };
   }
 
@@ -214,18 +214,27 @@ export function computeTreeLayout(
 
     if (node.children.length === 0) return;
 
-    if (node.children.length === 2 && node.children[0].isLeft && node.children[1].isRight) {
+    if (
+      node.children.length === 2 &&
+      node.children[0].isLeft &&
+      node.children[1].isRight
+    ) {
       // Explicit binary placement
       const left = node.children[0];
       const right = node.children[1];
       const totalWidth = left.width + TREE_LAYOUT.SUBTREE_GAP + right.width;
-      
-      const startX = x + (TREE_LAYOUT.NODE_DIAMETER / 2) - (totalWidth / 2);
-      
-      const leftX = startX + (left.width / 2) - (TREE_LAYOUT.NODE_DIAMETER / 2);
+
+      const startX = x + TREE_LAYOUT.NODE_DIAMETER / 2 - totalWidth / 2;
+
+      const leftX = startX + left.width / 2 - TREE_LAYOUT.NODE_DIAMETER / 2;
       positionTree(left, leftX, y + TREE_LAYOUT.LEVEL_GAP);
-      
-      const rightX = startX + left.width + TREE_LAYOUT.SUBTREE_GAP + (right.width / 2) - (TREE_LAYOUT.NODE_DIAMETER / 2);
+
+      const rightX =
+        startX +
+        left.width +
+        TREE_LAYOUT.SUBTREE_GAP +
+        right.width / 2 -
+        TREE_LAYOUT.NODE_DIAMETER / 2;
       positionTree(right, rightX, y + TREE_LAYOUT.LEVEL_GAP);
     } else {
       // Linear or general children placement
@@ -233,11 +242,13 @@ export function computeTreeLayout(
       for (const child of node.children) {
         totalWidth += child.width;
       }
-      totalWidth += Math.max(0, node.children.length - 1) * TREE_LAYOUT.SIBLING_GAP;
-      
-      let currentX = x + (TREE_LAYOUT.NODE_DIAMETER / 2) - (totalWidth / 2);
+      totalWidth +=
+        Math.max(0, node.children.length - 1) * TREE_LAYOUT.SIBLING_GAP;
+
+      let currentX = x + TREE_LAYOUT.NODE_DIAMETER / 2 - totalWidth / 2;
       for (const child of node.children) {
-        const childX = currentX + (child.width / 2) - (TREE_LAYOUT.NODE_DIAMETER / 2);
+        const childX =
+          currentX + child.width / 2 - TREE_LAYOUT.NODE_DIAMETER / 2;
         positionTree(child, childX, y + TREE_LAYOUT.LEVEL_GAP);
         currentX += child.width + TREE_LAYOUT.SIBLING_GAP;
       }
@@ -254,16 +265,16 @@ export function computeTreeLayout(
       x: minX === Infinity ? origin.x : minX,
       y: minY === Infinity ? origin.y : minY,
       width: maxX === -Infinity ? 0 : maxX - minX,
-      height: maxY === -Infinity ? 0 : maxY - minY
+      height: maxY === -Infinity ? 0 : maxY - minY,
     },
-    levels
+    levels,
   };
 }
 
 /**
  * Computes deterministic layouts for graphs.
  * Circles small numbers of nodes; uses grid for larger sets.
- * 
+ *
  * @param nodes List of nodes in the graph
  * @param edges List of edges in the graph
  * @param origin Starting coordinate for the layout
@@ -272,7 +283,7 @@ export function computeTreeLayout(
 export function computeGraphLayout(
   nodes: GraphNodeInput[],
   edges: GraphEdgeInput[],
-  origin: LayoutPoint
+  origin: LayoutPoint,
 ): GraphLayoutResult {
   const positions = new Map<string, LayoutPoint>();
   const n = nodes.length;
@@ -284,12 +295,15 @@ export function computeGraphLayout(
 
   if (n <= GRAPH_LAYOUT.MAX_CIRCLE_NODES) {
     // Circle Layout: dynamically size radius to prevent overlaps
-    const dynamicRadius = Math.max(GRAPH_LAYOUT.CIRCLE_RADIUS, (n * GRAPH_LAYOUT.NODE_DIAMETER * 1.5) / (2 * Math.PI));
+    const dynamicRadius = Math.max(
+      GRAPH_LAYOUT.CIRCLE_RADIUS,
+      (n * GRAPH_LAYOUT.NODE_DIAMETER * 1.5) / (2 * Math.PI),
+    );
     const cx = origin.x + dynamicRadius;
     const cy = origin.y + dynamicRadius;
 
     for (let i = 0; i < n; i++) {
-      const angle = (2 * Math.PI * i) / n - (Math.PI / 2); // Start top, go clockwise
+      const angle = (2 * Math.PI * i) / n - Math.PI / 2; // Start top, go clockwise
       const x = cx + dynamicRadius * Math.cos(angle) - GRAPH_LAYOUT.NODE_RADIUS;
       const y = cy + dynamicRadius * Math.sin(angle) - GRAPH_LAYOUT.NODE_RADIUS;
       positions.set(nodes[i].id, { x, y });
@@ -322,14 +336,14 @@ export function computeGraphLayout(
       x: minX === Infinity ? origin.x : minX,
       y: minY === Infinity ? origin.y : minY,
       width: maxX === -Infinity ? 0 : maxX - minX,
-      height: maxY === -Infinity ? 0 : maxY - minY
-    }
+      height: maxY === -Infinity ? 0 : maxY - minY,
+    },
   };
 }
 
 /**
  * Computes coordinates for a 2D grid matrix layout.
- * 
+ *
  * @param rows Number of rows
  * @param cols Number of columns
  * @param origin Starting coordinate
@@ -338,7 +352,7 @@ export function computeGraphLayout(
 export function computeGridLayout(
   rows: number,
   cols: number,
-  origin: LayoutPoint
+  origin: LayoutPoint,
 ): GridLayoutResult {
   const cellPositions = new Map<string, LayoutPoint>();
   const rowHeaders = new Map<number, LayoutPoint>();
@@ -351,20 +365,32 @@ export function computeGridLayout(
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const x = origin.x + GRID_LAYOUT.HEADER_OFFSET + c * (GRID_LAYOUT.CELL_WIDTH + GRID_LAYOUT.CELL_GAP);
-      const y = origin.y + GRID_LAYOUT.HEADER_OFFSET + r * (GRID_LAYOUT.CELL_HEIGHT + GRID_LAYOUT.CELL_GAP);
+      const x =
+        origin.x +
+        GRID_LAYOUT.HEADER_OFFSET +
+        c * (GRID_LAYOUT.CELL_WIDTH + GRID_LAYOUT.CELL_GAP);
+      const y =
+        origin.y +
+        GRID_LAYOUT.HEADER_OFFSET +
+        r * (GRID_LAYOUT.CELL_HEIGHT + GRID_LAYOUT.CELL_GAP);
       cellPositions.set(`${r}-${c}`, { x, y });
 
       maxX = Math.max(maxX, x + GRID_LAYOUT.CELL_WIDTH);
       maxY = Math.max(maxY, y + GRID_LAYOUT.CELL_HEIGHT);
     }
 
-    const ry = origin.y + GRID_LAYOUT.HEADER_OFFSET + r * (GRID_LAYOUT.CELL_HEIGHT + GRID_LAYOUT.CELL_GAP);
+    const ry =
+      origin.y +
+      GRID_LAYOUT.HEADER_OFFSET +
+      r * (GRID_LAYOUT.CELL_HEIGHT + GRID_LAYOUT.CELL_GAP);
     rowHeaders.set(r, { x: origin.x, y: ry });
   }
 
   for (let c = 0; c < cols; c++) {
-    const cx = origin.x + GRID_LAYOUT.HEADER_OFFSET + c * (GRID_LAYOUT.CELL_WIDTH + GRID_LAYOUT.CELL_GAP);
+    const cx =
+      origin.x +
+      GRID_LAYOUT.HEADER_OFFSET +
+      c * (GRID_LAYOUT.CELL_WIDTH + GRID_LAYOUT.CELL_GAP);
     colHeaders.set(c, { x: cx, y: origin.y });
   }
 
@@ -374,12 +400,12 @@ export function computeGridLayout(
       x: minX,
       y: minY,
       width: maxX - minX,
-      height: maxY - minY
+      height: maxY - minY,
     },
     headerPositions: {
       rows: rowHeaders,
-      cols: colHeaders
-    }
+      cols: colHeaders,
+    },
   };
 }
 
@@ -477,7 +503,10 @@ export class PlacementSlotTracker {
     const key = `${anchorId}-${placement}`;
     const existing = this.slots.get(key);
     if (!existing) {
-      const envelopeY = itemBounds.y >= 0 ? Math.min(itemBounds.y, itemBounds.y - 120) : itemBounds.y;
+      const envelopeY =
+        itemBounds.y >= 0
+          ? Math.min(itemBounds.y, itemBounds.y - 120)
+          : itemBounds.y;
       this.slots.set(key, {
         x: itemBounds.x,
         y: envelopeY,
@@ -486,7 +515,10 @@ export class PlacementSlotTracker {
       });
     } else {
       const topY = Math.min(existing.y, itemBounds.y);
-      const bottomY = Math.max(existing.y + existing.height, itemBounds.y + itemBounds.height);
+      const bottomY = Math.max(
+        existing.y + existing.height,
+        itemBounds.y + itemBounds.height,
+      );
       existing.y = topY;
       existing.height = bottomY - topY;
     }
@@ -564,7 +596,13 @@ export function resolveSceneCollisions(
 }
 
 export function balanceElementPositions(
-  elements: { id: string; x: number; y: number; width: number; height: number }[],
+  elements: {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }[],
 ): Map<string, LayoutPoint> {
   const boxes: CollisionBox[] = elements.map((el) => ({
     id: el.id,
@@ -600,7 +638,7 @@ export function computeSceneBounds(rects: LayoutBounds[]): LayoutBounds {
     x: minX,
     y: minY,
     width: maxX - minX,
-    height: maxY - minY
+    height: maxY - minY,
   };
 }
 
@@ -690,7 +728,9 @@ export function computeStepVerticalLayout(
     maxX = Math.max(maxX, startX + stepWidth);
 
     const isLast = i === steps.length - 1;
-    const dividerY = isLast ? undefined : stepBottom + STEP_LAYOUT.DIVIDER_OFFSET;
+    const dividerY = isLast
+      ? undefined
+      : stepBottom + STEP_LAYOUT.DIVIDER_OFFSET;
 
     results.push({
       stepId: step.stepId,
@@ -761,9 +801,15 @@ export function computeSceneGraphLayout(
     const childSet = new Set<string>();
 
     const treeInputs: TreeNodeInput[] = treeNodes.map((entity) => {
-      let left: string | undefined = entity.properties?.left as string | undefined;
-      let right: string | undefined = entity.properties?.right as string | undefined;
-      let children: string[] | undefined = entity.properties?.children as string[] | undefined;
+      let left: string | undefined = entity.properties?.left as
+        | string
+        | undefined;
+      let right: string | undefined = entity.properties?.right as
+        | string
+        | undefined;
+      let children: string[] | undefined = entity.properties?.children as
+        | string[]
+        | undefined;
 
       // Extract from relationships if not explicitly on properties
       for (const rel of graph.relationships.values()) {
@@ -774,7 +820,9 @@ export function computeSceneGraphLayout(
           } else if (rel.type === "rightOf") {
             right = rel.targetEntityId;
           } else if (rel.type === "parentOf") {
-            children = children ? [...children, rel.targetEntityId] : [rel.targetEntityId];
+            children = children
+              ? [...children, rel.targetEntityId]
+              : [rel.targetEntityId];
           }
         }
       }
@@ -799,54 +847,24 @@ export function computeSceneGraphLayout(
       rootId = potentialRoot ? potentialRoot.id : treeNodes[0].id;
     }
 
-    const rawLayout = computeTreeLayout(treeInputs, rootId, origin);
+    // Use an appropriately centered tree anchor to prevent left-subtree clipping
+    const treeOrigin: LayoutPoint = {
+      x: Math.max(origin.x, 420),
+      y: origin.y,
+    };
 
-    // Apply layout stability: align center of mass with previous state
-    let shiftX = 0;
-    let shiftY = 0;
+    const rawLayout = computeTreeLayout(treeInputs, rootId, treeOrigin);
 
-    if (previousLayout && previousLayout.size > 0) {
-      let prevSumX = 0;
-      let prevSumY = 0;
-      let matchCount = 0;
-
-      for (const node of treeNodes) {
-        const prev = previousLayout.get(node.id);
-        if (prev) {
-          prevSumX += prev.x;
-          prevSumY += prev.y;
-          matchCount++;
-        }
-      }
-
-      if (matchCount > 0) {
-        const prevCenterX = prevSumX / matchCount;
-        const prevCenterY = prevSumY / matchCount;
-
-        let currSumX = 0;
-        let currSumY = 0;
-        for (const node of treeNodes) {
-          const curr = rawLayout.positions.get(node.id);
-          if (curr) {
-            currSumX += curr.x;
-            currSumY += curr.y;
-          }
-        }
-        const currCenterX = currSumX / treeNodes.length;
-        const currCenterY = currSumY / treeNodes.length;
-
-        shiftX = prevCenterX - currCenterX;
-        shiftY = prevCenterY - currCenterY;
-      }
-    }
-
+    // Tree Layout Anti-Drift:
+    // Anchor root to treeOrigin.x and treeOrigin.y across all states to completely eliminate drift.
+    // When AVL rotation promotes a new root, it takes the root anchor coordinate and subtrees position symmetrically below.
     for (const [id, pos] of rawLayout.positions) {
-      positions.set(id, { x: pos.x + shiftX, y: pos.y + shiftY });
+      positions.set(id, pos);
     }
 
     const bounds: LayoutBounds = {
-      x: rawLayout.bounds.x + shiftX,
-      y: rawLayout.bounds.y + shiftY,
+      x: rawLayout.bounds.x,
+      y: rawLayout.bounds.y,
       width: rawLayout.bounds.width,
       height: rawLayout.bounds.height,
     };
@@ -871,13 +889,30 @@ export function computeSceneGraphLayout(
       }
     }
 
+    // Ensure all entities in the graph have deterministic positions
+    for (const entity of entityList) {
+      if (!positions.has(entity.id)) {
+        const prev = previousLayout?.get(entity.id);
+        if (prev) {
+          positions.set(entity.id, prev);
+        } else {
+          // Gracefully place auxiliary entity below the tree
+          positions.set(entity.id, {
+            x: bounds.x,
+            y: bounds.y + bounds.height + 40,
+          });
+        }
+      }
+    }
+
     // Run collision resolution across all positioned items
     const collisionBoxes: CollisionBox[] = [];
     for (const entity of entityList) {
       const pos = positions.get(entity.id);
       if (!pos) continue;
       const isAnn =
-        entity.primitiveType === "Annotation" || entity.primitiveType === "Callout";
+        entity.primitiveType === "Annotation" ||
+        entity.primitiveType === "Callout";
       collisionBoxes.push({
         id: entity.id,
         x: pos.x,
@@ -929,7 +964,9 @@ export function computeSceneGraphLayout(
   }
 
   if (isLinkedList) {
-    const nodes = entityList.filter((e) => e.primitiveType === "LinkedListNode");
+    const nodes = entityList.filter(
+      (e) => e.primitiveType === "LinkedListNode",
+    );
     const startX = previousLayout?.get(nodes[0].id)?.x ?? origin.x;
     const startY = previousLayout?.get(nodes[0].id)?.y ?? origin.y;
     const nodeW = 80;
@@ -979,7 +1016,9 @@ export function computeSceneGraphLayout(
   }
 
   if (isGraph) {
-    const graphNodes = entityList.filter((e) => e.primitiveType === "GraphNode");
+    const graphNodes = entityList.filter(
+      (e) => e.primitiveType === "GraphNode",
+    );
     const graphEdges = Array.from(graph.relationships.values()).map((r) => ({
       from: r.sourceEntityId,
       to: r.targetEntityId,
@@ -988,16 +1027,101 @@ export function computeSceneGraphLayout(
       directed: r.properties?.directed !== false,
     }));
 
-    const result = computeGraphLayout(
-      graphNodes.map((n) => ({ id: n.id, label: n.label ?? String(n.value ?? "") })),
+    const rawResult = computeGraphLayout(
+      graphNodes.map((n) => ({
+        id: n.id,
+        label: n.label ?? String(n.value ?? ""),
+      })),
       graphEdges,
       origin,
     );
 
-    return result;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const node of graphNodes) {
+      // Graph Layout Persistence: preserve previously assigned node positions
+      const pos =
+        previousLayout?.get(node.id) ??
+        rawResult.positions.get(node.id) ??
+        origin;
+      positions.set(node.id, pos);
+      minX = Math.min(minX, pos.x);
+      maxX = Math.max(maxX, pos.x + GRAPH_LAYOUT.NODE_DIAMETER);
+      minY = Math.min(minY, pos.y);
+      maxY = Math.max(maxY, pos.y + GRAPH_LAYOUT.NODE_DIAMETER);
+    }
+
+    // Ensure auxiliary entities also have positions
+    for (const entity of entityList) {
+      if (!positions.has(entity.id)) {
+        const pos = previousLayout?.get(entity.id) ?? {
+          x: minX === Infinity ? origin.x : minX,
+          y: (maxY === -Infinity ? origin.y : maxY) + 40,
+        };
+        positions.set(entity.id, pos);
+      }
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: minX === Infinity ? origin.x : minX,
+        y: minY === Infinity ? origin.y : minY,
+        width: maxX === -Infinity ? 0 : maxX - minX,
+        height: maxY === -Infinity ? 0 : maxY - minY,
+      },
+    };
   }
 
-  // 6. Generic / Arbitrary Concept Layout (Flow, Pipeline, Cycle, or Network)
+  // 6. Two-party / Client-Server Protocol Layout (e.g. TCP Handshake, HTTP, Client/Server)
+  const partyA = entityList.find((e) => {
+    const idOrLabel = (e.label || e.id).toLowerCase();
+    return idOrLabel.includes("client") || idOrLabel.includes("sender");
+  });
+  const partyB = entityList.find((e) => {
+    const idOrLabel = (e.label || e.id).toLowerCase();
+    return idOrLabel.includes("server") || idOrLabel.includes("receiver");
+  });
+
+  if (partyA && partyB && partyA.id !== partyB.id) {
+    const posA = previousLayout?.get(partyA.id) ?? { x: origin.x, y: origin.y };
+    const posB = previousLayout?.get(partyB.id) ?? {
+      x: origin.x + 380,
+      y: origin.y,
+    };
+    positions.set(partyA.id, posA);
+    positions.set(partyB.id, posB);
+
+    let currentY = origin.y + 70;
+    for (const entity of entityList) {
+      if (entity.id === partyA.id || entity.id === partyB.id) continue;
+      const prevPos = previousLayout?.get(entity.id);
+      if (prevPos) {
+        positions.set(entity.id, prevPos);
+      } else {
+        positions.set(entity.id, {
+          x: (posA.x + posB.x) / 2 - 40,
+          y: currentY,
+        });
+        currentY += 60;
+      }
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: posA.x,
+        y: posA.y,
+        width: 380 + 140,
+        height: Math.max(160, currentY - origin.y + 40),
+      },
+    };
+  }
+
+  // 7. Generic / Arbitrary Concept Layout (Flow, Pipeline, Cycle, or DAG)
   // Handles completely arbitrary subjects (e.g. Refrigerator, Photosynthesis, HTTP, SQL)
   const inDegrees = new Map<string, number>();
   const outDegrees = new Map<string, number>();
@@ -1008,8 +1132,14 @@ export function computeSceneGraphLayout(
   }
 
   for (const rel of graph.relationships.values()) {
-    inDegrees.set(rel.targetEntityId, (inDegrees.get(rel.targetEntityId) ?? 0) + 1);
-    outDegrees.set(rel.sourceEntityId, (outDegrees.get(rel.sourceEntityId) ?? 0) + 1);
+    inDegrees.set(
+      rel.targetEntityId,
+      (inDegrees.get(rel.targetEntityId) ?? 0) + 1,
+    );
+    outDegrees.set(
+      rel.sourceEntityId,
+      (outDegrees.get(rel.sourceEntityId) ?? 0) + 1,
+    );
   }
 
   // Check for 4-node or closed cycle (e.g. Refrigerator compressor -> condenser -> expansion -> evaporator)
@@ -1027,10 +1157,15 @@ export function computeSceneGraphLayout(
     const cy = origin.y + radius;
 
     for (let i = 0; i < n; i++) {
-      const angle = (2 * Math.PI * i) / n - Math.PI / 2;
-      const x = cx + radius * Math.cos(angle) - 60;
-      const y = cy + radius * Math.sin(angle) - 30;
-      positions.set(entityList[i].id, { x, y });
+      const prevPos = previousLayout?.get(entityList[i].id);
+      if (prevPos) {
+        positions.set(entityList[i].id, prevPos);
+      } else {
+        const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+        const x = cx + radius * Math.cos(angle) - 60;
+        const y = cy + radius * Math.sin(angle) - 30;
+        positions.set(entityList[i].id, { x, y });
+      }
     }
 
     return {
@@ -1081,15 +1216,18 @@ export function computeSceneGraphLayout(
     const x = origin.x + rank * colWidth;
     for (let row = 0; row < ids.length; row++) {
       const id = ids[row];
-      // Layout stability: if entity had previous position and rank is unchanged, prefer stable position
+      // Layout stability: if entity had previous position, ALWAYS preserve it
       const prevPos = previousLayout?.get(id);
-      const y = origin.y + row * rowHeight;
-      const finalX = prevPos && Math.abs(prevPos.x - x) < 30 ? prevPos.x : x;
-      const finalY = prevPos && Math.abs(prevPos.y - y) < 30 ? prevPos.y : y;
-
-      positions.set(id, { x: finalX, y: finalY });
-      maxX = Math.max(maxX, finalX + 140);
-      maxY = Math.max(maxY, finalY + 70);
+      if (prevPos) {
+        positions.set(id, prevPos);
+        maxX = Math.max(maxX, prevPos.x + 140);
+        maxY = Math.max(maxY, prevPos.y + 70);
+      } else {
+        const y = origin.y + row * rowHeight;
+        positions.set(id, { x, y });
+        maxX = Math.max(maxX, x + 140);
+        maxY = Math.max(maxY, y + 70);
+      }
     }
   }
 

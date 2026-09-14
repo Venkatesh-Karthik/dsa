@@ -6,7 +6,10 @@
  */
 
 import { newElementWith } from "@excalidraw/element";
-import type { ExcalidrawElement, ExcalidrawTextElement } from "@excalidraw/element/types";
+import type {
+  ExcalidrawElement,
+  ExcalidrawTextElement,
+} from "@excalidraw/element/types";
 import type { SemanticEntity } from "../scene-graph";
 import type { LayoutPoint } from "../layout-engine";
 
@@ -22,6 +25,43 @@ import { TOKENS, mapSemanticStateToNodeTokens } from "./design-tokens";
 export interface RenderedPrimitive {
   primaryElement: ExcalidrawElement;
   allElements: ExcalidrawElement[];
+}
+
+/**
+ * Strips internal prefixes (e.g. container prefixes or machine IDs) and formats clean human-facing labels.
+ */
+export function sanitizeDisplayLabel(
+  rawVal: unknown,
+  fallbackLabel?: string,
+  rawId?: string,
+): string {
+  if (typeof rawVal === "string" || typeof rawVal === "number") {
+    const s = String(rawVal).trim();
+    if (s.length > 0 && !s.startsWith("Component ") && !s.startsWith("Node ")) {
+      return s;
+    }
+  }
+
+  const candidate = (fallbackLabel || rawId || "").trim();
+  if (!candidate) return "";
+
+  // If candidate is like 'avl-tree-n20' or 'tree-n30' or 'node_10'
+  const prefixMatch = candidate.match(/^(?:[a-zA-Z0-9_-]+[-_])(n?\d+|[A-Z])$/);
+  if (prefixMatch && prefixMatch[1]) {
+    const stripped = prefixMatch[1].replace(/^n/, "");
+    if (stripped) return stripped;
+  }
+
+  // Strip leading container names
+  const clean = candidate.replace(
+    /^(?:avl-tree|binary-tree|tree|graph|array|list|stack)[-_]/i,
+    "",
+  );
+  if (clean && !clean.startsWith("Component ")) {
+    return clean.replace(/^n(?=\d+)/, "");
+  }
+
+  return candidate;
 }
 
 /**
@@ -45,10 +85,7 @@ export function createVisualPrimitive(
         id: rawId,
         x: pos.x,
         y: pos.y,
-        value:
-          typeof entity.value === "string" || typeof entity.value === "number"
-            ? entity.value
-            : String(entity.value ?? entity.label ?? ""),
+        value: sanitizeDisplayLabel(entity.value, entity.label, rawId),
         highlight,
         diameter,
       });
@@ -59,11 +96,16 @@ export function createVisualPrimitive(
       const diameter =
         (entity.properties?.diameter as number | undefined) ??
         TOKENS.GEOMETRY.nodeDiameter;
+      const cleanLabel = sanitizeDisplayLabel(
+        entity.value,
+        entity.label,
+        rawId,
+      );
       primitive = createGraphNode({
         id: rawId,
         x: pos.x,
         y: pos.y,
-        label: entity.label ?? String(entity.value ?? ""),
+        label: cleanLabel,
         value: entity.value as string | number | undefined,
         highlight,
         diameter,
@@ -146,13 +188,14 @@ export function createVisualPrimitive(
 
     case "GenericEntity":
     default: {
-      const width =
-        (entity.properties?.width as number | undefined) ?? 120;
-      const height =
-        (entity.properties?.height as number | undefined) ?? 60;
+      const width = (entity.properties?.width as number | undefined) ?? 120;
+      const height = (entity.properties?.height as number | undefined) ?? 60;
       const shape =
-        (entity.properties?.shape as "rectangle" | "ellipse" | "diamond" | undefined) ??
-        "rectangle";
+        (entity.properties?.shape as
+          | "rectangle"
+          | "ellipse"
+          | "diamond"
+          | undefined) ?? "rectangle";
 
       primitive = createGenericEntity({
         id: rawId,
@@ -160,7 +203,7 @@ export function createVisualPrimitive(
         y: pos.y,
         width,
         height,
-        label: entity.label ?? String(entity.value ?? ""),
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
         shape,
         highlight,
         role: entity.semanticRole,
@@ -214,7 +257,7 @@ export function updateVisualPrimitive(
 
   const highlight = entity.properties?.highlight as string | undefined;
   const style = mapSemanticStateToNodeTokens(highlight);
-  const newText = entity.label ?? (entity.value != null ? String(entity.value) : undefined);
+  const newText = sanitizeDisplayLabel(entity.value, entity.label, entity.id);
 
   return existingElements.map((el) => {
     const updates: Record<string, unknown> = {
