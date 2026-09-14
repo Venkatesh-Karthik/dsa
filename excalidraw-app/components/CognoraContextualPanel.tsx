@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 import { IconSparkles } from "./CognoraIcons";
 
@@ -33,6 +33,21 @@ export interface ContextAction {
   onExecute: () => void;
 }
 
+export interface SelectedEntityQuickAction {
+  id: string;
+  label: string;
+  description?: string;
+  onClick: () => void;
+}
+
+export interface SelectedEntityIntelligence {
+  id: string;
+  label: string;
+  type?: string;
+  role?: string;
+  quickActions?: SelectedEntityQuickAction[];
+}
+
 export interface AnalyzeModel {
   title?: string;
   subtitle?: string;
@@ -43,6 +58,7 @@ export interface AnalyzeModel {
   properties?: ContextProperty[];
   resultSummary?: string;
   contextAction?: ContextAction;
+  selectedEntity?: SelectedEntityIntelligence;
 
   // Generic Interactive Parameter Controls
   hasInteractiveControls?: boolean;
@@ -119,6 +135,13 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
 }) => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("python");
   const [copied, setCopied] = useState<boolean>(false);
+
+  // Auto-fallback if activeTab is not permitted in capabilities
+  useEffect(() => {
+    if (capabilities.length > 0 && !capabilities.includes(activeTab)) {
+      onTabChange(capabilities[0] as PanelTabType);
+    }
+  }, [capabilities, activeTab, onTabChange]);
 
   const steps = analyzeData?.stepperSteps ?? [];
   const hasActiveLesson = steps.length > 0;
@@ -259,15 +282,101 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                     <div className="operation-tag">
                       {analyzeData.statusBadge || "Active Operation"}
                     </div>
-                    <div className="operation-name">{analyzeData.operation}</div>
+                    <div className="operation-name">
+                      {analyzeData.operation}
+                    </div>
                   </div>
                 )}
+
+                {/* Selected Object Intelligence Quick Actions */}
+                {analyzeData?.selectedEntity?.quickActions &&
+                  analyzeData.selectedEntity.quickActions.length > 0 && (
+                    <div
+                      style={{
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "12px",
+                        padding: "12px",
+                        marginBottom: "12px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.05em",
+                          color: "#64748b",
+                          marginBottom: "8px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <span>Focus: {analyzeData.selectedEntity.label}</span>
+                        {analyzeData.selectedEntity.role && (
+                          <span
+                            style={{
+                              background: "#e0f2fe",
+                              color: "#0369a1",
+                              padding: "1px 6px",
+                              borderRadius: "4px",
+                              fontSize: "10px",
+                              textTransform: "none",
+                            }}
+                          >
+                            {analyzeData.selectedEntity.role}
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "6px",
+                        }}
+                      >
+                        {analyzeData.selectedEntity.quickActions.map((qa) => (
+                          <button
+                            key={qa.id}
+                            type="button"
+                            style={{
+                              background: "#ffffff",
+                              border: "1px solid #cbd5e1",
+                              borderRadius: "6px",
+                              padding: "4px 8px",
+                              fontSize: "11px",
+                              fontWeight: 500,
+                              color: "#1e293b",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.borderColor = "#3b82f6";
+                              e.currentTarget.style.color = "#1d4ed8";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.borderColor = "#cbd5e1";
+                              e.currentTarget.style.color = "#1e293b";
+                            }}
+                            onClick={qa.onClick}
+                            title={qa.description}
+                          >
+                            {qa.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                 {/* Dynamic Contextual Metrics Grid */}
                 {analyzeData?.metrics && analyzeData.metrics.length > 0 && (
                   <div className="cognora-contextual-panel__metrics-grid">
                     {analyzeData.metrics.map((m, idx) => (
-                      <div key={idx} className="cognora-contextual-panel__metric-card">
+                      <div
+                        key={idx}
+                        className="cognora-contextual-panel__metric-card"
+                      >
                         <span className="metric-label">{m.label}</span>
                         <span className="metric-value">{m.value}</span>
                       </div>
@@ -279,7 +388,10 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                 {analyzeData?.properties && analyzeData.properties.length > 0 && (
                   <div className="cognora-contextual-panel__props-card">
                     {analyzeData.properties.map((p, idx) => (
-                      <div key={idx} className="cognora-contextual-panel__props-row">
+                      <div
+                        key={idx}
+                        className="cognora-contextual-panel__props-row"
+                      >
                         <span className="label">{p.label}:</span>
                         <span className="val">{p.value}</span>
                       </div>
@@ -319,7 +431,8 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                 )}
 
                 {/* Generic Interactive Parameter Controls */}
-                {(analyzeData?.hasInteractiveControls || analyzeData?.isDijkstra) && (
+                {(analyzeData?.hasInteractiveControls ||
+                  analyzeData?.isDijkstra) && (
                   <>
                     <div className="cognora-contextual-panel__inputs-row">
                       <div>
@@ -333,8 +446,19 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                               analyzeData?.onStartChange?.(e.target.value)
                             }
                           >
-                            {(analyzeData?.startNodes || ["A", "B", "C", "D", "E", "F"]).map((n) => (
-                              <option key={n} value={n}>{n}</option>
+                            {(
+                              analyzeData?.startNodes || [
+                                "A",
+                                "B",
+                                "C",
+                                "D",
+                                "E",
+                                "F",
+                              ]
+                            ).map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -351,8 +475,12 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                               analyzeData?.onDestChange?.(e.target.value)
                             }
                           >
-                            {(analyzeData?.destNodes || ["P", "K", "L", "M"]).map((n) => (
-                              <option key={n} value={n}>{n}</option>
+                            {(
+                              analyzeData?.destNodes || ["P", "K", "L", "M"]
+                            ).map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -371,7 +499,10 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                       >
                         <polygon points="5 3 19 12 5 21 5 3" />
                       </svg>
-                      <span>{analyzeData?.actionLabel || "Execute State Transformation"}</span>
+                      <span>
+                        {analyzeData?.actionLabel ||
+                          "Execute State Transformation"}
+                      </span>
                     </button>
 
                     <div
@@ -392,7 +523,9 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                       {analyzeData?.resultDistance !== undefined && (
                         <div className="cognora-contextual-panel__result-card-row">
                           <span className="label">Total distance:</span>
-                          <span className="val">{analyzeData.resultDistance}</span>
+                          <span className="val">
+                            {analyzeData.resultDistance}
+                          </span>
                         </div>
                       )}
                       {analyzeData?.resultEdges !== undefined && (

@@ -61,6 +61,7 @@ import {
 } from "./transformation-timeline";
 import { createSceneGraphFromActions } from "./scene-state";
 import { ConceptualJourneyOptimizer } from "./conceptual-journey-optimizer";
+import { resolveSemanticGrammar } from "./visual-grammar/grammar-resolver";
 
 export class UniversalConceptIntelligenceEngine {
   /**
@@ -1037,7 +1038,21 @@ export class UniversalConceptIntelligenceEngine {
           highlights: t.affectedEntities,
         };
       }),
-      capabilities: ["explain", "code", "analyze", "practice"],
+      capabilities: (() => {
+        const resolved = resolveSemanticGrammar(
+          world,
+          understanding.concept,
+          problem.intent,
+        );
+        const caps: string[] = ["explain", "analyze", "practice"];
+        const hasCodeSnippet = model.transformations.some(
+          (t) => !!t.codeSnippet,
+        );
+        if (resolved.isCodeRelevant || hasCodeSnippet) {
+          caps.push("code");
+        }
+        return caps;
+      })(),
     };
 
     (visualLesson as any).authoritativeModel = model;

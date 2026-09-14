@@ -20,6 +20,30 @@ export interface SemanticEntityPropertyMap {
   [key: string]: unknown;
 }
 
+export type UniversalSemanticRole =
+  | "ACTOR"
+  | "CONTAINER"
+  | "RESOURCE"
+  | "PROCESS"
+  | "MESSAGE"
+  | "STATE_NODE"
+  | "VARIABLE"
+  | "EQUATION"
+  | "ANNOTATION"
+  | "VALUE"
+  | "REFERENCE"
+  | string;
+
+export type UniversalRelationshipCategory =
+  | "FLOW"
+  | "DEPENDENCY"
+  | "REFERENCE"
+  | "CAUSE"
+  | "CONTAINS"
+  | "CONNECTS"
+  | "TRANSITIONS_TO"
+  | string;
+
 export interface Entity {
   /** Stable semantic identifier that persists across ALL state transitions */
   id: string;
@@ -33,8 +57,8 @@ export interface Entity {
   state?: string;
   /** Computational or educational value (e.g. 42, "200 OK", 0.05) */
   value?: unknown;
-  /** Semantic role within the system (e.g. 'root', 'pivot', 'source', 'target', 'accumulator') */
-  semanticRole?: string;
+  /** Semantic role within the system (e.g. 'root', 'pivot', 'source', 'target', 'accumulator', or UniversalSemanticRole) */
+  semanticRole?: UniversalSemanticRole;
   /** Extensible domain metadata */
   metadata?: Record<string, unknown>;
 }
@@ -101,6 +125,35 @@ export interface Goal {
   targetCondition: string;
   isSatisfied?: (state: SemanticState, history?: SemanticState[]) => boolean;
   evaluator?: (state: SemanticState, history?: SemanticState[]) => { satisfied: boolean; evidence?: string };
+}
+
+export interface SemanticCauseEffect {
+  cause: string;
+  effect: string;
+  mechanism?: string;
+  affectedEntities: string[];
+}
+
+export interface SemanticDependency {
+  id: string;
+  dependentEntityId: string;
+  prerequisiteEntityId: string;
+  reason?: string;
+}
+
+export interface SemanticEvent {
+  id: string;
+  title: string;
+  timestamp?: number;
+  trigger: string;
+  consequences: string[];
+}
+
+export interface SemanticObservation {
+  id: string;
+  statement: string;
+  stateIndex: number;
+  significance: string;
 }
 
 // ============================================================================

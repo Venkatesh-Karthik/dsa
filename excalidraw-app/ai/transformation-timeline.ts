@@ -37,7 +37,10 @@ import {
 
 import { computeSceneGraphLayout } from "./layout-engine";
 import { reconcileSceneState } from "./scene-reconciler";
-import { animateSceneTransition, cancelActiveSceneAnimation } from "./scene-animation";
+import {
+  animateSceneTransition,
+  cancelActiveSceneAnimation,
+} from "./scene-animation";
 import { focusOnElements } from "./ai-canvas";
 
 import type {
@@ -57,6 +60,7 @@ import {
   type TransformationValidationResult,
 } from "./transformation-validator";
 import type { AuthoritativeSemanticModel } from "./authoritative-model";
+import { resolveSemanticGrammar } from "./visual-grammar/grammar-resolver";
 
 export interface TransformationMeta {
   id: string;
@@ -87,13 +91,27 @@ export function compileAuthoritativeTimeline(
   const lessonId = model.id || "authoritative-lesson";
   const states: SceneState[] = [];
   const meta: TransformationMeta[] = [];
-  let previousLayoutPositions: Map<string, { x: number; y: number }> | undefined;
+  let previousLayoutPositions:
+    | Map<string, { x: number; y: number }>
+    | undefined;
 
-  const conceptType = (model.problem as any)?.concept || model.problem?.question || options?.prompt || "generic";
+  const rawConcept =
+    (model.problem as any)?.concept ||
+    model.problem?.question ||
+    options?.prompt ||
+    "generic";
+  const resolvedGrammar = resolveSemanticGrammar(
+    model.world,
+    rawConcept,
+    model.problem?.intent,
+  );
+  const conceptType = resolvedGrammar.type;
 
   for (let sIdx = 0; sIdx < model.states.length; sIdx++) {
     const semState = model.states[sIdx];
-    let stateRootId: string | undefined = semState.properties?.rootEntityId as string | undefined;
+    let stateRootId: string | undefined = semState.properties?.rootEntityId as
+      | string
+      | undefined;
     if (!stateRootId) {
       for (const ent of semState.entities.values()) {
         if (ent.semanticRole === "root") {
@@ -108,6 +126,7 @@ export function compileAuthoritativeTimeline(
       annotations: new Map(),
       metadata: {
         conceptType,
+        layoutStrategy: resolvedGrammar.layoutStrategy,
         title: semState.name || model.problem?.objective,
         rootEntityId: stateRootId,
       },
@@ -117,12 +136,44 @@ export function compileAuthoritativeTimeline(
     for (const [id, ent] of semState.entities.entries()) {
       let primType = ent.type;
       const lowerType = ent.type.toLowerCase();
+      const lowerLabel = (ent.label || ent.id).toLowerCase();
+      const lowerRole = (ent.semanticRole || "").toLowerCase();
+
       if (lowerType.includes("tree")) primType = "TreeNode";
       else if (lowerType.includes("graph")) primType = "GraphNode";
-      else if (lowerType.includes("array") || lowerType.includes("cell")) primType = "ArrayCell";
-      else if (lowerType.includes("list") || lowerType.includes("link")) primType = "LinkedListNode";
-      else if (lowerType.includes("stack") || lowerType.includes("frame")) primType = "StackFrame";
+      else if (lowerType.includes("array") || lowerType.includes("cell"))
+        primType = "ArrayCell";
+      else if (lowerType.includes("list") || lowerType.includes("link"))
+        primType = "LinkedListNode";
+      else if (lowerType.includes("stack") || lowerType.includes("frame"))
+        primType = "StackFrame";
       else if (lowerType.includes("queue")) primType = "GenericEntity";
+      else if (
+        lowerType.includes("client") ||
+        lowerLabel.includes("client") ||
+        lowerRole === "client"
+      )
+        primType = "Client";
+      else if (
+        lowerType.includes("server") ||
+        lowerLabel.includes("server") ||
+        lowerRole === "server"
+      )
+        primType = "Server";
+      else if (
+        lowerType.includes("packet") ||
+        lowerType.includes("message") ||
+        lowerRole === "message"
+      )
+        primType = "Packet";
+      else if (lowerType.includes("table") || lowerRole === "table")
+        primType = "DatabaseNode";
+      else if (lowerType.includes("state") || lowerRole === "state_node")
+        primType = "StateNode";
+      else if (lowerType.includes("process") || lowerRole === "process")
+        primType = "ProcessNode";
+      else if (lowerType.includes("memory") || lowerRole === "memory")
+        primType = "MemoryBlock";
 
       graph.entities.set(id, {
         id: ent.id,
@@ -148,7 +199,8 @@ export function compileAuthoritativeTimeline(
         type: rel.type,
         label: rel.label,
         properties: {
-          directed: rel.direction !== "none" && rel.direction !== "bidirectional",
+          directed:
+            rel.direction !== "none" && rel.direction !== "bidirectional",
           ...(rel.properties || {}),
           highlight: (rel.properties as any)?.highlight,
           color: (rel.properties as any)?.color,
@@ -171,7 +223,8 @@ export function compileAuthoritativeTimeline(
       meta.push({
         id: "initial",
         title: semState.name || model.problem?.objective || "Initial State",
-        explanation: semState.description || "Initial state of the verified concept.",
+        explanation:
+          semState.description || "Initial state of the verified concept.",
       });
     } else {
       const trans = model.transformations[sIdx - 1];
@@ -193,7 +246,10 @@ export function compileAuthoritativeTimeline(
 
   return {
     lessonId,
-    topic: (model.problem as any)?.concept || model.problem?.question || options?.prompt,
+    topic:
+      (model.problem as any)?.concept ||
+      model.problem?.question ||
+      options?.prompt,
     states,
     meta,
     currentIndex: 0,
@@ -214,8 +270,17 @@ export function compileVisualLesson(lesson: VisualLesson): CompiledTimeline {
     conceptType: lesson.concept || lesson.domain?.type,
   });
 
-  const initialLayout = computeSceneGraphLayout(initialGraph, { x: 140, y: 120 });
-  states.push(createSceneState(initialGraph, initialLayout.positions, initialLayout.bounds));
+  const initialLayout = computeSceneGraphLayout(initialGraph, {
+    x: 140,
+    y: 120,
+  });
+  states.push(
+    createSceneState(
+      initialGraph,
+      initialLayout.positions,
+      initialLayout.bounds,
+    ),
+  );
 
   // Initial step metadata
   meta.push({
@@ -299,9 +364,13 @@ export function compileAndValidateVisualLesson(
   timeline: CompiledTimeline;
   validation: TransformationValidationResult;
 } {
-  const model = (lesson as any).authoritativeModel as AuthoritativeSemanticModel | undefined;
+  const model = (lesson as any).authoritativeModel as
+    | AuthoritativeSemanticModel
+    | undefined;
   const rawTimeline = model
-    ? compileAuthoritativeTimeline(model, { prompt: options?.prompt || lesson.topic || lesson.title })
+    ? compileAuthoritativeTimeline(model, {
+        prompt: options?.prompt || lesson.topic || lesson.title,
+      })
     : compileVisualLesson(lesson);
 
   const validation = validateTransformationTimeline(rawTimeline, {
@@ -339,7 +408,10 @@ function applyOperationToGraph(
           properties: {
             ...(existing.properties || {}),
             ...(anyOp.properties || {}),
-            highlight: anyOp.style?.color ?? anyOp.properties?.highlight ?? existing.properties?.highlight,
+            highlight:
+              anyOp.style?.color ??
+              anyOp.properties?.highlight ??
+              existing.properties?.highlight,
           },
         });
       }
@@ -398,7 +470,10 @@ function applyOperationToGraph(
         graph.relationships.delete(relId);
       } else if (anyOp.from && anyOp.to) {
         for (const [id, r] of graph.relationships.entries()) {
-          if (r.sourceEntityId === anyOp.from && r.targetEntityId === anyOp.to) {
+          if (
+            r.sourceEntityId === anyOp.from &&
+            r.targetEntityId === anyOp.to
+          ) {
             graph.relationships.delete(id);
           }
         }
@@ -413,7 +488,8 @@ function applyOperationToGraph(
       if (target) {
         target.properties = {
           ...(target.properties || {}),
-          highlight: anyOp.color || anyOp.style?.color || anyOp.emphasis || "accent",
+          highlight:
+            anyOp.color || anyOp.style?.color || anyOp.emphasis || "accent",
         };
       }
       break;
@@ -487,7 +563,9 @@ function applyOperationToGraph(
             treeId,
             highlight: node.highlight ?? existing?.properties?.highlight,
             left: node.left ? normalizeEntityId(treeId, node.left) : undefined,
-            right: node.right ? normalizeEntityId(treeId, node.right) : undefined,
+            right: node.right
+              ? normalizeEntityId(treeId, node.right)
+              : undefined,
           },
         };
 
@@ -561,7 +639,10 @@ export async function renderTimelineStep(
     return;
   }
 
-  const clampedIndex = Math.max(0, Math.min(targetIndex, timeline.states.length - 1));
+  const clampedIndex = Math.max(
+    0,
+    Math.min(targetIndex, timeline.states.length - 1),
+  );
   const targetState = timeline.states[clampedIndex];
 
   const currentElements = excalidrawAPI.getSceneElementsIncludingDeleted();

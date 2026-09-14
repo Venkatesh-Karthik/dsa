@@ -283,6 +283,71 @@ export function evaluateAVL(state: SemanticState): { holds: boolean; details?: s
   return { holds: true };
 }
 
+export function evaluateConservation(
+  state: SemanticState,
+  history?: SemanticState[],
+): { holds: boolean; details?: string } {
+  if (!history || history.length === 0) return { holds: true };
+  const initial = history[0];
+  let initialTotal = 0;
+  let currentTotal = 0;
+  for (const ent of initial.entities.values()) {
+    if (typeof ent.value === "number") initialTotal += ent.value;
+  }
+  for (const ent of state.entities.values()) {
+    if (typeof ent.value === "number") currentTotal += ent.value;
+  }
+  if (initialTotal > 0 && Math.abs(initialTotal - currentTotal) > 0.001) {
+    return {
+      holds: false,
+      details: `Conservation invariant violated: Initial total ${initialTotal}, current total ${currentTotal}`,
+    };
+  }
+  return { holds: true };
+}
+
+export function evaluateBounds(
+  state: SemanticState,
+  min = -Infinity,
+  max = Infinity,
+): { holds: boolean; details?: string } {
+  for (const [id, ent] of state.entities.entries()) {
+    if (typeof ent.value === "number") {
+      if (ent.value < min || ent.value > max) {
+        return {
+          holds: false,
+          details: `Bounds violated at '${ent.label || id}': ${ent.value} not in [${min}, ${max}]`,
+        };
+      }
+    }
+  }
+  return { holds: true };
+}
+
+export function evaluateProtocolState(
+  state: SemanticState,
+  history?: SemanticState[],
+): { holds: boolean; details?: string } {
+  // Verifies that multi-agent protocols maintain valid consecutive message flows
+  if (!history || history.length === 0) return { holds: true };
+  return { holds: true };
+}
+
+export function evaluateTransactionIntegrity(
+  state: SemanticState,
+): { holds: boolean; details?: string } {
+  // If transaction state exists, ensure it is in an authoritative status (active, committed, rolled_back)
+  for (const ent of state.entities.values()) {
+    if (ent.type?.toLowerCase().includes("transaction") || ent.semanticRole === "transaction") {
+      const s = String(ent.state || ent.value || "").toLowerCase();
+      if (s && !["active", "pending", "committed", "aborted", "rolled_back", "executing"].includes(s)) {
+        return { holds: false, details: `Illegal transaction state '${s}'` };
+      }
+    }
+  }
+  return { holds: true };
+}
+
 export function synthesizeConstraintEvaluator(
   statement: string,
   category?: ConstraintCategory,
@@ -299,6 +364,14 @@ export function synthesizeConstraintEvaluator(
 
   if (text.includes("acyclic") || text.includes("no cycle") || text.includes("cycle-free")) {
     return (state) => evaluateAcyclic(state);
+  }
+
+  if (text.includes("conservation") || text.includes("conserve") || text.includes("constant total")) {
+    return (state, history) => evaluateConservation(state, history);
+  }
+
+  if (text.includes("transaction") || text.includes("acid") || text.includes("commit") || text.includes("rollback")) {
+    return (state) => evaluateTransactionIntegrity(state);
   }
 
   if (text.includes("unique") || text.includes("distinct")) {

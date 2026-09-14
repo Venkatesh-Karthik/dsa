@@ -213,6 +213,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const [selectedContext, setSelectedContext] = useState<
     SelectedSemanticElement[]
   >([]);
+  const [inspectedActionExplanation, setInspectedActionExplanation] = useState<{
+    title: string;
+    content: string;
+  } | null>(null);
   const [pendingInteraction, setPendingInteraction] =
     useState<CanvasInteractionDelta | null>(null);
   const [selectedStartNode, setSelectedStartNode] = useState<string>("A");
@@ -503,6 +507,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const handleNextTransformation = () => {
     setSelectedPracticeOption(null);
     setPracticeFeedback(null);
+    setInspectedActionExplanation(null);
     if (learnerSessionRef.current) {
       recordInteraction(learnerSessionRef.current, {
         action: "next",
@@ -515,6 +520,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const handlePreviousTransformation = () => {
     setSelectedPracticeOption(null);
     setPracticeFeedback(null);
+    setInspectedActionExplanation(null);
     if (learnerSessionRef.current) {
       recordInteraction(learnerSessionRef.current, {
         action: "prev",
@@ -530,6 +536,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const handleJumpTransformation = (targetIndex: number) => {
     setSelectedPracticeOption(null);
     setPracticeFeedback(null);
+    setInspectedActionExplanation(null);
     if (learnerSessionRef.current) {
       recordInteraction(learnerSessionRef.current, {
         action: "seek",
@@ -1420,6 +1427,116 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               })),
             ],
             resultSummary: `Preserves semantic invariants for ${inspected.label}`,
+            selectedEntity: {
+              id: inspected.id,
+              label: inspected.label,
+              type: inspected.type,
+              role: inspected.role,
+              quickActions: [
+                {
+                  id: "why",
+                  label: "Why is this here?",
+                  description: `Explain why ${inspected.label} is positioned here in Step ${currentStepNum}`,
+                  onClick: () => {
+                    const whyResult = UniversalConceptIntelligenceEngine.getWhy(
+                      activeIndex,
+                      authoritativeModel,
+                    );
+                    const text = whyResult
+                      ? `${whyResult.primaryCause}. Goal: ${whyResult.goalAdvanced}. ${whyResult.causalChainSummary}`
+                      : `${inspected.label} serves as an authoritative ${
+                          inspected.role || inspected.type
+                        } in step "${
+                          activeT?.title || `Step ${currentStepNum}`
+                        }".`;
+                    setInspectedActionExplanation({
+                      title: `Why is ${inspected.label} here?`,
+                      content: text,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+                {
+                  id: "what-does-it-do",
+                  label: "What does this do?",
+                  description: `Understand the semantic role of ${inspected.label}`,
+                  onClick: () => {
+                    const text = `${inspected.label} acts as ${
+                      inspected.role || inspected.type
+                    }. Connected to ${
+                      inspected.incomingConnections.length
+                    } inbound and ${
+                      inspected.outgoingConnections.length
+                    } outbound elements. State: ${
+                      inspected.state || "active"
+                    }.`;
+                    setInspectedActionExplanation({
+                      title: `Role of ${inspected.label}`,
+                      content: text,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+                {
+                  id: "what-changed",
+                  label: "What changed?",
+                  description: `Inspect what changed in Step ${currentStepNum}`,
+                  onClick: () => {
+                    const diffExp =
+                      UniversalConceptIntelligenceEngine.getWhatChanged(
+                        activeIndex,
+                        authoritativeModel,
+                      );
+                    const text = diffExp
+                      ? `${diffExp.whatChanged}. Why: ${diffExp.whyChanged}`
+                      : derivedWhatChanged ||
+                        `Step ${currentStepNum} transitioned the concept.`;
+                    setInspectedActionExplanation({
+                      title: `What changed in Step ${currentStepNum}?`,
+                      content: text,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+                {
+                  id: "what-if-remove",
+                  label: "What if I remove it?",
+                  description: `Simulate what happens if ${inspected.label} is altered or removed`,
+                  onClick: () => {
+                    const result =
+                      UniversalConceptIntelligenceEngine.evaluateWhatIf(
+                        {
+                          targetEntityId: inspected.id,
+                          propertyKey: "state",
+                          hypotheticalValue: "eliminated",
+                          description: `Remove ${inspected.label}`,
+                        },
+                        activeIndex,
+                        authoritativeModel,
+                      );
+                    const consequences =
+                      result.consequences.length > 0
+                        ? result.consequences.join(". ")
+                        : `Altering ${inspected.label} disrupts downstream dependencies.`;
+                    const violations =
+                      result.invariantViolations.length > 0
+                        ? ` Violated invariants: ${result.invariantViolations
+                            .map((v) => v.statement)
+                            .join("; ")}.`
+                        : "";
+                    setInspectedActionExplanation({
+                      title: `What if ${inspected.label} is removed?`,
+                      content: `${consequences}${violations}`,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+              ],
+            },
             stepperSteps,
             onSelectStep: (idx) => {
               playbackControllerRef.current?.seek(idx, true);
@@ -1471,6 +1588,69 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             resultSummary:
               inspected.nextChangeSummary ||
               "Entity remains stable in subsequent transformations.",
+            selectedEntity: {
+              id: inspected.id,
+              label: inspected.label,
+              type: inspected.type,
+              role: inspected.role,
+              quickActions: [
+                {
+                  id: "why",
+                  label: "Why is this here?",
+                  description: `Why ${inspected.label} is in step ${currentStepNum}`,
+                  onClick: () => {
+                    setInspectedActionExplanation({
+                      title: `Why is ${inspected.label} here?`,
+                      content: inspected.purposeInCurrentStep,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+                {
+                  id: "what-does-it-do",
+                  label: "What does this do?",
+                  description: `Role of ${inspected.label}`,
+                  onClick: () => {
+                    setInspectedActionExplanation({
+                      title: `Role of ${inspected.label}`,
+                      content: `${inspected.label} is a ${
+                        inspected.role || inspected.type
+                      }. State: ${inspected.state || "active"}.`,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+                {
+                  id: "what-changed",
+                  label: "What changed?",
+                  description: `What changed in this step`,
+                  onClick: () => {
+                    setInspectedActionExplanation({
+                      title: `What changed?`,
+                      content:
+                        derivedWhatChanged || inspected.purposeInCurrentStep,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+                {
+                  id: "what-if-remove",
+                  label: "What if I remove it?",
+                  description: `What if ${inspected.label} is removed`,
+                  onClick: () => {
+                    setInspectedActionExplanation({
+                      title: `What if ${inspected.label} is removed?`,
+                      content: `Removing ${inspected.label} invalidates current step transformations and breaks reference integrity.`,
+                    });
+                    setContextualTab("explain");
+                    setIsContextualPanelOpen(true);
+                  },
+                },
+              ],
+            },
             stepperSteps,
             onSelectStep: (idx) => {
               playbackControllerRef.current?.seek(idx, true);
@@ -1564,13 +1744,15 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
   const explainData: ExplainModel = {
     title:
+      inspectedActionExplanation?.title ||
       currentStepTitle ||
       (currentTopic
         ? `${currentTopic} (Step ${currentStepNum})`
         : "Visual Explanation"),
     explanation:
+      inspectedActionExplanation?.content ||
       currentExplanation ||
-      "Ask any algorithm or data structure question below to start a step-by-step visual lesson.",
+      "Ask any educational question below to start a step-by-step visual lesson.",
     calculations: currentCalculations,
     insight: currentInsight,
     whatChanged: derivedWhatChanged,
@@ -1868,18 +2050,19 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           suggestions={
             transformationLesson
               ? [
-                  "Explain this step",
-                  "Show the code implementation",
-                  "What is the time complexity?",
-                  "How do pointers transition?",
-                  "Walk through an edge case",
+                  "Explain this step in detail",
+                  "Why did this transition happen?",
+                  "What changed from previous step?",
+                  "What are the key invariants?",
+                  "Test my understanding with a quiz",
                 ]
               : [
                   "Explain Binary Search step by step",
-                  "Explain AVL Tree Rotations",
-                  "Explain Linked List Insertion",
-                  "Explain Recursion and Call Stack",
-                  "Explain Graph BFS Traversal",
+                  "Explain TCP Three-Way Handshake",
+                  "Explain Database ACID Transactions",
+                  "Explain How a Refrigerator Works",
+                  "Explain Photosynthesis",
+                  "Explain Transformer Self-Attention",
                 ]
           }
           onSuggestionClick={(s) => handleSubmit(s, "suggestion_pill_click")}

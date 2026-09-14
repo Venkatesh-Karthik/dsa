@@ -98,11 +98,43 @@ export function formalizeProblem(
     "Final state satisfies the problem objective",
   ];
 
-  const objective =
-    proposal?.objective ||
-    `Understand and visualize ${understanding.concept}${
-      understanding.requestedOperation ? ` through ${understanding.requestedOperation}` : ""
-    }`;
+  let defaultObjective = `Understand and visualize ${understanding.concept}${
+    understanding.requestedOperation ? ` through ${understanding.requestedOperation}` : ""
+  }`;
+
+  switch (understanding.userIntent) {
+    case "WHY_HOW":
+      defaultObjective = `Understand the causal necessity and underlying reasons for ${understanding.concept}`;
+      break;
+    case "MECHANISM":
+      defaultObjective = `Understand the step-by-step internal mechanism and data flow of ${understanding.concept}`;
+      break;
+    case "DEFINITION":
+      defaultObjective = `Understand the fundamental definition, properties, and role of ${understanding.concept}`;
+      break;
+    case "COMPARE":
+      defaultObjective = `Compare and contrast the structural behaviors and tradeoffs of ${understanding.concept}`;
+      break;
+    case "DERIVE":
+    case "PROVE":
+      defaultObjective = `Formally derive and verify the correctness of ${understanding.concept}`;
+      break;
+    case "WHAT_IF":
+      defaultObjective = `Analyze the counterfactual consequences and behavioral shift in ${understanding.concept}`;
+      break;
+    case "DEBUG":
+      defaultObjective = `Isolate the failure cause and restore correct invariants in ${understanding.concept}`;
+      break;
+    case "SIMULATE":
+    case "TRACE":
+      defaultObjective = `Step-by-step execution and state tracking of ${understanding.concept}`;
+      break;
+    case "ARCHITECTURE":
+      defaultObjective = `Analyze the architectural topology and component interactions of ${understanding.concept}`;
+      break;
+  }
+
+  const objective = proposal?.objective || defaultObjective;
 
   return {
     id,

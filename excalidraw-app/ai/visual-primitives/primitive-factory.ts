@@ -35,9 +35,17 @@ export function sanitizeDisplayLabel(
   fallbackLabel?: string,
   rawId?: string,
 ): string {
+  // If rawVal is a valid string/number that isn't an internal machine ID
   if (typeof rawVal === "string" || typeof rawVal === "number") {
     const s = String(rawVal).trim();
-    if (s.length > 0 && !s.startsWith("Component ") && !s.startsWith("Node ")) {
+    if (
+      s.length > 0 &&
+      !s.startsWith("Component ") &&
+      !s.startsWith("Node ") &&
+      !/^(?:dll[-_]e\d+|t\d+[-_]op\d+|node[-_]\d+|ent[-_]|elem[-_]|item[-_])/i.test(
+        s,
+      )
+    ) {
       return s;
     }
   }
@@ -45,16 +53,28 @@ export function sanitizeDisplayLabel(
   const candidate = (fallbackLabel || rawId || "").trim();
   if (!candidate) return "";
 
-  // If candidate is like 'avl-tree-n20' or 'tree-n30' or 'node_10'
-  const prefixMatch = candidate.match(/^(?:[a-zA-Z0-9_-]+[-_])(n?\d+|[A-Z])$/);
-  if (prefixMatch && prefixMatch[1]) {
-    const stripped = prefixMatch[1].replace(/^n/, "");
-    if (stripped) return stripped;
-  }
+  // Check for common machine patterns:
+  // dll-e1, dll-0, dll-node-1 -> "1"
+  const dllMatch = candidate.match(/^dll[-_](?:e|node[-_]?)?(\d+)$/i);
+  if (dllMatch) return dllMatch[1];
 
-  // Strip leading container names
+  // Client/Server
+  if (/^(?:tcp[-_]|network[-_]|app[-_])?client(?:[-_]\w+)?$/i.test(candidate))
+    return "Client";
+  if (/^(?:tcp[-_]|network[-_]|app[-_])?server(?:[-_]\w+)?$/i.test(candidate))
+    return "Server";
+
+  // Single capital letter like 'A', 'B', 'C'
+  const letterMatch = candidate.match(/^(?:[a-zA-Z0-9_-]+[-_])([A-Z])$/);
+  if (letterMatch && letterMatch[1]) return letterMatch[1];
+
+  // tree-n30, avl-tree-n20, node-30, n30 -> "30"
+  const nodeMatch = candidate.match(/^(?:[a-zA-Z0-9_-]+[-_])?n?(\d+)$/);
+  if (nodeMatch && nodeMatch[1]) return nodeMatch[1];
+
+  // Strip leading container/machine names
   const clean = candidate.replace(
-    /^(?:avl-tree|binary-tree|tree|graph|array|list|stack)[-_]/i,
+    /^(?:avl[-_]tree|binary[-_]tree|tree|graph|array|list|stack|queue|dll|sll|table|db|entity|item|elem|node)[-_]/i,
     "",
   );
   if (clean && !clean.startsWith("Component ")) {
@@ -182,6 +202,146 @@ export function createVisualPrimitive(
         title,
         highlight,
         role: entity.semanticRole ?? "annotation",
+      });
+      break;
+    }
+
+    case "Client":
+    case "ClientNode": {
+      const width = (entity.properties?.width as number | undefined) ?? 120;
+      const height = (entity.properties?.height as number | undefined) ?? 60;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, "Client"),
+        shape: "rectangle",
+        highlight,
+        role: "client",
+      });
+      break;
+    }
+
+    case "Server":
+    case "ServerNode": {
+      const width = (entity.properties?.width as number | undefined) ?? 120;
+      const height = (entity.properties?.height as number | undefined) ?? 60;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, "Server"),
+        shape: "rectangle",
+        highlight,
+        role: "server",
+      });
+      break;
+    }
+
+    case "Actor": {
+      const width = (entity.properties?.width as number | undefined) ?? 110;
+      const height = (entity.properties?.height as number | undefined) ?? 54;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: "actor",
+      });
+      break;
+    }
+
+    case "Packet":
+    case "Message": {
+      const width = (entity.properties?.width as number | undefined) ?? 90;
+      const height = (entity.properties?.height as number | undefined) ?? 36;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight: highlight || "accent",
+        role: "message",
+      });
+      break;
+    }
+
+    case "StateNode": {
+      const diameter =
+        (entity.properties?.diameter as number | undefined) ?? 60;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width: diameter,
+        height: diameter,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "ellipse",
+        highlight,
+        role: "state_node",
+      });
+      break;
+    }
+
+    case "DatabaseNode":
+    case "Table": {
+      const width = (entity.properties?.width as number | undefined) ?? 130;
+      const height = (entity.properties?.height as number | undefined) ?? 70;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: "database",
+      });
+      break;
+    }
+
+    case "ProcessNode": {
+      const width = (entity.properties?.width as number | undefined) ?? 130;
+      const height = (entity.properties?.height as number | undefined) ?? 50;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: "process",
+      });
+      break;
+    }
+
+    case "MemoryBlock": {
+      const width = (entity.properties?.width as number | undefined) ?? 120;
+      const height = (entity.properties?.height as number | undefined) ?? 40;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: "memory",
       });
       break;
     }
