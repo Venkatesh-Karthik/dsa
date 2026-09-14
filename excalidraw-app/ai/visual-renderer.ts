@@ -79,7 +79,7 @@ import type {
   TreeNodeInput,
   GraphNodeInput,
   GraphEdgeInput,
-  LayoutBounds
+  LayoutBounds,
 } from "./layout-engine";
 
 import {
@@ -249,8 +249,6 @@ export function getBottom(bounds: BoundingBox): { x: number; y: number } {
     y: bounds.y + bounds.height,
   };
 }
-
-
 
 export interface BoundingBox {
   x: number;
@@ -757,7 +755,12 @@ function renderCreateBox(
     fillStyle: action.style?.fill ? mapFillStyle(action.style.fill) : undefined,
   });
 
-  context.register(action.id, primitive.primaryElement, primitive.allElements.find(e => e.type === "text") as any, primitive.allElements);
+  context.register(
+    action.id,
+    primitive.primaryElement,
+    primitive.allElements.find((e) => e.type === "text") as any,
+    primitive.allElements,
+  );
   return primitive.allElements;
 }
 
@@ -797,7 +800,12 @@ function renderCreateCircle(
     fillStyle: action.style?.fill ? mapFillStyle(action.style.fill) : undefined,
   });
 
-  context.register(action.id, primitive.primaryElement, primitive.allElements.find(e => e.type === "text") as any, primitive.allElements);
+  context.register(
+    action.id,
+    primitive.primaryElement,
+    primitive.allElements.find((e) => e.type === "text") as any,
+    primitive.allElements,
+  );
   return primitive.allElements;
 }
 
@@ -819,9 +827,11 @@ function renderCreateText(
     estHeight,
     action.position,
   );
-  
+
   const isTitle = action.role === "title" || action.role === "heading";
-  const fontFamily = isTitle ? TOKENS.TYPOGRAPHY.Title.fontFamily : FONT_FAMILY.SANS;
+  const fontFamily = isTitle
+    ? TOKENS.TYPOGRAPHY.Title.fontFamily
+    : FONT_FAMILY.SANS;
   const textColor = TOKENS.NODE.DEFAULT.textPrimary;
 
   const textEl = newTextElement({
@@ -977,7 +987,6 @@ function renderHighlight(
   context.addOverlayElements(elements);
   return elements;
 }
-
 
 function renderDelete(
   action: DeleteAction,
@@ -1227,12 +1236,11 @@ function renderCreateArray(
     elements.push(indexLabel);
 
     // Register the per-element record
-    context.register(
-      `${action.id}-${i}`,
+    context.register(`${action.id}-${i}`, boundRect, valueText, [
       boundRect,
       valueText,
-      [boundRect, valueText, indexLabel],
-    );
+      indexLabel,
+    ]);
   }
 
   // Register the full-array record spanning all elements
@@ -1263,7 +1271,9 @@ function renderCreateArray(
   const metadata: ExcalidrawElement[] = [arrayContainer];
   if (action.label && elements.length > 0) {
     // find titleEl in elements since we don't have it in scope
-    const title = elements.find((e) => (e.customData as any)?.dslId === `${action.id}-title`);
+    const title = elements.find(
+      (e) => (e.customData as any)?.dslId === `${action.id}-title`,
+    );
     if (title) metadata.push(title);
   }
 
@@ -1276,7 +1286,6 @@ function renderCreateArray(
   return elements;
 }
 
-
 function renderCreateLinkedList(
   action: CreateLinkedListAction,
   context: RenderContext,
@@ -1287,7 +1296,7 @@ function renderCreateLinkedList(
     ARRAY_ELEMENT_GAP: GAP,
     ARRAY_LABEL_OFFSET: LBL_OFF,
   } = LAYOUT;
-  
+
   const NODE_GAP = GAP + 40; // Space for arrows
 
   const elements: ExcalidrawElement[] = [];
@@ -1311,7 +1320,7 @@ function renderCreateLinkedList(
     });
     elements.push(titleEl);
   }
-  
+
   if (n === 0) return elements;
 
   let lastNodeX = originX;
@@ -1368,14 +1377,23 @@ function renderCreateLinkedList(
 
     elements.push(boundRect, valueText);
     nodeElements.push(boundRect);
-    context.register(`${action.id}-${i}`, boundRect, valueText, [boundRect, valueText]);
+    context.register(`${action.id}-${i}`, boundRect, valueText, [
+      boundRect,
+      valueText,
+    ]);
+    if ((el as any).id) {
+      context.register(`${action.id}-${(el as any).id}`, boundRect, valueText, [
+        boundRect,
+        valueText,
+      ]);
+    }
 
     if (i < n - 1) {
       const arrowStartX = cellX + W;
       const arrowEndX = arrowStartX + NODE_GAP;
       const arrowY = cellY + H / 2;
       const dx = arrowEndX - arrowStartX;
-      
+
       const arrow = newArrowElement({
         type: "arrow",
         x: arrowStartX,
@@ -1408,7 +1426,7 @@ function renderCreateLinkedList(
     strokeColor: "#868e96",
     customData: { dslId: `${action.id}-null` },
   });
-  
+
   const lastArrowStartX = lastNodeX + W;
   const dx = nullX - lastArrowStartX - 10;
   const lastArrow = newArrowElement({
@@ -1425,7 +1443,7 @@ function renderCreateLinkedList(
     roughness: 0,
     customData: { dslId: `${action.id}-edge-null` },
   });
-  
+
   elements.push(nullText, lastArrow);
   context.register(`${action.id}-null`, nullText, nullText, [nullText]);
 
@@ -1458,7 +1476,12 @@ function renderCreateStack(
   action: CreateStackAction,
   context: RenderContext,
 ): ExcalidrawElement[] {
-  const { STACK_ELEMENT_WIDTH: W, STACK_ELEMENT_HEIGHT: H, STACK_GAP: GAP, ARRAY_LABEL_OFFSET: LBL_OFF } = LAYOUT;
+  const {
+    STACK_ELEMENT_WIDTH: W,
+    STACK_ELEMENT_HEIGHT: H,
+    STACK_GAP: GAP,
+    ARRAY_LABEL_OFFSET: LBL_OFF,
+  } = LAYOUT;
   const elements: ExcalidrawElement[] = [];
   const n = action.elements.length;
 
@@ -1530,7 +1553,10 @@ function renderCreateStack(
     });
 
     elements.push(boundRect, valueText);
-    context.register(`${action.id}-${i}`, boundRect, valueText, [boundRect, valueText]);
+    context.register(`${action.id}-${i}`, boundRect, valueText, [
+      boundRect,
+      valueText,
+    ]);
   }
 
   const totalHeight = n * H + Math.max(0, n - 1) * GAP;
@@ -1558,7 +1584,7 @@ function renderCreateStack(
       id: `${action.id}-top-ptr`,
       label: "TOP",
       target: `${action.id}-0`,
-      placement: "right"
+      placement: "right",
     };
     elements.push(...renderAnnotatePointer(pointerAction, context));
   }
@@ -1593,21 +1619,24 @@ function renderCreateTree(
     elements.push(titleEl);
   }
 
-  const nodeMap = new Map(action.nodes.map(n => [n.id, n]));
-  const layoutNodes: TreeNodeInput[] = action.nodes.map(n => ({
+  const nodeMap = new Map(action.nodes.map((n) => [n.id, n]));
+  const layoutNodes: TreeNodeInput[] = action.nodes.map((n) => ({
     id: n.id,
     value: n.value,
-    children: n.children || [n.left, n.right].filter(Boolean) as string[]
+    children: n.children || ([n.left, n.right].filter(Boolean) as string[]),
   }));
 
-  const layout = computeTreeLayout(layoutNodes, action.root, { x: originX, y: originY });
+  const layout = computeTreeLayout(layoutNodes, action.root, {
+    x: originX,
+    y: originY,
+  });
 
   const renderedNodes = new Map<string, ExcalidrawElement>();
 
   for (const [lnId, pos] of layout.positions) {
     const nodeDef = nodeMap.get(lnId);
     if (!nodeDef) continue;
-    
+
     const color = highlightToColor(nodeDef.highlight);
     const strokeColor = mapStrokeColor(color);
     const backgroundColor = color ? mapBackgroundColor(color) : "#ffffff";
@@ -1654,7 +1683,10 @@ function renderCreateTree(
     });
 
     elements.push(boundCircle, valueText);
-    context.register(`${action.id}-${lnId}`, boundCircle, valueText, [boundCircle, valueText]);
+    context.register(`${action.id}-${lnId}`, boundCircle, valueText, [
+      boundCircle,
+      valueText,
+    ]);
     renderedNodes.set(lnId, boundCircle);
   }
 
@@ -1664,16 +1696,28 @@ function renderCreateTree(
     const parentEl = renderedNodes.get(lnId);
     if (!parentEl) continue;
 
-    const children = nodeDef.children || [nodeDef.left, nodeDef.right].filter(Boolean) as string[];
+    const children =
+      nodeDef.children ||
+      ([nodeDef.left, nodeDef.right].filter(Boolean) as string[]);
     for (const childId of children) {
       const childEl = renderedNodes.get(childId);
       if (!childEl) continue;
-      
+
       const { startX, startY, endX, endY } = computeConnectionPoints(
-        { x: parentEl.x, y: parentEl.y, width: parentEl.width, height: parentEl.height },
-        { x: childEl.x, y: childEl.y, width: childEl.width, height: childEl.height }
+        {
+          x: parentEl.x,
+          y: parentEl.y,
+          width: parentEl.width,
+          height: parentEl.height,
+        },
+        {
+          x: childEl.x,
+          y: childEl.y,
+          width: childEl.width,
+          height: childEl.height,
+        },
       );
-      
+
       const dx = endX - startX;
       const dy = endY - startY;
 
@@ -1745,11 +1789,11 @@ function renderCreateGraph(
     elements.push(titleEl);
   }
 
-  const layoutNodes: GraphNodeInput[] = action.nodes.map(n => ({
+  const layoutNodes: GraphNodeInput[] = action.nodes.map((n) => ({
     id: n.id,
     label: n.label,
   }));
-  const layoutEdges: GraphEdgeInput[] = action.edges.map(e => ({
+  const layoutEdges: GraphEdgeInput[] = action.edges.map((e) => ({
     from: e.from,
     to: e.to,
     weight: e.weight,
@@ -1757,14 +1801,17 @@ function renderCreateGraph(
     directed: e.directed,
   }));
 
-  const layout = computeGraphLayout(layoutNodes, layoutEdges, { x: originX, y: originY });
-  const nodeMap = new Map(action.nodes.map(n => [n.id, n]));
+  const layout = computeGraphLayout(layoutNodes, layoutEdges, {
+    x: originX,
+    y: originY,
+  });
+  const nodeMap = new Map(action.nodes.map((n) => [n.id, n]));
   const renderedNodes = new Map<string, ExcalidrawElement>();
 
   for (const [lnId, pos] of layout.positions) {
     const nodeDef = nodeMap.get(lnId);
     if (!nodeDef) continue;
-    
+
     const color = highlightToColor(nodeDef.highlight);
     const strokeColor = mapStrokeColor(color);
     const backgroundColor = color ? mapBackgroundColor(color) : "#ffffff";
@@ -1808,7 +1855,10 @@ function renderCreateGraph(
     });
 
     elements.push(boundCircle, valueText);
-    context.register(`${action.id}-${lnId}`, boundCircle, valueText, [boundCircle, valueText]);
+    context.register(`${action.id}-${lnId}`, boundCircle, valueText, [
+      boundCircle,
+      valueText,
+    ]);
     renderedNodes.set(lnId, boundCircle);
   }
 
@@ -1819,9 +1869,9 @@ function renderCreateGraph(
 
     const { startX, startY, endX, endY } = computeConnectionPoints(
       { x: fromEl.x, y: fromEl.y, width: fromEl.width, height: fromEl.height },
-      { x: toEl.x, y: toEl.y, width: toEl.width, height: toEl.height }
+      { x: toEl.x, y: toEl.y, width: toEl.width, height: toEl.height },
     );
-    
+
     const dx = endX - startX;
     const dy = endY - startY;
 
@@ -1853,7 +1903,9 @@ function renderCreateGraph(
     });
     elements.push(arrow);
 
-    const edgeLabel = edge.label || (edge.weight !== undefined ? String(edge.weight) : undefined);
+    const edgeLabel =
+      edge.label ||
+      (edge.weight !== undefined ? String(edge.weight) : undefined);
     if (edgeLabel) {
       const midX = startX + dx / 2;
       const midY = startY + dy / 2;
@@ -1866,7 +1918,9 @@ function renderCreateGraph(
         textAlign: "center",
         verticalAlign: "middle",
         strokeColor,
-        customData: { dslId: `${action.id}-edge-${edge.from}-${edge.to}-label` },
+        customData: {
+          dslId: `${action.id}-edge-${edge.from}-${edge.to}-label`,
+        },
       });
       elements.push(textEl);
     }
@@ -1902,16 +1956,21 @@ function renderCreateMatrix(
   action: CreateMatrixAction,
   context: RenderContext,
 ): ExcalidrawElement[] {
-  const { ARRAY_ELEMENT_WIDTH: W, ARRAY_ELEMENT_HEIGHT: H, ARRAY_ELEMENT_GAP: GAP } = LAYOUT;
+  const {
+    ARRAY_ELEMENT_WIDTH: W,
+    ARRAY_ELEMENT_HEIGHT: H,
+    ARRAY_ELEMENT_GAP: GAP,
+  } = LAYOUT;
   const elements: ExcalidrawElement[] = [];
   const titleHeight = action.label ? LAYOUT.ARRAY_LABEL_OFFSET : 0;
-  
+
   const hasRowHeaders = action.rowHeaders && action.rowHeaders.length > 0;
   const hasColHeaders = action.colHeaders && action.colHeaders.length > 0;
-  
+
   const headerOffset = 40;
   const originX = context.cursor.x + (hasRowHeaders ? headerOffset : 0);
-  const originY = context.cursor.y + titleHeight + (hasColHeaders ? headerOffset : 0);
+  const originY =
+    context.cursor.y + titleHeight + (hasColHeaders ? headerOffset : 0);
 
   if (action.label) {
     const titleEl = newTextElement({
@@ -1930,8 +1989,11 @@ function renderCreateMatrix(
 
   const numRows = action.rows.length;
   const numCols = numRows > 0 ? action.rows[0].length : 0;
-  
-  const layout = computeGridLayout(numRows, numCols, { x: originX, y: originY });
+
+  const layout = computeGridLayout(numRows, numCols, {
+    x: originX,
+    y: originY,
+  });
 
   if (hasColHeaders) {
     for (let c = 0; c < numCols; c++) {
@@ -1973,14 +2035,16 @@ function renderCreateMatrix(
     }
   }
 
-  const highlights = new Map(action.highlights?.map(h => [`${h.row}-${h.col}`, h.color]));
+  const highlights = new Map(
+    action.highlights?.map((h) => [`${h.row}-${h.col}`, h.color]),
+  );
 
   for (const [key, pos] of layout.cellPositions) {
     const parts = key.split("-");
     const row = parseInt(parts[0], 10);
     const col = parseInt(parts[1], 10);
     const value = action.rows[row]?.[col] ?? "";
-    
+
     const highlight = highlights.get(`${row}-${col}`);
     const color = highlightToColor(highlight);
     const strokeColor = mapStrokeColor(color);
@@ -2027,7 +2091,10 @@ function renderCreateMatrix(
     });
 
     elements.push(boundRect, valueText);
-    context.register(`${action.id}-${row}-${col}`, boundRect, valueText, [boundRect, valueText]);
+    context.register(`${action.id}-${row}-${col}`, boundRect, valueText, [
+      boundRect,
+      valueText,
+    ]);
   }
 
   const bounds = layout.bounds;
@@ -2050,7 +2117,8 @@ function renderCreateMatrix(
   const metadata: ExcalidrawElement[] = [matrixContainer];
   context.register(action.id, matrixContainer, undefined, metadata);
 
-  context.cursor.x = originX + (bounds.width || W) + context.options.horizontalGap;
+  context.cursor.x =
+    originX + (bounds.width || W) + context.options.horizontalGap;
 
   return elements;
 }
@@ -2107,10 +2175,7 @@ export function renderAnnotatePointer(
       y: arrowStartY,
       width: 1,
       height: Math.max(Math.abs(dy), 1),
-      points: [
-        pointFrom<LocalPoint>(0, 0),
-        pointFrom<LocalPoint>(0, dy),
-      ],
+      points: [pointFrom<LocalPoint>(0, 0), pointFrom<LocalPoint>(0, dy)],
       startArrowhead: null,
       endArrowhead: "arrow",
       strokeColor,
@@ -2144,10 +2209,7 @@ export function renderAnnotatePointer(
       y: arrowStartY,
       width: 1,
       height: Math.max(Math.abs(dy), 1),
-      points: [
-        pointFrom<LocalPoint>(0, 0),
-        pointFrom<LocalPoint>(0, dy),
-      ],
+      points: [pointFrom<LocalPoint>(0, 0), pointFrom<LocalPoint>(0, dy)],
       startArrowhead: null,
       endArrowhead: "arrow",
       strokeColor,
@@ -2181,10 +2243,7 @@ export function renderAnnotatePointer(
       y: targetCenterY,
       width: Math.max(Math.abs(dx), 1),
       height: 1,
-      points: [
-        pointFrom<LocalPoint>(0, 0),
-        pointFrom<LocalPoint>(dx, 0),
-      ],
+      points: [pointFrom<LocalPoint>(0, 0), pointFrom<LocalPoint>(dx, 0)],
       startArrowhead: null,
       endArrowhead: "arrow",
       strokeColor,
@@ -2204,7 +2263,7 @@ export function renderAnnotatePointer(
       strokeColor,
       customData: { dslId: `${action.id}-label` },
     });
-    
+
     elements.push(arrowEl, labelEl);
     context.register(action.id, arrowEl, labelEl, elements);
   } else if (action.placement === "right") {
@@ -2218,10 +2277,7 @@ export function renderAnnotatePointer(
       y: targetCenterY,
       width: Math.max(Math.abs(dx), 1),
       height: 1,
-      points: [
-        pointFrom<LocalPoint>(0, 0),
-        pointFrom<LocalPoint>(dx, 0),
-      ],
+      points: [pointFrom<LocalPoint>(0, 0), pointFrom<LocalPoint>(dx, 0)],
       startArrowhead: null,
       endArrowhead: "arrow",
       strokeColor,
@@ -2294,7 +2350,9 @@ export function renderCreateExplanationBlock(
 
   // 1. Title & Step Badge text
   const stepBadge = action.stepNumber
-    ? `Step ${action.stepNumber}${action.totalSteps ? ` of ${action.totalSteps}` : ""}: `
+    ? `Step ${action.stepNumber}${
+        action.totalSteps ? ` of ${action.totalSteps}` : ""
+      }: `
     : "";
   const titleTextStr = `${stepBadge}${action.title}`;
 

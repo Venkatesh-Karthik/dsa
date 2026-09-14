@@ -1083,12 +1083,42 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       const isStructuredOutput =
         errCode === "STRUCTURED_OUTPUT_ERROR" ||
         errCode === "SCHEMA_ERROR" ||
-        errCode === "VALIDATION_ERROR" ||
+        errCode === "PARSE_ERROR" ||
+        errCode === "CONTRACT_ERROR" ||
         errCode === "INVALID_RESPONSE" ||
         rawMsg.includes("Visual DSL") ||
         rawMsg.includes("schema") ||
         rawMsg.includes("Invalid JSON") ||
         rawMsg.includes("parse");
+
+      const isOptimization =
+        errCode === "OPTIMIZATION_ERROR" ||
+        rawMsg.includes("optimization") ||
+        rawMsg.includes("optimizer") ||
+        rawMsg.includes("milestone");
+
+      const isSemanticValidation =
+        errCode === "SEMANTIC_VALIDATION_ERROR" ||
+        rawMsg.includes("invariant") ||
+        rawMsg.includes("violates invariant") ||
+        rawMsg.includes("Lesson validation failed") ||
+        rawMsg.includes("Final scene state is identical") ||
+        rawMsg.includes("semantic entities");
+
+      const isTransformation =
+        errCode === "TRANSFORMATION_ERROR" ||
+        rawMsg.includes("transformation") ||
+        rawMsg.includes("operation");
+
+      const isLayout = errCode === "LAYOUT_ERROR" || rawMsg.includes("layout");
+
+      const isVisualProjection =
+        errCode === "VISUAL_PROJECTION_ERROR" || rawMsg.includes("projection");
+
+      const isRender =
+        errCode === "RENDER_ERROR" ||
+        rawMsg.includes("Render invariant failed") ||
+        rawMsg.includes("Scene contains 0 rendered elements");
 
       const isTimeout =
         errCode === "TIMEOUT" ||
@@ -1136,6 +1166,24 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       } else if (isStructuredOutput) {
         errCode = "STRUCTURED_OUTPUT_ERROR";
         friendlyError = "Visual lesson formatting error. Please try again.";
+      } else if (isOptimization) {
+        errCode = "OPTIMIZATION_ERROR";
+        friendlyError = "Visual lesson optimization error. Please try again.";
+      } else if (isSemanticValidation) {
+        errCode = "SEMANTIC_VALIDATION_ERROR";
+        friendlyError = "Visual lesson validation error. Please try again.";
+      } else if (isTransformation) {
+        errCode = "TRANSFORMATION_ERROR";
+        friendlyError = "Transformation sequence error. Please try again.";
+      } else if (isLayout) {
+        errCode = "LAYOUT_ERROR";
+        friendlyError = "Visual lesson layout error. Please try again.";
+      } else if (isVisualProjection) {
+        errCode = "VISUAL_PROJECTION_ERROR";
+        friendlyError = "Visual lesson projection error. Please try again.";
+      } else if (isRender) {
+        errCode = "RENDER_ERROR";
+        friendlyError = "Canvas render error. Please try again.";
       } else if (isProviderUnavailable) {
         errCode = "PROVIDER_UNAVAILABLE";
         friendlyError =

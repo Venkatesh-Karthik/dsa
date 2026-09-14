@@ -190,7 +190,9 @@ export function validateTeachingRequest(
 /**
  * Generically normalizes raw color names, hex codes, or casing to valid SemanticColors.
  */
-export function normalizeSemanticColor(raw: unknown): SemanticColor | undefined {
+export function normalizeSemanticColor(
+  raw: unknown,
+): SemanticColor | undefined {
   if (raw === undefined || raw === null) {
     return undefined;
   }
@@ -324,7 +326,11 @@ export function normalizeSemanticColor(raw: unknown): SemanticColor | undefined 
   }
 
   // Hex / rgb / hsl color formats or fallback strings
-  if (clean.startsWith("#") || clean.startsWith("rgb") || clean.startsWith("hsl")) {
+  if (
+    clean.startsWith("#") ||
+    clean.startsWith("rgb") ||
+    clean.startsWith("hsl")
+  ) {
     return "default";
   }
 
@@ -415,7 +421,9 @@ export function normalizePointerPlacement(
 /**
  * Generically normalizes arrow directions.
  */
-export function normalizeArrowDirection(raw: unknown): ArrowDirection | undefined {
+export function normalizeArrowDirection(
+  raw: unknown,
+): ArrowDirection | undefined {
   if (raw === undefined || raw === null) {
     return undefined;
   }
@@ -639,7 +647,8 @@ export function normalizeVisualAction(action: unknown): unknown {
     act.type = "create_arrow";
     act.from = act.from || act.source || "";
     act.to = act.to || act.target || "";
-    act.id = act.id || `arrow-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    act.id =
+      act.id || `arrow-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   }
 
   // Convert disconnect -> delete
@@ -885,7 +894,11 @@ export function normalizeTeachingResponse(input: unknown): unknown {
     };
   }
 
-  if (res.lesson && typeof res.lesson === "object" && !Array.isArray(res.lesson)) {
+  if (
+    res.lesson &&
+    typeof res.lesson === "object" &&
+    !Array.isArray(res.lesson)
+  ) {
     const lessonObj = { ...(res.lesson as Record<string, unknown>) };
     if (Array.isArray(lessonObj.steps) && !Array.isArray(res.steps)) {
       res.steps = lessonObj.steps;
@@ -908,7 +921,10 @@ export function normalizeTeachingResponse(input: unknown): unknown {
       res.message = res.explanation;
     } else if (typeof res.description === "string" && res.description.trim()) {
       res.message = res.description;
-    } else if (Array.isArray(res.explanation_steps) && res.explanation_steps.length > 0) {
+    } else if (
+      Array.isArray(res.explanation_steps) &&
+      res.explanation_steps.length > 0
+    ) {
       res.message = (res.explanation_steps as unknown[]).map(String).join(" ");
     }
   }
@@ -1092,7 +1108,10 @@ export function normalizeTeachingResponse(input: unknown): unknown {
   }
 
   // Safety net: ensure visual_actions is at least an empty array if visualLesson exists
-  if (res.visualLesson && (!res.visual_actions || !Array.isArray(res.visual_actions))) {
+  if (
+    res.visualLesson &&
+    (!res.visual_actions || !Array.isArray(res.visual_actions))
+  ) {
     const vl = res.visualLesson as Record<string, unknown>;
     const initScene = (vl.initialScene || vl.initial_scene) as unknown[];
     res.visual_actions = Array.isArray(initScene)
@@ -1281,16 +1300,27 @@ export function validateVisualAction(
       } else if (typeof act.root !== "string") {
         errors.push(`${prefix}.root must be a string.`);
       } else {
-        const nodeIds = new Set((act.nodes as Record<string, unknown>[]).map(n => n.id));
+        const nodeIds = new Set(
+          (act.nodes as Record<string, unknown>[]).map((n) => n.id),
+        );
         if (!nodeIds.has(act.root)) {
           errors.push(`${prefix}.root must exist in nodes.`);
         }
-        for (const node of (act.nodes as Record<string, unknown>[])) {
-          if (node.left && !nodeIds.has(node.left)) errors.push(`${prefix} node ${node.id} left reference ${node.left} must exist in nodes.`);
-          if (node.right && !nodeIds.has(node.right)) errors.push(`${prefix} node ${node.id} right reference ${node.right} must exist in nodes.`);
+        for (const node of act.nodes as Record<string, unknown>[]) {
+          if (node.left && !nodeIds.has(node.left))
+            errors.push(
+              `${prefix} node ${node.id} left reference ${node.left} must exist in nodes.`,
+            );
+          if (node.right && !nodeIds.has(node.right))
+            errors.push(
+              `${prefix} node ${node.id} right reference ${node.right} must exist in nodes.`,
+            );
           if (Array.isArray(node.children)) {
             for (const childId of node.children) {
-              if (!nodeIds.has(childId)) errors.push(`${prefix} node ${node.id} child reference ${childId} must exist in nodes.`);
+              if (!nodeIds.has(childId))
+                errors.push(
+                  `${prefix} node ${node.id} child reference ${childId} must exist in nodes.`,
+                );
             }
           }
         }
@@ -1306,17 +1336,29 @@ export function validateVisualAction(
         errors.push(`${prefix}.edges must be an array.`);
       }
       if (Array.isArray(act.nodes) && Array.isArray(act.edges)) {
-        const nodeIds = new Set((act.nodes as Record<string, unknown>[]).map(n => n.id));
-        for (const edge of (act.edges as Record<string, unknown>[])) {
-          if (!nodeIds.has(edge.from)) errors.push(`${prefix} edge from reference ${edge.from} must exist in nodes.`);
-          if (!nodeIds.has(edge.to)) errors.push(`${prefix} edge to reference ${edge.to} must exist in nodes.`);
+        const nodeIds = new Set(
+          (act.nodes as Record<string, unknown>[]).map((n) => n.id),
+        );
+        for (const edge of act.edges as Record<string, unknown>[]) {
+          if (!nodeIds.has(edge.from))
+            errors.push(
+              `${prefix} edge from reference ${edge.from} must exist in nodes.`,
+            );
+          if (!nodeIds.has(edge.to))
+            errors.push(
+              `${prefix} edge to reference ${edge.to} must exist in nodes.`,
+            );
         }
       }
       break;
     }
 
     case "create_matrix": {
-      if (!Array.isArray(act.rows) || act.rows.length === 0 || !Array.isArray(act.rows[0])) {
+      if (
+        !Array.isArray(act.rows) ||
+        act.rows.length === 0 ||
+        !Array.isArray(act.rows[0])
+      ) {
         errors.push(`${prefix}.rows must be a non-empty 2D array.`);
       }
       break;
@@ -1388,7 +1430,10 @@ export function validateVisualAction(
       if (typeof act.title !== "string" || act.title.trim().length === 0) {
         errors.push(`${prefix}.title must be a non-empty string.`);
       }
-      if (typeof act.explanation !== "string" || act.explanation.trim().length === 0) {
+      if (
+        typeof act.explanation !== "string" ||
+        act.explanation.trim().length === 0
+      ) {
         errors.push(`${prefix}.explanation must be a non-empty string.`);
       }
       break;
@@ -1549,26 +1594,50 @@ export function validateActionReferences<T = Record<string, unknown>>(
       knownIds.add(id);
     }
     // Expand compound element IDs so downstream actions can reference them
-    if (a.type === "create_array" && typeof id === "string" && Array.isArray(a.elements)) {
+    if (
+      a.type === "create_array" &&
+      typeof id === "string" &&
+      Array.isArray(a.elements)
+    ) {
       for (let i = 0; i < (a.elements as unknown[]).length; i++) {
         knownIds.add(`${id}-${i}`);
       }
-    } else if (a.type === "create_linked_list" && typeof id === "string" && Array.isArray(a.elements)) {
+    } else if (
+      a.type === "create_linked_list" &&
+      typeof id === "string" &&
+      Array.isArray(a.elements)
+    ) {
       for (let i = 0; i < (a.elements as unknown[]).length; i++) {
+        const el = (a.elements as any)[i];
         knownIds.add(`${id}-${i}`);
+        if (el && typeof el === "object" && el.id) {
+          knownIds.add(`${id}-${el.id}`);
+        }
       }
       knownIds.add(`${id}-null`);
-    } else if (a.type === "create_stack" && typeof id === "string" && Array.isArray(a.elements)) {
+    } else if (
+      a.type === "create_stack" &&
+      typeof id === "string" &&
+      Array.isArray(a.elements)
+    ) {
       for (let i = 0; i < (a.elements as unknown[]).length; i++) {
         knownIds.add(`${id}-${i}`);
       }
-    } else if (a.type === "create_tree" && typeof id === "string" && Array.isArray(a.nodes)) {
+    } else if (
+      a.type === "create_tree" &&
+      typeof id === "string" &&
+      Array.isArray(a.nodes)
+    ) {
       for (const node of a.nodes as Record<string, unknown>[]) {
         if (typeof node.id === "string") {
           knownIds.add(`${id}-${node.id}`);
         }
       }
-    } else if (a.type === "create_graph" && typeof id === "string" && Array.isArray(a.nodes)) {
+    } else if (
+      a.type === "create_graph" &&
+      typeof id === "string" &&
+      Array.isArray(a.nodes)
+    ) {
       for (const node of a.nodes as Record<string, unknown>[]) {
         if (typeof node.id === "string") {
           knownIds.add(`${id}-${node.id}`);
@@ -1581,7 +1650,11 @@ export function validateActionReferences<T = Record<string, unknown>>(
           }
         }
       }
-    } else if (a.type === "create_matrix" && typeof id === "string" && Array.isArray(a.rows)) {
+    } else if (
+      a.type === "create_matrix" &&
+      typeof id === "string" &&
+      Array.isArray(a.rows)
+    ) {
       const rows = a.rows as unknown[][];
       for (let r = 0; r < rows.length; r++) {
         if (Array.isArray(rows[r])) {
@@ -1734,11 +1807,20 @@ export function repairOrReorderActionsDetails<T = Record<string, unknown>>(
           allKnownIds.add(elemId);
           aliasToId.set(elemId.toLowerCase(), elemId);
         }
-      } else if (act.type === "create_linked_list" && Array.isArray(act.elements)) {
+      } else if (
+        act.type === "create_linked_list" &&
+        Array.isArray(act.elements)
+      ) {
         for (let i = 0; i < (act.elements as unknown[]).length; i++) {
+          const el = (act.elements as any)[i];
           const elemId = `${id}-${i}`;
           allKnownIds.add(elemId);
           aliasToId.set(elemId.toLowerCase(), elemId);
+          if (el && typeof el === "object" && el.id) {
+            const rawElemId = `${id}-${el.id}`;
+            allKnownIds.add(rawElemId);
+            aliasToId.set(rawElemId.toLowerCase(), elemId);
+          }
         }
         const nullId = `${id}-null`;
         allKnownIds.add(nullId);
@@ -1755,7 +1837,7 @@ export function repairOrReorderActionsDetails<T = Record<string, unknown>>(
             const elemId = `${id}-${node.id}`;
             allKnownIds.add(elemId);
             aliasToId.set(elemId.toLowerCase(), elemId);
-            
+
             // Map node semantic values
             const label = (node.label ?? node.value) as string | undefined;
             if (typeof label === "string" && label.trim().length > 0) {
@@ -1840,10 +1922,7 @@ export function repairOrReorderActionsDetails<T = Record<string, unknown>>(
       return null;
     };
 
-    if (
-      act.type === "annotate_pointer" &&
-      typeof act.target === "string"
-    ) {
+    if (act.type === "annotate_pointer" && typeof act.target === "string") {
       const resolved = resolveAlias(act.target);
       if (resolved && resolved !== act.target) {
         warnings.push(
@@ -1922,7 +2001,11 @@ export function validateTeachingResponse(
 
   if (typeof res.message !== "string" || res.message.trim().length === 0) {
     if (res.visualLesson && typeof res.visualLesson === "object") {
-      res.message = `Visual explanation of ${(res.visualLesson as Record<string, unknown>).title || res.topic || "concept"}`;
+      res.message = `Visual explanation of ${
+        (res.visualLesson as Record<string, unknown>).title ||
+        res.topic ||
+        "concept"
+      }`;
     } else {
       errors.push(
         "Field 'message' must be a non-empty string explaining the concept.",
@@ -1933,7 +2016,9 @@ export function validateTeachingResponse(
   if (res.visual_actions === undefined) {
     if (res.visualLesson && typeof res.visualLesson === "object") {
       const vl = res.visualLesson as Record<string, unknown>;
-      res.visual_actions = Array.isArray(vl.initialScene) ? vl.initialScene : [];
+      res.visual_actions = Array.isArray(vl.initialScene)
+        ? vl.initialScene
+        : [];
     } else if (res.steps === undefined) {
       errors.push(
         "Field 'visual_actions' must be an array of VisualAction items.",
@@ -1942,7 +2027,9 @@ export function validateTeachingResponse(
   } else if (!Array.isArray(res.visual_actions)) {
     if (res.visualLesson && typeof res.visualLesson === "object") {
       const vl = res.visualLesson as Record<string, unknown>;
-      res.visual_actions = Array.isArray(vl.initialScene) ? vl.initialScene : [];
+      res.visual_actions = Array.isArray(vl.initialScene)
+        ? vl.initialScene
+        : [];
     } else {
       errors.push(
         "Field 'visual_actions' must be an array of VisualAction items.",
@@ -1966,9 +2053,16 @@ export function validateTeachingResponse(
           for (let i = 0; i < (a.elements as unknown[]).length; i++) {
             createdInBatch.add(`${id}-${i}`);
           }
-        } else if (a.type === "create_linked_list" && Array.isArray(a.elements)) {
+        } else if (
+          a.type === "create_linked_list" &&
+          Array.isArray(a.elements)
+        ) {
           for (let i = 0; i < (a.elements as unknown[]).length; i++) {
+            const el = (a.elements as any)[i];
             createdInBatch.add(`${id}-${i}`);
+            if (el && typeof el === "object" && el.id) {
+              createdInBatch.add(`${id}-${el.id}`);
+            }
           }
           createdInBatch.add(`${id}-null`);
         } else if (a.type === "create_stack" && Array.isArray(a.elements)) {
@@ -1977,15 +2071,20 @@ export function validateTeachingResponse(
           }
         } else if (a.type === "create_tree" && Array.isArray(a.nodes)) {
           for (const node of a.nodes as Record<string, unknown>[]) {
-            if (typeof node.id === "string") createdInBatch.add(`${id}-${node.id}`);
+            if (typeof node.id === "string")
+              createdInBatch.add(`${id}-${node.id}`);
           }
         } else if (a.type === "create_graph" && Array.isArray(a.nodes)) {
           for (const node of a.nodes as Record<string, unknown>[]) {
-            if (typeof node.id === "string") createdInBatch.add(`${id}-${node.id}`);
+            if (typeof node.id === "string")
+              createdInBatch.add(`${id}-${node.id}`);
           }
           if (Array.isArray(a.edges)) {
             for (const edge of a.edges as Record<string, unknown>[]) {
-              if (typeof edge.from === "string" && typeof edge.to === "string") {
+              if (
+                typeof edge.from === "string" &&
+                typeof edge.to === "string"
+              ) {
                 createdInBatch.add(`${id}-edge-${edge.from}-${edge.to}`);
               }
             }
@@ -2067,14 +2166,24 @@ export function validateTeachingResponse(
         if (typeof s.title !== "string" || s.title.trim().length === 0) {
           errors.push(`${stepPrefix}.title must be a non-empty string.`);
         }
-        if (typeof s.explanation !== "string" || s.explanation.trim().length === 0) {
+        if (
+          typeof s.explanation !== "string" ||
+          s.explanation.trim().length === 0
+        ) {
           errors.push(`${stepPrefix}.explanation must be a non-empty string.`);
         }
         if (s.step_number !== undefined && typeof s.step_number !== "number") {
-          errors.push(`${stepPrefix}.step_number, if provided, must be a number.`);
+          errors.push(
+            `${stepPrefix}.step_number, if provided, must be a number.`,
+          );
         }
-        if (s.calculations !== undefined && typeof s.calculations !== "string") {
-          errors.push(`${stepPrefix}.calculations, if provided, must be a string.`);
+        if (
+          s.calculations !== undefined &&
+          typeof s.calculations !== "string"
+        ) {
+          errors.push(
+            `${stepPrefix}.calculations, if provided, must be a string.`,
+          );
         }
         if (s.insight !== undefined && typeof s.insight !== "string") {
           errors.push(`${stepPrefix}.insight, if provided, must be a string.`);
@@ -2095,7 +2204,11 @@ export function validateTeachingResponse(
   }
 
   if (res.lesson !== undefined) {
-    if (!res.lesson || typeof res.lesson !== "object" || Array.isArray(res.lesson)) {
+    if (
+      !res.lesson ||
+      typeof res.lesson !== "object" ||
+      Array.isArray(res.lesson)
+    ) {
       errors.push("Field 'lesson', if provided, must be an object.");
     } else {
       const l = res.lesson as Record<string, unknown>;
@@ -2106,7 +2219,9 @@ export function validateTeachingResponse(
         errors.push("Field 'lesson.objective', if provided, must be a string.");
       }
       if (!Array.isArray(l.steps)) {
-        errors.push("Field 'lesson.steps' must be an array of TeachingStep objects.");
+        errors.push(
+          "Field 'lesson.steps' must be an array of TeachingStep objects.",
+        );
       }
     }
   }

@@ -65,6 +65,72 @@ export interface JourneyOptimizationContext {
 
 export class ConceptualJourneyOptimizer {
   /**
+   * Validates that an optimized plan satisfies the teaching response contract:
+   * 1. Non-empty milestones list when raw steps were provided.
+   * 2. Every milestone has a non-empty stable ID, valid title, explanation, and operations array.
+   * 3. No duplicate IDs.
+   * 4. Operations have valid array format.
+   */
+  public static validatePlanContract(
+    milestones: ConceptualMilestone[],
+    rawStepsCount: number = 0,
+  ): { valid: boolean; reason?: string } {
+    if (rawStepsCount > 0 && (!milestones || milestones.length === 0)) {
+      return {
+        valid: false,
+        reason:
+          "Optimized plan produced 0 milestones when raw steps were present.",
+      };
+    }
+    const seenIds = new Set<string>();
+    for (let i = 0; i < milestones.length; i++) {
+      const m = milestones[i];
+      if (!m) {
+        return {
+          valid: false,
+          reason: `Milestone at index ${i} is null or undefined.`,
+        };
+      }
+      const id = (m as any).id || `m-${i + 1}`;
+      if (seenIds.has(id)) {
+        return {
+          valid: false,
+          reason: `Duplicate milestone ID '${id}' at index ${i}.`,
+        };
+      }
+      seenIds.add(id);
+
+      if (
+        !m.title ||
+        typeof m.title !== "string" ||
+        m.title.trim().length === 0
+      ) {
+        return {
+          valid: false,
+          reason: `Milestone at index ${i} has an empty or invalid title.`,
+        };
+      }
+      if (
+        !m.explanation ||
+        typeof m.explanation !== "string" ||
+        m.explanation.trim().length === 0
+      ) {
+        return {
+          valid: false,
+          reason: `Milestone at index ${i} has an empty or invalid explanation.`,
+        };
+      }
+      if (!Array.isArray(m.operations)) {
+        return {
+          valid: false,
+          reason: `Milestone at index ${i} operations must be an array.`,
+        };
+      }
+    }
+    return { valid: true };
+  }
+
+  /**
    * Main entry point: Optimizes raw proposal steps into conceptual milestones.
    */
   public static optimize(
@@ -232,7 +298,11 @@ export class ConceptualJourneyOptimizer {
         type.startsWith("create_graph") ||
         type.startsWith("create_array") ||
         type.startsWith("create_system") ||
-        type.startsWith("create_matrix")
+        type.startsWith("create_matrix") ||
+        type.startsWith("create_linked_list") ||
+        type.startsWith("create_stack") ||
+        type.startsWith("create_queue") ||
+        type.startsWith("create_container")
       ) {
         hasCompositeAction = true;
         hasStructuralMutation = true;
@@ -249,8 +319,10 @@ export class ConceptualJourneyOptimizer {
           createdEntities.add(entityId);
         }
       } else if (
+        type === "delete" ||
         type === "delete_entity" ||
         type === "remove_entity" ||
+        type === "delete_node" ||
         type === "connect" ||
         type === "connect_relation" ||
         type === "disconnect" ||

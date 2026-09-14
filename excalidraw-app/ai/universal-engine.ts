@@ -244,10 +244,604 @@ export class UniversalConceptIntelligenceEngine {
       properties: { phase: "initial", rootEntityId: initialRootId },
     });
 
-    const states: SemanticState[] = [initialSemanticState];
-    const rawTransformations: AuthoritativeTransformation[] = [];
+    // Helper to resolve entity by canonical ID or alias
+    const findEntityInMap = (
+      map: Map<string, Entity>,
+      targetId: string,
+    ): { entity: Entity; id: string } | undefined => {
+      if (map.has(targetId)) {
+        return { entity: map.get(targetId)!, id: targetId };
+      }
+      for (const [id, ent] of map.entries()) {
+        if (
+          ent.properties?.rawId === targetId ||
+          ent.properties?.isAliasOf === targetId ||
+          (ent.properties?.rawId &&
+            targetId.endsWith(`-${ent.properties.rawId}`))
+        ) {
+          return { entity: ent, id };
+        }
+      }
+      return undefined;
+    };
 
-    // If steps or transformations exist, optimize them into meaningful conceptual milestones
+    // Helper to compute quick semantic state fingerprint for state progression check
+    const computeStateFingerprint = (st: SemanticState): string => {
+      const entKeys = Array.from(st.entities.keys()).sort();
+      const entFp = entKeys
+        .map((k) => {
+          const e = st.entities.get(k)!;
+          return `${k}:${e.value}:${e.properties?.highlight || ""}:${
+            e.label || ""
+          }`;
+        })
+        .join("|");
+      return `${entFp}#${st.relationships.size}`;
+    };
+
+    // Non-destructive step-to-state derivation engine
+    const deriveStatesFromSteps = (
+      stepsToExecute: any[],
+    ): {
+      states: SemanticState[];
+      rawTransformations: AuthoritativeTransformation[];
+    } => {
+      const derivedStates: SemanticState[] = [initialSemanticState];
+      const derivedTransformations: AuthoritativeTransformation[] = [];
+      let currentState = initialSemanticState;
+
+      for (let i = 0; i < stepsToExecute.length; i++) {
+        const s = stepsToExecute[i];
+        const nextIndex = i + 1;
+
+        // Mutate state for step
+        const nextEntities = new Map<string, Entity>();
+        for (const [id, e] of currentState.entities.entries()) {
+          nextEntities.set(id, { ...e, properties: { ...e.properties } });
+        }
+        const nextRels = new Map<string, Relationship>();
+        for (const [id, r] of currentState.relationships.entries()) {
+          nextRels.set(id, {
+            ...r,
+            properties: r.properties ? { ...r.properties } : undefined,
+          });
+        }
+
+        // Mark affected entities from operations and visual actions
+        const affectedEntities: string[] = [];
+
+        // Combine operations and visual actions into a unified operational stream
+        const allOperations = [
+          ...(s.operations || []),
+          ...(s.visual_actions || []),
+        ];
+        for (const op of allOperations) {
+          if (!op || typeof op !== "object") {
+            continue;
+          }
+          const opType = (op.type || "").toLowerCase();
+
+          if (
+            opType === "update" ||
+            opType === "update_entity" ||
+            opType === "update_node"
+          ) {
+            const tgt = op.target || op.entityId || op.id || (op as any).nodeId;
+            const found = tgt ? findEntityInMap(nextEntities, tgt) : undefined;
+            if (found) {
+              const existing = found.entity;
+              nextEntities.set(found.id, {
+                ...existing,
+                label: op.label ?? op.name ?? existing.label,
+                value: op.value ?? existing.value,
+                state: op.state ?? existing.state,
+                properties: {
+                  ...existing.properties,
+                  ...(op.properties || {}),
+                  color:
+                    op.color ?? op.style?.color ?? existing.properties?.color,
+                  highlight:
+                    op.style?.color ??
+                    op.properties?.highlight ??
+                    op.highlight ??
+                    existing.properties?.highlight,
+                },
+              });
+              affectedEntities.push(found.id);
+            }
+          } else if (opType === "highlight") {
+            const tgt = op.target || op.entityId || op.id;
+            const found = tgt ? findEntityInMap(nextEntities, tgt) : undefined;
+            if (found) {
+              found.entity.properties.highlight =
+                op.color || op.highlight || "accent";
+              affectedEntities.push(found.id);
+            }
+          } else if (opType === "unhighlight") {
+            const tgt = op.target || op.entityId || op.id;
+            const found = tgt ? findEntityInMap(nextEntities, tgt) : undefined;
+            if (found) {
+              delete found.entity.properties.highlight;
+              affectedEntities.push(found.id);
+            }
+          } else if (
+            opType === "connect" ||
+            opType === "connect_relation" ||
+            opType === "connect_entities" ||
+            opType === "create_arrow" ||
+            opType === "create_edge"
+          ) {
+            const src = op.source || op.from;
+            const tgt = op.target || op.to;
+            if (src && tgt) {
+              const relId =
+                op.id ||
+                `rel-${src}-${tgt}-${Math.random().toString(36).slice(2, 6)}`;
+              nextRels.set(relId, {
+                id: relId,
+                source: src,
+                target: tgt,
+                type: op.relationType || op.role || op.type || "connects",
+                direction:
+                  op.direction === "none" || op.directed === false
+                    ? "none"
+                    : op.direction || "forward",
+                label: op.label,
+                properties: {
+                  ...(op.properties || {}),
+                  color: op.color || op.style?.color,
+                  highlight: op.highlight,
+                },
+              });
+              affectedEntities.push(src, tgt);
+            }
+          } else if (
+            opType === "disconnect" ||
+            opType === "disconnect_relation" ||
+            opType === "disconnect_entities" ||
+            opType === "delete_edge"
+          ) {
+            if (op.id) {
+              nextRels.delete(op.id);
+            } else if (op.source && op.target) {
+              for (const [rid, r] of nextRels.entries()) {
+                if (r.source === op.source && r.target === op.target) {
+                  nextRels.delete(rid);
+                }
+              }
+            }
+          } else if (
+            opType === "create_entity" ||
+            opType === "add_entity" ||
+            opType === "create_box" ||
+            opType === "create_circle"
+          ) {
+            const entId = op.id || op.entity?.id;
+            if (entId) {
+              nextEntities.set(entId, {
+                id: entId,
+                type:
+                  op.entityType ||
+                  op.entity?.type ||
+                  (opType === "create_circle"
+                    ? "CircleEntity"
+                    : "GenericEntity"),
+                label: op.label || op.entity?.label || entId,
+                value: op.value ?? op.entity?.value,
+                properties:
+                  op.properties || op.entity?.properties || op.style || {},
+                semanticRole: op.role || op.semanticRole || "component",
+              });
+              affectedEntities.push(entId);
+            }
+          } else if (
+            opType === "delete_entity" ||
+            opType === "remove_entity" ||
+            opType === "delete" ||
+            opType === "delete_node"
+          ) {
+            // op.target takes precedence because op.id is the operation's own ID
+            const entId = op.target || op.entityId || op.id;
+            if (entId) {
+              const toDelete = new Set<string>();
+              if (nextEntities.has(entId)) {
+                toDelete.add(entId);
+              }
+              for (const [id, ent] of nextEntities.entries()) {
+                if (
+                  id === entId ||
+                  id.startsWith(`${entId}-`) ||
+                  ent.properties?.containerId === entId ||
+                  ent.properties?.listId === entId ||
+                  ent.properties?.treeId === entId ||
+                  ent.properties?.graphId === entId ||
+                  ent.properties?.rawId === entId
+                ) {
+                  toDelete.add(id);
+                }
+              }
+              for (const delId of toDelete) {
+                nextEntities.delete(delId);
+                for (const [rid, r] of nextRels.entries()) {
+                  if (r.source === delId || r.target === delId) {
+                    nextRels.delete(rid);
+                  }
+                }
+                affectedEntities.push(delId);
+              }
+            }
+          } else if (
+            opType === "create_tree" &&
+            Array.isArray((op as any).nodes)
+          ) {
+            const tree = op as any;
+            const treeId = tree.id || "tree";
+            const rootNodeId = tree.root
+              ? tree.root.startsWith(`${treeId}-`)
+                ? tree.root
+                : `${treeId}-${tree.root}`
+              : undefined;
+
+            // Clear existing tree hierarchy relationships
+            for (const [rid, r] of nextRels.entries()) {
+              if (
+                r.type === "leftOf" ||
+                r.type === "rightOf" ||
+                r.type === "parentOf" ||
+                r.type === "left" ||
+                r.type === "right"
+              ) {
+                nextRels.delete(rid);
+              }
+            }
+
+            for (const node of tree.nodes) {
+              const nodeId = node.id.startsWith(`${treeId}-`)
+                ? node.id
+                : `${treeId}-${node.id}`;
+              const existing = nextEntities.get(nodeId);
+              const isRoot = node.id === tree.root || nodeId === rootNodeId;
+              nextEntities.set(nodeId, {
+                id: nodeId,
+                type: "TreeNode",
+                label: String(node.value ?? node.id),
+                value: node.value,
+                semanticRole: isRoot ? "root" : "tree-node",
+                properties: {
+                  ...(existing?.properties || {}),
+                  rawId: node.id,
+                  treeId,
+                  highlight: node.highlight ?? existing?.properties?.highlight,
+                  left: node.left
+                    ? node.left.startsWith(`${treeId}-`)
+                      ? node.left
+                      : `${treeId}-${node.left}`
+                    : undefined,
+                  right: node.right
+                    ? node.right.startsWith(`${treeId}-`)
+                      ? node.right
+                      : `${treeId}-${node.right}`
+                    : undefined,
+                },
+              });
+              affectedEntities.push(nodeId);
+
+              if (node.left) {
+                const leftId = node.left.startsWith(`${treeId}-`)
+                  ? node.left
+                  : `${treeId}-${node.left}`;
+                const relId = `rel-${nodeId}-${leftId}`;
+                nextRels.set(relId, {
+                  id: relId,
+                  source: nodeId,
+                  target: leftId,
+                  type: "leftOf",
+                  direction: "forward",
+                  label: "L",
+                  properties: { directed: true },
+                });
+              }
+
+              if (node.right) {
+                const rightId = node.right.startsWith(`${treeId}-`)
+                  ? node.right
+                  : `${treeId}-${node.right}`;
+                const relId = `rel-${nodeId}-${rightId}`;
+                nextRels.set(relId, {
+                  id: relId,
+                  source: nodeId,
+                  target: rightId,
+                  type: "rightOf",
+                  direction: "forward",
+                  label: "R",
+                  properties: { directed: true },
+                });
+              }
+
+              if (node.children && Array.isArray(node.children)) {
+                for (const child of node.children) {
+                  const childId = child.startsWith(`${treeId}-`)
+                    ? child
+                    : `${treeId}-${child}`;
+                  const relId = `rel-${nodeId}-${childId}`;
+                  nextRels.set(relId, {
+                    id: relId,
+                    source: nodeId,
+                    target: childId,
+                    type: "parentOf",
+                    direction: "forward",
+                    properties: { directed: true },
+                  });
+                }
+              }
+            }
+          } else if (
+            opType === "create_linked_list" &&
+            Array.isArray((op as any).elements)
+          ) {
+            const list = op as any;
+            const listId = list.id || "list";
+            const isDoubly =
+              list.variant === "doubly" ||
+              list.doubly === true ||
+              understanding.concept.toLowerCase().includes("doubl");
+
+            let prevNodeId: string | null = null;
+            for (let elIdx = 0; elIdx < list.elements.length; elIdx++) {
+              const el = list.elements[elIdx];
+              const rawId = el.id ? String(el.id) : undefined;
+              const nodeId = `${listId}-${elIdx}`;
+              const existing = nextEntities.get(nodeId);
+              const entObj: Entity = {
+                id: nodeId,
+                type: "LinkedListNode",
+                label: String(el.value ?? el.label ?? elIdx),
+                value: el.value,
+                semanticRole:
+                  elIdx === 0
+                    ? "head"
+                    : elIdx === list.elements.length - 1
+                    ? "tail"
+                    : "list-node",
+                properties: {
+                  ...(existing?.properties || {}),
+                  rawId,
+                  listId,
+                  containerId: listId,
+                  index: elIdx,
+                  variant: isDoubly ? "doubly" : "singly",
+                  highlight: el.highlight ?? existing?.properties?.highlight,
+                },
+              };
+              nextEntities.set(nodeId, entObj);
+              affectedEntities.push(nodeId);
+
+              if (rawId) {
+                const aliasId = `${listId}-${rawId}`;
+                if (aliasId !== nodeId && !nextEntities.has(aliasId)) {
+                  nextEntities.set(aliasId, {
+                    ...entObj,
+                    id: aliasId,
+                    properties: {
+                      ...entObj.properties,
+                      isAliasOf: nodeId,
+                    },
+                  });
+                }
+              }
+
+              if (prevNodeId) {
+                const relNext = `edge-${prevNodeId}-${nodeId}`;
+                nextRels.set(relNext, {
+                  id: relNext,
+                  source: prevNodeId,
+                  target: nodeId,
+                  type: "next",
+                  direction: "forward",
+                  label: "next",
+                  properties: { directed: true },
+                });
+                if (isDoubly) {
+                  const relPrev = `edge-${nodeId}-${prevNodeId}`;
+                  nextRels.set(relPrev, {
+                    id: relPrev,
+                    source: nodeId,
+                    target: prevNodeId,
+                    type: "previous",
+                    direction: "forward",
+                    label: "prev",
+                    properties: { directed: true },
+                  });
+                }
+              }
+              prevNodeId = nodeId;
+            }
+          } else if (
+            opType === "create_stack" &&
+            Array.isArray((op as any).elements)
+          ) {
+            const stack = op as any;
+            const stackId = stack.id || "stack";
+            for (let elIdx = 0; elIdx < stack.elements.length; elIdx++) {
+              const el = stack.elements[elIdx];
+              const frameId = `${stackId}-${elIdx}`;
+              const existing = nextEntities.get(frameId);
+              nextEntities.set(frameId, {
+                id: frameId,
+                type: "StackFrame",
+                label: String(el.value ?? elIdx),
+                value: el.value,
+                semanticRole:
+                  elIdx === stack.elements.length - 1 ? "top" : "stack-frame",
+                properties: {
+                  ...(existing?.properties || {}),
+                  index: elIdx,
+                  containerId: stackId,
+                  highlight: el.highlight ?? existing?.properties?.highlight,
+                },
+              });
+              affectedEntities.push(frameId);
+            }
+          } else if (
+            opType === "create_queue" &&
+            Array.isArray((op as any).elements)
+          ) {
+            const queue = op as any;
+            const queueId = queue.id || "queue";
+            for (let elIdx = 0; elIdx < queue.elements.length; elIdx++) {
+              const el = queue.elements[elIdx];
+              const cellId = `${queueId}-${elIdx}`;
+              const existing = nextEntities.get(cellId);
+              nextEntities.set(cellId, {
+                id: cellId,
+                type: "QueueElement",
+                label: String(el.value ?? elIdx),
+                value: el.value,
+                semanticRole:
+                  elIdx === 0
+                    ? "front"
+                    : elIdx === queue.elements.length - 1
+                    ? "back"
+                    : "queue-element",
+                properties: {
+                  ...(existing?.properties || {}),
+                  index: elIdx,
+                  containerId: queueId,
+                  highlight: el.highlight ?? existing?.properties?.highlight,
+                },
+              });
+              affectedEntities.push(cellId);
+            }
+          } else if (
+            opType === "create_array" &&
+            Array.isArray((op as any).elements)
+          ) {
+            const arr = op as any;
+            const arrId = arr.id || "array";
+            for (let elIdx = 0; elIdx < arr.elements.length; elIdx++) {
+              const el = arr.elements[elIdx];
+              const cellId = `${arrId}-${elIdx}`;
+              const existing = nextEntities.get(cellId);
+              nextEntities.set(cellId, {
+                id: cellId,
+                type: "ArrayCell",
+                label: String(el.value ?? elIdx),
+                value: el.value,
+                semanticRole: "array-element",
+                properties: {
+                  ...(existing?.properties || {}),
+                  index: elIdx,
+                  containerId: arrId,
+                  highlight: el.highlight ?? existing?.properties?.highlight,
+                },
+              });
+              affectedEntities.push(cellId);
+            }
+          } else if (
+            opType === "create_graph" &&
+            Array.isArray((op as any).nodes)
+          ) {
+            const g = op as any;
+            const graphId = g.id || "graph";
+            for (const node of g.nodes) {
+              const nodeId = node.id.startsWith(`${graphId}-`)
+                ? node.id
+                : `${graphId}-${node.id}`;
+              const existing = nextEntities.get(nodeId);
+              nextEntities.set(nodeId, {
+                id: nodeId,
+                type: "GraphNode",
+                label: node.label || String(node.value ?? node.id),
+                value: node.value ?? node.label,
+                semanticRole: "graph-node",
+                properties: {
+                  ...(existing?.properties || {}),
+                  rawId: node.id,
+                  graphId,
+                  highlight: node.highlight ?? existing?.properties?.highlight,
+                },
+              });
+              affectedEntities.push(nodeId);
+            }
+            if (Array.isArray(g.edges)) {
+              for (const edge of g.edges) {
+                const fromId = edge.from.startsWith(`${graphId}-`)
+                  ? edge.from
+                  : `${graphId}-${edge.from}`;
+                const toId = edge.to.startsWith(`${graphId}-`)
+                  ? edge.to
+                  : `${graphId}-${edge.to}`;
+                const relId = edge.id || `rel-${fromId}-${toId}`;
+                nextRels.set(relId, {
+                  id: relId,
+                  source: fromId,
+                  target: toId,
+                  type: edge.label || "connects",
+                  direction: edge.directed === false ? "none" : "forward",
+                  label: edge.label,
+                  properties: {
+                    directed: edge.directed !== false,
+                    weight: edge.weight,
+                  },
+                });
+              }
+            }
+          }
+        }
+
+        let stepRootId: string | undefined;
+        for (const ent of nextEntities.values()) {
+          if (ent.semanticRole === "root") {
+            stepRootId = ent.id;
+            break;
+          }
+        }
+
+        const nextState = createSemanticState(nextIndex, `state-${nextIndex}`, {
+          name: s.title || `Step ${nextIndex}`,
+          description: s.explanation,
+          entities: nextEntities,
+          relationships: nextRels,
+          properties: { step: nextIndex, rootEntityId: stepRootId },
+        });
+
+        derivedStates.push(nextState);
+
+        derivedTransformations.push({
+          id: s.id || `t-${nextIndex}`,
+          stepNumber: nextIndex,
+          title: s.title || `Transition ${nextIndex}`,
+          purpose: s.explanation || `Advance ${understanding.concept}`,
+          cause: `Algorithmic rule execution in step ${nextIndex}`,
+          action: s.explanation || s.title || "State mutation",
+          preconditions: [`State ${i} completed`],
+          affectedEntities,
+          affectedRelationships: [],
+          fromStateIndex: i,
+          toStateIndex: nextIndex,
+          whatChanged:
+            affectedEntities.length > 0
+              ? `Entities updated: ${affectedEntities.join(", ")}`
+              : s.title,
+          whyChanged: s.explanation || "State transition required",
+          learnerObservation: `Observe the transition to step ${nextIndex}`,
+          consequence: "Preserves invariant integrity",
+          invariantEffects: [],
+          explanation: s.explanation || s.title,
+          calculations: s.calculations,
+          insight: s.insight,
+        });
+
+        currentState = nextState;
+      }
+
+      return {
+        states: derivedStates,
+        rawTransformations: derivedTransformations,
+      };
+    };
+
+    // Extract raw steps from proposal
     const rawSteps =
       rawProposal?.steps ||
       rawProposal?.transformations ||
@@ -255,414 +849,65 @@ export class UniversalConceptIntelligenceEngine {
       (rawProposal as any)?.visual_lesson?.transformations ||
       [];
 
-    const milestones = ConceptualJourneyOptimizer.optimize({
-      concept: understanding.concept,
-      intent: understanding.userIntent || problem.intent,
-      targetGoal: problem.objective,
-      initialEntities: filteredEntities,
-      initialRelationships: candidateRelationships,
-      rawSteps,
-    });
+    // Tier 1: Try optimizing raw steps into conceptual milestones
+    let activeSteps: any[] = rawSteps;
+    let usedOptimized = false;
 
-    let currentState = initialSemanticState;
-    for (let i = 0; i < milestones.length; i++) {
-      const s = milestones[i];
-      const nextIndex = i + 1;
-
-      // Mutate state for step
-      const nextEntities = new Map<string, Entity>();
-      for (const [id, e] of currentState.entities.entries()) {
-        nextEntities.set(id, { ...e, properties: { ...e.properties } });
-      }
-      const nextRels = new Map<string, Relationship>();
-      for (const [id, r] of currentState.relationships.entries()) {
-        nextRels.set(id, {
-          ...r,
-          properties: r.properties ? { ...r.properties } : undefined,
+    if (rawSteps.length > 0) {
+      try {
+        const candidateMilestones = ConceptualJourneyOptimizer.optimize({
+          concept: understanding.concept,
+          intent: understanding.userIntent || problem.intent,
+          targetGoal: problem.objective,
+          initialEntities: filteredEntities,
+          initialRelationships: candidateRelationships,
+          rawSteps,
         });
-      }
 
-      // Mark affected entities from operations and visual actions
-      const affectedEntities: string[] = [];
+        const contractValidation =
+          ConceptualJourneyOptimizer.validatePlanContract(
+            candidateMilestones,
+            rawSteps.length,
+          );
 
-      // Combine operations and visual actions into a unified operational stream
-      const allOperations = [
-        ...(s.operations || []),
-        ...(s.visual_actions || []),
-      ];
-      for (const op of allOperations) {
-        if (!op || typeof op !== "object") {
-          continue;
+        if (contractValidation.valid && candidateMilestones.length > 0) {
+          activeSteps = candidateMilestones;
+          usedOptimized = true;
+        } else {
+          console.warn(
+            `[COGNORA][OPTIMIZER] Discarding invalid optimized plan (${
+              contractValidation.reason || "invalid contract"
+            }), falling back to raw plan.`,
+          );
         }
-        const opType = (op.type || "").toLowerCase();
-
-        if (
-          opType === "update" ||
-          opType === "update_entity" ||
-          opType === "update_node"
-        ) {
-          const tgt = op.target || op.entityId || op.id || (op as any).nodeId;
-          const existing = nextEntities.get(tgt);
-          if (existing) {
-            nextEntities.set(tgt, {
-              ...existing,
-              label: op.label ?? op.name ?? existing.label,
-              value: op.value ?? existing.value,
-              state: op.state ?? existing.state,
-              properties: {
-                ...existing.properties,
-                ...(op.properties || {}),
-                color:
-                  op.color ?? op.style?.color ?? existing.properties?.color,
-                highlight:
-                  op.style?.color ??
-                  op.properties?.highlight ??
-                  op.highlight ??
-                  existing.properties?.highlight,
-              },
-            });
-            affectedEntities.push(tgt);
-          }
-        } else if (opType === "highlight") {
-          const tgt = op.target || op.entityId || op.id;
-          const existing = nextEntities.get(tgt);
-          if (existing) {
-            existing.properties.highlight =
-              op.color || op.highlight || "accent";
-            affectedEntities.push(tgt);
-          }
-        } else if (opType === "unhighlight") {
-          const tgt = op.target || op.entityId || op.id;
-          const existing = nextEntities.get(tgt);
-          if (existing) {
-            delete existing.properties.highlight;
-            affectedEntities.push(tgt);
-          }
-        } else if (
-          opType === "connect" ||
-          opType === "connect_relation" ||
-          opType === "connect_entities" ||
-          opType === "create_arrow" ||
-          opType === "create_edge"
-        ) {
-          const src = op.source || op.from;
-          const tgt = op.target || op.to;
-          if (src && tgt) {
-            const relId =
-              op.id ||
-              `rel-${src}-${tgt}-${Math.random().toString(36).slice(2, 6)}`;
-            nextRels.set(relId, {
-              id: relId,
-              source: src,
-              target: tgt,
-              type: op.relationType || op.role || op.type || "connects",
-              direction:
-                op.direction === "none" || op.directed === false
-                  ? "none"
-                  : op.direction || "forward",
-              label: op.label,
-              properties: {
-                ...(op.properties || {}),
-                color: op.color || op.style?.color,
-                highlight: op.highlight,
-              },
-            });
-            affectedEntities.push(src, tgt);
-          }
-        } else if (
-          opType === "disconnect" ||
-          opType === "disconnect_relation" ||
-          opType === "disconnect_entities" ||
-          opType === "delete_edge"
-        ) {
-          if (op.id) {
-            nextRels.delete(op.id);
-          } else if (op.source && op.target) {
-            for (const [rid, r] of nextRels.entries()) {
-              if (r.source === op.source && r.target === op.target) {
-                nextRels.delete(rid);
-              }
-            }
-          }
-        } else if (
-          opType === "create_entity" ||
-          opType === "add_entity" ||
-          opType === "create_box" ||
-          opType === "create_circle"
-        ) {
-          const entId = op.id || op.entity?.id;
-          if (entId) {
-            nextEntities.set(entId, {
-              id: entId,
-              type:
-                op.entityType ||
-                op.entity?.type ||
-                (opType === "create_circle" ? "CircleEntity" : "GenericEntity"),
-              label: op.label || op.entity?.label || entId,
-              value: op.value ?? op.entity?.value,
-              properties:
-                op.properties || op.entity?.properties || op.style || {},
-              semanticRole: op.role || op.semanticRole || "component",
-            });
-            affectedEntities.push(entId);
-          }
-        } else if (
-          opType === "delete_entity" ||
-          opType === "remove_entity" ||
-          opType === "delete" ||
-          opType === "delete_node"
-        ) {
-          const entId = op.entityId || op.id || op.target;
-          if (entId) {
-            if (nextEntities.has(entId)) {
-              nextEntities.delete(entId);
-              for (const [rid, r] of nextRels.entries()) {
-                if (r.source === entId || r.target === entId) {
-                  nextRels.delete(rid);
-                }
-              }
-              affectedEntities.push(entId);
-            } else {
-              // Container target (e.g. 'avl-tree' matching 'avl-tree-n30', etc.)
-              for (const id of Array.from(nextEntities.keys())) {
-                if (id.startsWith(`${entId}-`)) {
-                  nextEntities.delete(id);
-                  for (const [rid, r] of nextRels.entries()) {
-                    if (r.source === id || r.target === id) {
-                      nextRels.delete(rid);
-                    }
-                  }
-                  affectedEntities.push(id);
-                }
-              }
-            }
-          }
-        } else if (
-          opType === "create_tree" &&
-          Array.isArray((op as any).nodes)
-        ) {
-          const tree = op as any;
-          const treeId = tree.id || "tree";
-          const rootNodeId = tree.root
-            ? tree.root.startsWith(`${treeId}-`)
-              ? tree.root
-              : `${treeId}-${tree.root}`
-            : undefined;
-
-          // Clear existing tree hierarchy relationships
-          for (const [rid, r] of nextRels.entries()) {
-            if (
-              r.type === "leftOf" ||
-              r.type === "rightOf" ||
-              r.type === "parentOf" ||
-              r.type === "left" ||
-              r.type === "right"
-            ) {
-              nextRels.delete(rid);
-            }
-          }
-
-          for (const node of tree.nodes) {
-            const nodeId = node.id.startsWith(`${treeId}-`)
-              ? node.id
-              : `${treeId}-${node.id}`;
-            const existing = nextEntities.get(nodeId);
-            const isRoot = node.id === tree.root || nodeId === rootNodeId;
-            nextEntities.set(nodeId, {
-              id: nodeId,
-              type: "TreeNode",
-              label: String(node.value ?? node.id),
-              value: node.value,
-              semanticRole: isRoot ? "root" : "tree-node",
-              properties: {
-                ...(existing?.properties || {}),
-                rawId: node.id,
-                treeId,
-                highlight: node.highlight ?? existing?.properties?.highlight,
-                left: node.left
-                  ? node.left.startsWith(`${treeId}-`)
-                    ? node.left
-                    : `${treeId}-${node.left}`
-                  : undefined,
-                right: node.right
-                  ? node.right.startsWith(`${treeId}-`)
-                    ? node.right
-                    : `${treeId}-${node.right}`
-                  : undefined,
-              },
-            });
-            affectedEntities.push(nodeId);
-
-            if (node.left) {
-              const leftId = node.left.startsWith(`${treeId}-`)
-                ? node.left
-                : `${treeId}-${node.left}`;
-              const relId = `rel-${nodeId}-${leftId}`;
-              nextRels.set(relId, {
-                id: relId,
-                source: nodeId,
-                target: leftId,
-                type: "leftOf",
-                direction: "forward",
-                label: "L",
-                properties: { directed: true },
-              });
-            }
-
-            if (node.right) {
-              const rightId = node.right.startsWith(`${treeId}-`)
-                ? node.right
-                : `${treeId}-${node.right}`;
-              const relId = `rel-${nodeId}-${rightId}`;
-              nextRels.set(relId, {
-                id: relId,
-                source: nodeId,
-                target: rightId,
-                type: "rightOf",
-                direction: "forward",
-                label: "R",
-                properties: { directed: true },
-              });
-            }
-
-            if (node.children && Array.isArray(node.children)) {
-              for (const child of node.children) {
-                const childId = child.startsWith(`${treeId}-`)
-                  ? child
-                  : `${treeId}-${child}`;
-                const relId = `rel-${nodeId}-${childId}`;
-                nextRels.set(relId, {
-                  id: relId,
-                  source: nodeId,
-                  target: childId,
-                  type: "parentOf",
-                  direction: "forward",
-                  properties: { directed: true },
-                });
-              }
-            }
-          }
-        } else if (
-          opType === "create_array" &&
-          Array.isArray((op as any).elements)
-        ) {
-          const arr = op as any;
-          const arrId = arr.id || "array";
-          for (let elIdx = 0; elIdx < arr.elements.length; elIdx++) {
-            const el = arr.elements[elIdx];
-            const cellId = `${arrId}-${elIdx}`;
-            const existing = nextEntities.get(cellId);
-            nextEntities.set(cellId, {
-              id: cellId,
-              type: "ArrayCell",
-              label: String(el.value ?? elIdx),
-              value: el.value,
-              semanticRole: "array-element",
-              properties: {
-                ...(existing?.properties || {}),
-                index: elIdx,
-                containerId: arrId,
-                highlight: el.highlight ?? existing?.properties?.highlight,
-              },
-            });
-            affectedEntities.push(cellId);
-          }
-        } else if (
-          opType === "create_graph" &&
-          Array.isArray((op as any).nodes)
-        ) {
-          const g = op as any;
-          const graphId = g.id || "graph";
-          for (const node of g.nodes) {
-            const nodeId = node.id.startsWith(`${graphId}-`)
-              ? node.id
-              : `${graphId}-${node.id}`;
-            const existing = nextEntities.get(nodeId);
-            nextEntities.set(nodeId, {
-              id: nodeId,
-              type: "GraphNode",
-              label: node.label || String(node.value ?? node.id),
-              value: node.value ?? node.label,
-              semanticRole: "graph-node",
-              properties: {
-                ...(existing?.properties || {}),
-                rawId: node.id,
-                graphId,
-                highlight: node.highlight ?? existing?.properties?.highlight,
-              },
-            });
-            affectedEntities.push(nodeId);
-          }
-          if (Array.isArray(g.edges)) {
-            for (const edge of g.edges) {
-              const fromId = edge.from.startsWith(`${graphId}-`)
-                ? edge.from
-                : `${graphId}-${edge.from}`;
-              const toId = edge.to.startsWith(`${graphId}-`)
-                ? edge.to
-                : `${graphId}-${edge.to}`;
-              const relId = edge.id || `rel-${fromId}-${toId}`;
-              nextRels.set(relId, {
-                id: relId,
-                source: fromId,
-                target: toId,
-                type: edge.label || "connects",
-                direction: edge.directed === false ? "none" : "forward",
-                label: edge.label,
-                properties: {
-                  directed: edge.directed !== false,
-                  weight: edge.weight,
-                },
-              });
-            }
-          }
-        }
+      } catch (err) {
+        console.warn(
+          `[COGNORA][OPTIMIZER] Optimizer encountered error (${
+            err instanceof Error ? err.message : String(err)
+          }), falling back to raw plan.`,
+        );
       }
+    }
 
-      let stepRootId: string | undefined;
-      for (const ent of nextEntities.values()) {
-        if (ent.semanticRole === "root") {
-          stepRootId = ent.id;
-          break;
-        }
+    // Tier 2: Derive states and validate execution
+    let derived = deriveStatesFromSteps(activeSteps);
+    let states = derived.states;
+    let rawTransformations = derived.rawTransformations;
+
+    // Check if optimized execution produced identical start and final states
+    if (usedOptimized && states.length > 1) {
+      const initialFp = computeStateFingerprint(states[0]);
+      const finalFp = computeStateFingerprint(states[states.length - 1]);
+      if (initialFp === finalFp) {
+        console.warn(
+          `[COGNORA][OPTIMIZER] Optimized execution produced identical initial and final state. Discarding optimized plan and falling back to raw plan.`,
+        );
+        usedOptimized = false;
+        activeSteps = rawSteps;
+        derived = deriveStatesFromSteps(rawSteps);
+        states = derived.states;
+        rawTransformations = derived.rawTransformations;
       }
-
-      const nextState = createSemanticState(nextIndex, `state-${nextIndex}`, {
-        name: s.title || `Step ${nextIndex}`,
-        description: s.explanation,
-        entities: nextEntities,
-        relationships: nextRels,
-        properties: { step: nextIndex, rootEntityId: stepRootId },
-      });
-
-      states.push(nextState);
-
-      rawTransformations.push({
-        id: `t-${nextIndex}`,
-        stepNumber: nextIndex,
-        title: s.title || `Transition ${nextIndex}`,
-        purpose: s.explanation || `Advance ${understanding.concept}`,
-        cause: `Algorithmic rule execution in step ${nextIndex}`,
-        action: s.explanation || s.title || "State mutation",
-        preconditions: [`State ${i} completed`],
-        affectedEntities,
-        affectedRelationships: [],
-        fromStateIndex: i,
-        toStateIndex: nextIndex,
-        whatChanged:
-          affectedEntities.length > 0
-            ? `Entities updated: ${affectedEntities.join(", ")}`
-            : s.title,
-        whyChanged: s.explanation || "State transition required",
-        learnerObservation: `Observe the transition to step ${nextIndex}`,
-        consequence: "Preserves invariant integrity",
-        invariantEffects: [],
-        explanation: s.explanation || s.title,
-        calculations: s.calculations,
-        insight: s.insight,
-      });
-
-      currentState = nextState;
     }
 
     const allWorldEntities = new Map<string, Entity>();
@@ -673,6 +918,18 @@ export class UniversalConceptIntelligenceEngine {
       for (const ent of st.entities.values()) {
         if (!allWorldEntities.has(ent.id)) {
           allWorldEntities.set(ent.id, ent);
+        }
+      }
+    }
+
+    const allWorldRels = new Map<string, Relationship>();
+    for (const rel of candidateRelationships) {
+      allWorldRels.set(rel.id, rel);
+    }
+    for (const st of states) {
+      for (const rel of st.relationships.values()) {
+        if (!allWorldRels.has(rel.id)) {
+          allWorldRels.set(rel.id, rel);
         }
       }
     }
@@ -768,7 +1025,7 @@ export class UniversalConceptIntelligenceEngine {
               role: (e.semanticRole as any) || "component",
             })),
       transformations: model.transformations.map((t, idx) => {
-        const matchingStep = milestones[idx];
+        const matchingStep = activeSteps[idx];
         return {
           id: t.id,
           title: t.title,

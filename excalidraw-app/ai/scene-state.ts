@@ -112,8 +112,12 @@ export function createSceneGraphFromActions(
               rawId: node.id,
               treeId,
               highlight: node.highlight,
-              left: node.left ? normalizeEntityId(treeId, node.left) : undefined,
-              right: node.right ? normalizeEntityId(treeId, node.right) : undefined,
+              left: node.left
+                ? normalizeEntityId(treeId, node.left)
+                : undefined,
+              right: node.right
+                ? normalizeEntityId(treeId, node.right)
+                : undefined,
               children: node.children
                 ? node.children.map((c) => normalizeEntityId(treeId, c))
                 : undefined,
@@ -224,7 +228,9 @@ export function createSceneGraphFromActions(
             type: edge.directed ? "sendsTo" : "connects",
             sourceEntityId: fromId,
             targetEntityId: toId,
-            label: edge.label || (edge.weight != null ? String(edge.weight) : undefined),
+            label:
+              edge.label ||
+              (edge.weight != null ? String(edge.weight) : undefined),
             properties: {
               directed: edge.directed ?? g.directed ?? true,
               weight: edge.weight,
@@ -247,19 +253,36 @@ export function createSceneGraphFromActions(
         let prevId: string | null = null;
         for (let i = 0; i < list.elements.length; i++) {
           const el = list.elements[i];
+          const rawId = (el as any).id;
           const nodeId = `${listId}-${i}`;
-          addEntity(graph, {
+          const entData = {
             id: nodeId,
-            primitiveType: "LinkedListNode",
-            semanticRole: i === 0 ? "head" : "list-node",
+            primitiveType: "LinkedListNode" as const,
+            semanticRole: i === 0 ? ("head" as const) : ("list-node" as const),
             value: el.value,
             label: String(el.value),
             properties: {
               index: i,
               containerId: listId,
+              rawId,
               highlight: el.highlight,
             },
-          });
+          };
+          addEntity(graph, entData);
+
+          if (rawId) {
+            const aliasId = `${listId}-${rawId}`;
+            if (aliasId !== nodeId && !graph.entities.has(aliasId)) {
+              addEntity(graph, {
+                ...entData,
+                id: aliasId,
+                properties: {
+                  ...entData.properties,
+                  isAliasOf: nodeId,
+                },
+              });
+            }
+          }
 
           if (prevId) {
             addRelationship(graph, {
