@@ -34,7 +34,20 @@ export type UniversalSemanticRole =
   | "REFERENCE"
   | string;
 
-export type UniversalRelationshipCategory =
+export type SemanticRelationshipCategory =
+  | "causes"
+  | "depends-on"
+  | "sends"
+  | "receives"
+  | "contains"
+  | "transforms"
+  | "restores"
+  | "blocks"
+  | "enables"
+  | "reads"
+  | "writes"
+  | "calls"
+  | "returns"
   | "FLOW"
   | "DEPENDENCY"
   | "REFERENCE"
@@ -43,6 +56,47 @@ export type UniversalRelationshipCategory =
   | "CONNECTS"
   | "TRANSITIONS_TO"
   | string;
+
+export type UniversalRelationshipCategory = SemanticRelationshipCategory;
+
+export type SemanticStateType =
+  | "normal"
+  | "intermediate"
+  | "decision"
+  | "failure"
+  | "recovery"
+  | "terminal";
+
+export type StatePersistence =
+  | "temporary"
+  | "permanent"
+  | "restored"
+  | "consumed"
+  | "created"
+  | "destroyed";
+
+export interface SemanticOutcome {
+  id: string;
+  label: string;
+  condition?: string;
+  isTerminal?: boolean;
+  consequences: string[];
+  targetTransformationId?: string;
+  stateType?: "success" | "failure" | "recovery" | "normal" | "terminal";
+}
+
+export interface SemanticDecision {
+  id: string;
+  title?: string;
+  condition: string;
+  possibleOutcomes: SemanticOutcome[];
+  selectedOutcomeId: string;
+  unselectedOutcomeIds?: string[];
+  consequences: string[];
+  requiredFacts?: string[];
+  requiredInvariants?: string[];
+  pedagogicalRationale?: string;
+}
 
 export interface Entity {
   /** Stable semantic identifier that persists across ALL state transitions */
@@ -53,7 +107,7 @@ export interface Entity {
   label: string;
   /** Semantic properties and attributes */
   properties: SemanticEntityPropertyMap;
-  /** Optional state tag (e.g. 'active', 'visited', 'eliminated', 'pending', 'resolved') */
+  /** Optional state tag (e.g. 'active', 'visited', 'eliminated', 'pending', 'resolved', 'failed', 'recovered') */
   state?: string;
   /** Computational or educational value (e.g. 42, "200 OK", 0.05) */
   value?: unknown;
@@ -80,6 +134,12 @@ export interface Relationship {
   type: string;
   /** Visual or semantic direction */
   direction: RelationshipDirection;
+  /** Optional dynamic state (e.g. 'active', 'failed', 'recovered', 'severed') */
+  state?: string;
+  /** Optional high-level causal category */
+  category?: SemanticRelationshipCategory;
+  /** Explicit pedagogical causal meaning (e.g. "Debit operation causes Account A balance reduction") */
+  causalMeaning?: string;
   /** Semantic properties (weight, flow rate, protocol, style) */
   properties?: Record<string, unknown>;
   /** Optional display label */
@@ -113,6 +173,16 @@ export interface SemanticState {
   conditions: string[];
   /** Pedagogical observations for the learner in this state */
   observations: string[];
+  /** Conceptual state classification */
+  stateType?: SemanticStateType;
+  /** Active decision being evaluated at this state */
+  activeDecision?: SemanticDecision;
+  /** Outcome selected at this state */
+  decisionOutcome?: string;
+  /** Persistence guarantee of changes at this state */
+  persistence?: StatePersistence;
+  /** Explicit marker if this state is intermediate rather than committed */
+  isIntermediate?: boolean;
 }
 
 // ============================================================================
@@ -341,6 +411,44 @@ export function cloneSemanticState(state: SemanticState): SemanticState {
     derivedValues: { ...state.derivedValues },
     conditions: [...state.conditions],
     observations: [...state.observations],
+    stateType: state.stateType,
+    activeDecision: state.activeDecision ? { ...state.activeDecision } : undefined,
+    decisionOutcome: state.decisionOutcome,
+    persistence: state.persistence,
+    isIntermediate: state.isIntermediate,
+  };
+}
+
+export function createSemanticOutcome(
+  id: string,
+  label: string,
+  options?: Partial<SemanticOutcome>,
+): SemanticOutcome {
+  return {
+    id,
+    label,
+    consequences: options?.consequences || [],
+    ...options,
+  };
+}
+
+export function createSemanticDecision(
+  id: string,
+  condition: string,
+  possibleOutcomes: SemanticOutcome[],
+  selectedOutcomeId: string,
+  options?: Partial<SemanticDecision>,
+): SemanticDecision {
+  return {
+    id,
+    condition,
+    possibleOutcomes,
+    selectedOutcomeId,
+    unselectedOutcomeIds: possibleOutcomes
+      .filter((o) => o.id !== selectedOutcomeId)
+      .map((o) => o.id),
+    consequences: options?.consequences || [],
+    ...options,
   };
 }
 

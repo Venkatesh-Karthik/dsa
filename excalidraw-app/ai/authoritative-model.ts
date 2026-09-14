@@ -9,9 +9,34 @@
  */
 
 import { type ProblemModel } from "./problem-model";
-import { type SemanticWorld, type SemanticState, type Entity, type Relationship } from "./semantic-world";
-import { type Rule, type Invariant, type DerivedValue } from "./rules-invariants";
+import {
+  type SemanticWorld,
+  type SemanticState,
+  type Entity,
+  type Relationship,
+  type SemanticDecision,
+  type SemanticOutcome,
+  type SemanticStateType,
+  type StatePersistence,
+} from "./semantic-world";
+import {
+  type Rule,
+  type Invariant,
+  type DerivedValue,
+} from "./rules-invariants";
 import { type Confidence } from "./confidence-model";
+
+export type JourneyType =
+  | "linear"
+  | "branching"
+  | "merging"
+  | "cyclic"
+  | "conditional"
+  | "failure"
+  | "recovery"
+  | "retry"
+  | "terminal"
+  | "counterfactual";
 
 export interface GoalSatisfactionReport {
   satisfied: boolean;
@@ -32,6 +57,7 @@ export interface AuthoritativeTransformation {
   cause: string;
   action: string;
   preconditions: string[];
+  postconditions?: string[];
   affectedEntities: string[];
   affectedRelationships: string[];
   fromStateIndex: number;
@@ -46,6 +72,20 @@ export interface AuthoritativeTransformation {
   insight?: string;
   codeSnippet?: string;
   codeLanguage?: string;
+  /** Active decision evaluated in this transformation */
+  decision?: SemanticDecision;
+  /** Outcome selected when advancing from this step */
+  selectedOutcome?: string;
+  /** Unselected alternative outcomes (e.g. failure path when success is taken, or vice versa) */
+  alternativeOutcomes?: SemanticOutcome[];
+  /** Branch category of this transformation */
+  branchType?: "primary" | "failure" | "recovery" | "counterfactual";
+  /** Classification of resulting state */
+  stateType?: SemanticStateType;
+  /** Persistence of changes produced */
+  persistence?: StatePersistence;
+  /** Causal relationship role */
+  causalRole?: "causes" | "enables" | "requires" | "prevents" | "restores";
 }
 
 export interface AuthoritativeSemanticModel {
@@ -66,10 +106,16 @@ export interface AuthoritativeSemanticModel {
   derivedValuesByState: Record<number, Record<string, DerivedValue>>;
   /** Independent goal satisfaction report */
   goalSatisfaction: GoalSatisfactionReport;
+  /** Decisions captured across the conceptual journey */
+  decisions?: SemanticDecision[];
+  /** Overall conceptual journey topology */
+  journeyType?: JourneyType;
   /** Pedagogical teaching strategy metadata */
   strategy: string;
   /** Epistemic confidence in this authoritative model */
   confidence: Confidence;
+  /** Universal teaching blueprint */
+  blueprint?: any;
   /** Timestamp when validated and locked */
   timestamp: number;
 }

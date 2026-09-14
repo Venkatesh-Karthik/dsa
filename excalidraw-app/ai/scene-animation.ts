@@ -138,6 +138,56 @@ function resolveOwnerWindow(excalidrawAPI: ExcalidrawImperativeAPI): Window {
 }
 
 /**
+ * Universal structural validator for intermediate animation frames.
+ * Ensures the canvas scene never renders malformed elements, non-finite coordinates,
+ * or corrupted intermediate states.
+ */
+export function validateIntermediateFrameElements(
+  elements: readonly ExcalidrawElement[],
+): { valid: boolean; reason?: string } {
+  for (const el of elements) {
+    if (el.isDeleted) continue;
+
+    // Check finite coordinates and dimensions
+    if (!Number.isFinite(el.x) || !Number.isFinite(el.y)) {
+      return {
+        valid: false,
+        reason: `Element ${el.id} (${el.type}) has non-finite coordinates (${el.x}, ${el.y})`,
+      };
+    }
+    if (!Number.isFinite(el.width) || !Number.isFinite(el.height)) {
+      return {
+        valid: false,
+        reason: `Element ${el.id} (${el.type}) has non-finite dimensions (${el.width}x${el.height})`,
+      };
+    }
+    if (el.width < 0 || el.height < 0) {
+      return {
+        valid: false,
+        reason: `Element ${el.id} (${el.type}) has negative dimensions (${el.width}x${el.height})`,
+      };
+    }
+
+    // Connector control points check
+    if (el.type === "arrow") {
+      const arrow = el as ExcalidrawArrowElement;
+      if (arrow.points) {
+        for (const pt of arrow.points) {
+          if (!Number.isFinite(pt[0]) || !Number.isFinite(pt[1])) {
+            return {
+              valid: false,
+              reason: `Arrow ${el.id} has non-finite control point [${pt[0]}, ${pt[1]}]`,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
  * Smoothly animates the canvas scene from its current element state to targetElements.
  */
 export function animateSceneTransition(
@@ -171,11 +221,12 @@ export function animateSceneTransition(
 
     const currentScene = excalidrawAPI.getSceneElementsIncludingDeleted();
 
-    // Map existing elements by dslId, fallback to internal id
+    // Map existing active elements by dslId and id
     const currentByDslId = new Map<string, ExcalidrawElement>();
     const currentById = new Map<string, ExcalidrawElement>();
 
     for (const el of currentScene) {
+      if (el.isDeleted) continue;
       currentById.set(el.id, el);
       const dslId = el.customData?.dslId as string | undefined;
       if (dslId) {
@@ -190,9 +241,18 @@ export function animateSceneTransition(
     for (const targetEl of targetElements) {
       matchedTargetIds.add(targetEl.id);
       const dslId = targetEl.customData?.dslId as string | undefined;
-      const matchedCurrent =
-        (dslId ? currentByDslId.get(dslId) : null) ??
-        currentById.get(targetEl.id);
+
+      // Strict 1-to-1 matching: first by exact ID, then by scoped dslId
+      let matchedCurrent: ExcalidrawElement | undefined;
+      const byId = currentById.get(targetEl.id);
+      if (byId && !matchedCurrentIds.has(byId.id)) {
+        matchedCurrent = byId;
+      } else if (dslId) {
+        const byDsl = currentByDslId.get(dslId);
+        if (byDsl && !matchedCurrentIds.has(byDsl.id)) {
+          matchedCurrent = byDsl;
+        }
+      }
 
       if (matchedCurrent && !matchedCurrent.isDeleted) {
         matchedCurrentIds.add(matchedCurrent.id);
@@ -325,16 +385,16 @@ export function animateSceneTransition(
         const frameElements: ExcalidrawElement[] = [];
 
         for (const item of animatedItems) {
+          const isText = item.targetElement.type === "text";
           const currentX = lerp(item.startX, item.targetX, easedT);
           const currentY = lerp(item.startY, item.targetY, easedT);
-          const currentW = Math.max(
-            1,
-            lerp(item.startWidth, item.targetWidth, easedT),
-          );
-          const currentH = Math.max(
-            1,
-            lerp(item.startHeight, item.targetHeight, easedT),
-          );
+          // Never lerp arbitrary dimensions on text elements to prevent word-wrap corruption & clipping
+          const currentW = isText
+            ? item.targetElement.width
+            : Math.max(1, lerp(item.startWidth, item.targetWidth, easedT));
+          const currentH = isText
+            ? item.targetElement.height
+            : Math.max(1, lerp(item.startHeight, item.targetHeight, easedT));
           const currentOpacity = Math.round(
             lerp(item.startOpacity, item.targetOpacity, easedT),
           );
@@ -373,7 +433,27 @@ export function animateSceneTransition(
           frameElements.push(interpolated);
         }
 
-        // Commit intermediate frame without touching undo history
+        // Validate intermediate frame elements: never render corrupted or non-finite intermediate state
+        const validation = validateIntermediateFrameElements(frameElements);
+        if (!validation.valid) {
+          console.warn(
+            "[Cognora Animation] Invalid intermediate frame rejected:",
+            validation.reason,
+          );
+          cleanup();
+          excalidrawAPI.updateScene({
+            elements: syncInvalidIndices([
+              ...staticElements,
+              ...(targetElements as ExcalidrawElement[]),
+            ]),
+            captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+          });
+          options?.onComplete?.();
+          resolve();
+          return;
+        }
+
+        // Commit valid intermediate frame without touching undo history
         excalidrawAPI.updateScene({
           elements: [...staticElements, ...frameElements],
           captureUpdate: CaptureUpdateAction.NEVER,
@@ -410,3 +490,241 @@ export function animateSceneTransition(
     activeAnimationId = ownerWindow.requestAnimationFrame(step);
   });
 }
+
+// ============================================================================
+// Semantic Animation Planning Engine
+// ============================================================================
+
+export type SemanticMotionType =
+  | "CREATE"
+  | "REMOVE"
+  | "MOVE"
+  | "TRANSFER"
+  | "CONNECT"
+  | "DISCONNECT"
+  | "MUTATE"
+  | "HIGHLIGHT"
+  | "STATE_CHANGE"
+  | "EXPAND"
+  | "COLLAPSE"
+  | "BRANCH"
+  | "MERGE"
+  | "FLOW"
+  | "PULSE"
+  | "EMPHASIZE";
+
+export interface SemanticAnimationAction {
+  motionType: SemanticMotionType;
+  entityId: string;
+  sourceEntityId?: string;
+  targetEntityId?: string;
+  description: string;
+  durationMs: number;
+  easing: "ease-in-out" | "ease-out" | "ease-in" | "linear";
+  properties?: Record<string, any>;
+}
+
+export interface SemanticAnimationPlan {
+  stepIndex: number;
+  actions: SemanticAnimationAction[];
+  totalDurationMs: number;
+}
+
+/**
+ * Derives purposeful semantic animation plan from state graph differences.
+ * Animations communicate conceptual meaning rather than decorative noise.
+ */
+export function deriveSemanticAnimationPlan(
+  previousGraph: { entities: Map<string, any>; relationships?: Map<string, any> } | null,
+  nextGraph: { entities: Map<string, any>; relationships?: Map<string, any> },
+  stepIndex = 0,
+  transformation?: any,
+): SemanticAnimationPlan {
+  const actions: SemanticAnimationAction[] = [];
+
+  if (!previousGraph) {
+    // Initial scene creation: fluid stagger-in
+    for (const [id, ent] of nextGraph.entities.entries()) {
+      actions.push({
+        motionType: "CREATE",
+        entityId: id,
+        description: `Materialize ${ent.label || id}`,
+        durationMs: 400,
+        easing: "ease-out",
+      });
+    }
+    return {
+      stepIndex,
+      actions,
+      totalDurationMs: 400,
+    };
+  }
+
+  // 1. Newly created entities
+  for (const [id, ent] of nextGraph.entities.entries()) {
+    if (!previousGraph.entities.has(id)) {
+      const isMessageOrPacket =
+        ent.primitiveType === "Message" ||
+        ent.primitiveType === "Packet" ||
+        ent.primitiveType === "Signal";
+
+      actions.push({
+        motionType: isMessageOrPacket ? "TRANSFER" : "CREATE",
+        entityId: id,
+        description: isMessageOrPacket
+          ? `Transfer ${ent.label || id} across endpoints`
+          : `Create ${ent.label || id}`,
+        durationMs: 380,
+        easing: "ease-out",
+      });
+    }
+  }
+
+  // 2. Removed entities
+  for (const [id, prevEnt] of previousGraph.entities.entries()) {
+    if (!nextGraph.entities.has(id)) {
+      actions.push({
+        motionType: "REMOVE",
+        entityId: id,
+        description: `Deallocate ${prevEnt.label || id}`,
+        durationMs: 320,
+        easing: "ease-in",
+      });
+    }
+  }
+
+  // 3. Persistent entities inspection (state changes, mutations, movements)
+  for (const [id, nextEnt] of nextGraph.entities.entries()) {
+    const prevEnt = previousGraph.entities.get(id);
+    if (!prevEnt) continue;
+
+    // State transition
+    if (prevEnt.state !== nextEnt.state) {
+      const isFailure =
+        String(nextEnt.state).toLowerCase().includes("fail") ||
+        String(nextEnt.state).toLowerCase().includes("abort");
+      actions.push({
+        motionType: isFailure ? "PULSE" : "STATE_CHANGE",
+        entityId: id,
+        description: `Transition ${nextEnt.label || id} state from '${prevEnt.state}' to '${nextEnt.state}'`,
+        durationMs: 400,
+        easing: "ease-in-out",
+        properties: { fromState: prevEnt.state, toState: nextEnt.state },
+      });
+    }
+
+    // Value mutation
+    if (prevEnt.value !== nextEnt.value && nextEnt.value !== undefined) {
+      actions.push({
+        motionType: "MUTATE",
+        entityId: id,
+        description: `Mutate ${nextEnt.label || id} value from '${prevEnt.value}' to '${nextEnt.value}'`,
+        durationMs: 350,
+        easing: "ease-in-out",
+      });
+    }
+
+    // Focus/Highlight
+    if (!prevEnt.properties?.isHighlighted && nextEnt.properties?.isHighlighted) {
+      actions.push({
+        motionType: "HIGHLIGHT",
+        entityId: id,
+        description: `Emphasize focus on ${nextEnt.label || id}`,
+        durationMs: 300,
+        easing: "ease-out",
+      });
+    }
+
+    // Compound Table Inspection
+    if (nextEnt.primitiveType === "Table") {
+      const prevRows = (prevEnt.properties?.rows as any[]) || [];
+      const nextRows = (nextEnt.properties?.rows as any[]) || [];
+      if (nextRows.length > prevRows.length) {
+        actions.push({
+          motionType: "EXPAND",
+          entityId: id,
+          description: `Insert row into ${nextEnt.label || id}`,
+          durationMs: 350,
+          easing: "ease-out",
+        });
+      } else if (nextRows.length < prevRows.length) {
+        actions.push({
+          motionType: "COLLAPSE",
+          entityId: id,
+          description: `Remove row from ${nextEnt.label || id}`,
+          durationMs: 320,
+          easing: "ease-in",
+        });
+      }
+
+      const prevHighlightRow = prevEnt.properties?.highlightRowIndex;
+      const nextHighlightRow = nextEnt.properties?.highlightRowIndex;
+      if (
+        prevHighlightRow !== nextHighlightRow &&
+        nextHighlightRow !== undefined
+      ) {
+        actions.push({
+          motionType: "HIGHLIGHT",
+          entityId: id,
+          description: `Highlight row ${nextHighlightRow + 1} in ${nextEnt.label || id}`,
+          durationMs: 300,
+          easing: "ease-out",
+        });
+      }
+    }
+  }
+
+  // 4. Relationship changes (CONNECT, DISCONNECT)
+  if (nextGraph.relationships) {
+    for (const [relId, rel] of nextGraph.relationships.entries()) {
+      if (!previousGraph.relationships?.has(relId)) {
+        actions.push({
+          motionType: "CONNECT",
+          entityId: relId,
+          sourceEntityId: rel.sourceEntityId,
+          targetEntityId: rel.targetEntityId,
+          description: `Connect ${rel.sourceEntityId} -> ${rel.targetEntityId}${rel.label ? ` (${rel.label})` : ""}`,
+          durationMs: 380,
+          easing: "ease-out",
+        });
+      }
+    }
+  }
+
+  if (previousGraph.relationships) {
+    for (const [relId, rel] of previousGraph.relationships.entries()) {
+      if (!nextGraph.relationships?.has(relId)) {
+        actions.push({
+          motionType: "DISCONNECT",
+          entityId: relId,
+          sourceEntityId: rel.sourceEntityId,
+          targetEntityId: rel.targetEntityId,
+          description: `Disconnect ${rel.sourceEntityId} -> ${rel.targetEntityId}`,
+          durationMs: 300,
+          easing: "ease-in",
+        });
+      }
+    }
+  }
+
+  // 5. Decision branching
+  if (transformation?.decision) {
+    actions.push({
+      motionType: "BRANCH",
+      entityId: transformation.decision.id || "decision_point",
+      description: `Evaluate decision '${transformation.decision.question}' -> selected '${transformation.selectedOutcome}'`,
+      durationMs: 420,
+      easing: "ease-in-out",
+    });
+  }
+
+  // Calculate total duration
+  const maxActionDuration = actions.reduce((m, a) => Math.max(m, a.durationMs), 350);
+
+  return {
+    stepIndex,
+    actions,
+    totalDurationMs: Math.min(600, maxActionDuration),
+  };
+}
+

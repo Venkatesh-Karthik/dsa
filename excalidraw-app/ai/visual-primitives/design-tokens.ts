@@ -181,6 +181,45 @@ export function mapSemanticStateToNodeTokens(highlight?: string) {
     case "visited": return TOKENS.NODE.VISITED;
     case "path": return TOKENS.NODE.IN_PATH;
     case "eliminated": return { ...TOKENS.NODE.DEFAULT, fill: PALETTE.slate100, textPrimary: PALETTE.slate300 };
+    case "failure":
+    case "failed":
+    case "error":
+      return {
+        fill: PALETTE.rose50,
+        stroke: PALETTE.rose500,
+        textPrimary: PALETTE.rose600,
+        textSecondary: PALETTE.rose600,
+        strokeWidth: 2,
+      };
+    case "recovery":
+    case "recovered":
+    case "rollback":
+    case "rolled_back":
+      return {
+        fill: PALETTE.amber50,
+        stroke: PALETTE.amber500,
+        textPrimary: PALETTE.amber600,
+        textSecondary: PALETTE.amber600,
+        strokeWidth: 2,
+      };
+    case "decision":
+    case "branch":
+      return {
+        fill: PALETTE.purple50,
+        stroke: PALETTE.purple500,
+        textPrimary: PALETTE.purple600,
+        textSecondary: PALETTE.purple600,
+        strokeWidth: 2,
+      };
+    case "success":
+    case "committed":
+      return {
+        fill: PALETTE.green50,
+        stroke: PALETTE.green500,
+        textPrimary: PALETTE.green600,
+        textSecondary: PALETTE.green600,
+        strokeWidth: 2,
+      };
     default: return TOKENS.NODE.DEFAULT;
   }
 }
@@ -190,6 +229,20 @@ export function mapSemanticStateToEdgeTokens(highlight?: string) {
     case "path": return TOKENS.EDGE.IN_PATH;
     case "visited": return TOKENS.EDGE.VISITED;
     case "active": return TOKENS.EDGE.ACTIVE;
+    case "failure":
+    case "failed":
+    case "error":
+      return { stroke: PALETTE.rose500, strokeWidth: 2 };
+    case "recovery":
+    case "recovered":
+    case "rollback":
+      return { stroke: PALETTE.amber500, strokeWidth: 2 };
+    case "decision":
+    case "branch":
+      return { stroke: PALETTE.purple500, strokeWidth: 2 };
+    case "success":
+    case "committed":
+      return { stroke: PALETTE.green500, strokeWidth: 2 };
     default: return TOKENS.EDGE.DEFAULT;
   }
 }

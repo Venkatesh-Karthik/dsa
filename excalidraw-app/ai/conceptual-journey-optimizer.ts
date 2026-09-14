@@ -23,6 +23,8 @@ export type ConceptualRole =
   | "diagnosis" // Evaluation, condition check, imbalance/error detection
   | "decision" // Strategy or case classification (e.g. LL vs LR, branch choice)
   | "mechanism" // Core transformation, restructuring, transmission, calculation
+  | "failure" // Conceptual failure state (e.g. transaction error, packet loss, constraint breach)
+  | "recovery" // Restorative transition (e.g. rollback, retransmission, rebalance)
   | "verification" // Checking that invariant is being satisfied
   | "proof" // Final goal verified and invariants restored
   | "bookkeeping"; // Minor property update, redundant highlight, decomposed sub-step
@@ -52,6 +54,18 @@ export interface ConceptualMilestone {
   isProtocolMessage?: boolean;
   createdEntities: string[];
   absorbedStepsCount: number;
+  learningValueScore?: number;
+  preconditions?: string[];
+  postconditions?: string[];
+  decision?: any;
+  stateType?: any;
+  persistence?: any;
+  causalRole?: any;
+  invariants?: any[];
+  failureContext?: any;
+  recoveryContext?: any;
+  counterfactual?: any;
+  [key: string]: any;
 }
 
 export interface JourneyOptimizationContext {
@@ -350,13 +364,25 @@ export class ConceptualJourneyOptimizer {
     }
 
     // Domain-agnostic pedagogical role classification
-    const isDiagnosis =
-      /\b(detect|diagnos|imbalance|violat|check|evaluat|inspect|condition|exceed|unbalance|mismatch|conflict|invalid|deficit|overflow|underflow|error|calculat.*(balance|factor|invariant|metric|bound|error))\b/i.test(
+    const isFailure =
+      /\b(fail|failed|failure|abort|aborted|error|timeout|packet loss|dropped|violation|exception)\b/i.test(
+        textCorpus,
+      );
+
+    const isRecovery =
+      /\b(rollback|rolled back|retry|retransmit|retransmission|rebalance|rebalancing|compensat|recover|restore|restoration|fallback)\b/i.test(
         textCorpus,
       );
 
     const isDecision =
       /\b(case\b|strategy|decision|determine|classify|branch|choice|select.*approach)\b/i.test(
+        textCorpus,
+      ) ||
+      title.toLowerCase().includes("decision") ||
+      /\bcondition\b.*(?:\?|succeed|fail|met|true|false)/i.test(textCorpus);
+
+    const isDiagnosis =
+      /\b(detect|diagnos|imbalance|violat|check|evaluat|inspect|condition|exceed|unbalance|mismatch|conflict|invalid|deficit|overflow|underflow|error|calculat.*(balance|factor|invariant|metric|bound|error))\b/i.test(
         textCorpus,
       );
 
@@ -376,7 +402,8 @@ export class ConceptualJourneyOptimizer {
       /\b(create|allocat|new\b|insert|add|send|receive|trigger|request|initiate|stimulate|query|input|push|emit)\b/i.test(
         textCorpus,
       ) &&
-      !isDiagnosis;
+      !isDiagnosis &&
+      !isDecision;
 
     // A step is pure bookkeeping if its textual description explicitly denotes
     // internal recalculation / pointer adjust without being a distinct stage/concept.
@@ -386,15 +413,42 @@ export class ConceptualJourneyOptimizer {
       );
 
     const isPureBookkeeping =
-      isBookkeepingMarker && !hasCompositeAction && !isDiagnosis && !isProof;
+      isBookkeepingMarker &&
+      !hasCompositeAction &&
+      !isDiagnosis &&
+      !isProof &&
+      !isFailure &&
+      !isRecovery;
+
+    const explicitRole = String(step.role || step.conceptualRole || "")
+      .toLowerCase()
+      .trim();
+    const VALID_ROLES = new Set<string>([
+      "setup",
+      "perturbation",
+      "diagnosis",
+      "decision",
+      "mechanism",
+      "failure",
+      "recovery",
+      "verification",
+      "proof",
+      "bookkeeping",
+    ]);
 
     let role: ConceptualRole = "mechanism";
-    if (isProof) {
-      role = "proof";
-    } else if (isDiagnosis) {
-      role = "diagnosis";
+    if (VALID_ROLES.has(explicitRole)) {
+      role = explicitRole as ConceptualRole;
     } else if (isDecision) {
       role = "decision";
+    } else if (isProof) {
+      role = "proof";
+    } else if (isFailure) {
+      role = "failure";
+    } else if (isRecovery) {
+      role = "recovery";
+    } else if (isDiagnosis) {
+      role = "diagnosis";
     } else if (isVerification) {
       role = "verification";
     } else if (isPerturbation) {
@@ -455,6 +509,17 @@ export class ConceptualJourneyOptimizer {
       return false;
     }
 
+    // RULE 1B: Never merge across Failure, Recovery, or Decision boundaries
+    if (roleA === "failure" || roleB === "failure") {
+      return false;
+    }
+    if (roleA === "recovery" || roleB === "recovery") {
+      return false;
+    }
+    if (roleA === "decision" || roleB === "decision") {
+      return false;
+    }
+
     // RULE 2: Never merge across Diagnosis / Perturbation boundaries
     // The learner must see: Perturbation (Input) -> Problem Diagnosed -> Mechanism Applied
     if (roleA === "perturbation" && roleB === "diagnosis") {
@@ -463,10 +528,8 @@ export class ConceptualJourneyOptimizer {
     if (roleA === "diagnosis" && roleB === "mechanism") {
       return false;
     }
-    if (roleA === "decision" && roleB === "mechanism") {
-      if (intent === "derive" || intent === "why") {
-        return false;
-      }
+    if (roleA === "mechanism" && roleB === "diagnosis") {
+      return false;
     }
 
     // RULE 3: Causal Relay Guard across distinct protocol actors / conduits
@@ -587,6 +650,16 @@ export class ConceptualJourneyOptimizer {
     causalTarget?: string;
     isProtocolMessage?: boolean;
   }): ConceptualMilestone {
+    const learningValueScore = this.calculateLearningValueScore({
+      role: stepInfo.role,
+      title: stepInfo.title,
+      explanation: stepInfo.explanation,
+      affectedEntities: stepInfo.affectedEntities,
+      createdEntities: stepInfo.createdEntities,
+      operationsCount: (stepInfo.raw.operations || []).length,
+      isProtocolMessage: stepInfo.isProtocolMessage,
+    });
+
     return {
       title: stepInfo.title,
       explanation: stepInfo.explanation,
@@ -602,6 +675,23 @@ export class ConceptualJourneyOptimizer {
       causalTarget: stepInfo.causalTarget,
       isProtocolMessage: stepInfo.isProtocolMessage,
       absorbedStepsCount: 1,
+      learningValueScore,
+      preconditions: stepInfo.raw.preconditions
+        ? [...stepInfo.raw.preconditions]
+        : undefined,
+      postconditions: stepInfo.raw.postconditions
+        ? [...stepInfo.raw.postconditions]
+        : undefined,
+      decision: stepInfo.raw.decision,
+      stateType: stepInfo.raw.stateType,
+      persistence: stepInfo.raw.persistence,
+      causalRole: stepInfo.raw.causalRole,
+      invariants: stepInfo.raw.invariants
+        ? [...stepInfo.raw.invariants]
+        : undefined,
+      failureContext: stepInfo.raw.failureContext,
+      recoveryContext: stepInfo.raw.recoveryContext,
+      counterfactual: stepInfo.raw.counterfactual,
     };
   }
 
@@ -703,6 +793,25 @@ export class ConceptualJourneyOptimizer {
       conceptualRole = "proof";
     }
 
+    const learningValueScore = this.calculateLearningValueScore({
+      role: conceptualRole,
+      title,
+      explanation,
+      affectedEntities: Array.from(affectedSet),
+      createdEntities: Array.from(createdSet),
+      operationsCount: operations.length,
+      isProtocolMessage: milestone.isProtocolMessage || step.isProtocolMessage,
+    });
+
+    const combinedPre = [
+      ...(milestone.preconditions || []),
+      ...(step.raw.preconditions || []),
+    ];
+    const combinedPost = [
+      ...(milestone.postconditions || []),
+      ...(step.raw.postconditions || []),
+    ];
+
     return {
       title,
       explanation,
@@ -718,11 +827,94 @@ export class ConceptualJourneyOptimizer {
       causalTarget: step.causalTarget || milestone.causalTarget,
       isProtocolMessage: milestone.isProtocolMessage || step.isProtocolMessage,
       absorbedStepsCount: milestone.absorbedStepsCount + 1,
+      learningValueScore,
+      preconditions: combinedPre.length > 0 ? combinedPre : undefined,
+      postconditions: combinedPost.length > 0 ? combinedPost : undefined,
+      decision: step.raw.decision || milestone.decision,
+      stateType: step.raw.stateType || milestone.stateType,
+      persistence: step.raw.persistence || milestone.persistence,
+      causalRole: step.raw.causalRole || milestone.causalRole,
+      invariants: step.raw.invariants || milestone.invariants,
+      failureContext: step.raw.failureContext || milestone.failureContext,
+      recoveryContext: step.raw.recoveryContext || milestone.recoveryContext,
+      counterfactual: step.raw.counterfactual || milestone.counterfactual,
     };
   }
 
   /**
-   * Post-processes milestones to ensure causal completeness and final proof presence.
+   * Universal Learning Value Score (0.0 - 1.0)
+   * Evaluates the pedagogical contribution of a candidate step or transformation.
+   */
+  public static calculateLearningValueScore(step: {
+    role: ConceptualRole;
+    title: string;
+    explanation: string;
+    affectedEntities: string[];
+    createdEntities: string[];
+    operationsCount: number;
+    isProtocolMessage?: boolean;
+  }): number {
+    let newKnowledge = 0.5;
+    if (step.createdEntities.length > 0) newKnowledge += 0.3;
+    if (step.role === "setup" || step.role === "perturbation")
+      newKnowledge += 0.2;
+
+    let causalImportance = 0.4;
+    if (
+      step.role === "mechanism" ||
+      step.role === "decision" ||
+      step.role === "failure" ||
+      step.role === "recovery" ||
+      step.isProtocolMessage
+    ) {
+      causalImportance += 0.5;
+    }
+
+    let stateImportance = 0.3;
+    if (
+      step.operationsCount > 0 ||
+      step.role === "proof" ||
+      step.role === "recovery"
+    ) {
+      stateImportance += 0.5;
+    }
+
+    let misconceptionValue = 0.2;
+    if (
+      step.role === "failure" ||
+      step.role === "recovery" ||
+      step.role === "decision"
+    ) {
+      misconceptionValue += 0.6;
+    }
+
+    let goalProgress = 0.4;
+    if (
+      step.role === "proof" ||
+      step.role === "verification" ||
+      step.role === "mechanism"
+    ) {
+      goalProgress += 0.5;
+    }
+
+    const redundancyPenalty = step.role === "bookkeeping" ? 0.6 : 0.0;
+    const cognitiveLoadPenalty = step.affectedEntities.length > 6 ? 0.2 : 0.0;
+
+    const rawScore =
+      newKnowledge * 0.25 +
+      causalImportance * 0.25 +
+      stateImportance * 0.2 +
+      misconceptionValue * 0.15 +
+      goalProgress * 0.15 -
+      redundancyPenalty -
+      cognitiveLoadPenalty;
+
+    return Math.max(0.1, Math.min(1.0, Math.round(rawScore * 100) / 100));
+  }
+
+  /**
+   * Post-processes milestones to ensure causal completeness, introduce-before-transform,
+   * and final proof presence.
    */
   private static postProcessMilestones(
     milestones: ConceptualMilestone[],
@@ -732,15 +924,34 @@ export class ConceptualJourneyOptimizer {
       return [];
     }
 
+    const introducedEntities = new Set<string>(
+      (context.initialEntities || []).map((e) => e.id),
+    );
+
     return milestones.map((m, idx) => {
       let title = m.title.trim();
       if (!title || title.startsWith("Transition ")) {
         title = `Milestone ${idx + 1}: ${m.conceptualRole.toUpperCase()}`;
       }
+
+      // Track newly introduced entities
+      m.createdEntities.forEach((id) => introducedEntities.add(id));
+
+      // Introduce-before-transform pedagogical rule:
+      // If a mechanism operates on an entity never introduced, ensure explanation introduces its role
+      let explanation = m.explanation.trim();
+      const unintroduced = m.affectedEntities.filter(
+        (id) => !introducedEntities.has(id),
+      );
+      if (unintroduced.length > 0 && m.conceptualRole === "mechanism") {
+        explanation = `Introducing ${unintroduced.join(", ")}: ${explanation}`;
+        unintroduced.forEach((id) => introducedEntities.add(id));
+      }
+
       return {
         ...m,
         title,
-        explanation: m.explanation.trim(),
+        explanation,
       };
     });
   }

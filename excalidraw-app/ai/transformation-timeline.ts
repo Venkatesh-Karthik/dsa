@@ -61,6 +61,18 @@ import {
 } from "./transformation-validator";
 import type { AuthoritativeSemanticModel } from "./authoritative-model";
 import { resolveSemanticGrammar } from "./visual-grammar/grammar-resolver";
+import { extractVisualRequirements } from "./visual-requirements";
+import { composeVisualScene } from "./scene-composer";
+import { VisualEvidenceValidator } from "./visual-evidence-validator";
+import {
+  deriveSemanticAnimationPlan,
+  type SemanticAnimationPlan,
+} from "./scene-animation";
+import { createConfidence } from "./confidence-model";
+import {
+  VisualReasoningEngine,
+  type VisualReasoningPlan,
+} from "./visual-reasoning";
 
 export interface TransformationMeta {
   id: string;
@@ -69,6 +81,9 @@ export interface TransformationMeta {
   codeContext?: CodeContext;
   calculations?: string;
   insight?: string;
+  animationPlan?: SemanticAnimationPlan;
+  evidenceValidation?: any;
+  visualStep?: any;
 }
 
 export interface CompiledTimeline {
@@ -77,6 +92,9 @@ export interface CompiledTimeline {
   states: SceneState[]; // Index 0 = initialScene, Index 1 = after T1, etc.
   meta: TransformationMeta[];
   currentIndex: number;
+  milestones?: any[];
+  visualPlan?: VisualReasoningPlan;
+  hasFramedViewport?: boolean;
 }
 
 /**
@@ -86,129 +104,36 @@ export interface CompiledTimeline {
  */
 export function compileAuthoritativeTimeline(
   model: AuthoritativeSemanticModel,
-  options?: { prompt?: string },
+  options?: { prompt?: string; milestones?: any[] },
 ): CompiledTimeline {
+  if (!model.world && model.states?.[0]) {
+    model.world = {
+      entities: Array.from(model.states[0].entities.values()),
+      relationships: Array.from(model.states[0].relationships.values()),
+      states: [],
+    } as any;
+  }
   const lessonId = model.id || "authoritative-lesson";
   const states: SceneState[] = [];
   const meta: TransformationMeta[] = [];
   let previousLayoutPositions:
     | Map<string, { x: number; y: number }>
     | undefined;
+  let previousGraph: SceneGraph | null = null;
 
-  const rawConcept =
-    (model.problem as any)?.concept ||
-    model.problem?.question ||
-    options?.prompt ||
-    "generic";
-  const resolvedGrammar = resolveSemanticGrammar(
-    model.world,
-    rawConcept,
-    model.problem?.intent,
-  );
-  const conceptType = resolvedGrammar.type;
+  // Plan visual teaching architecture via Universal Visual Reasoning Engine 5.0
+  const visualPlan = VisualReasoningEngine.plan(model, options);
 
   for (let sIdx = 0; sIdx < model.states.length; sIdx++) {
     const semState = model.states[sIdx];
-    let stateRootId: string | undefined = semState.properties?.rootEntityId as
-      | string
-      | undefined;
-    if (!stateRootId) {
-      for (const ent of semState.entities.values()) {
-        if (ent.semanticRole === "root") {
-          stateRootId = ent.id;
-          break;
-        }
-      }
-    }
-    const graph: SceneGraph = {
-      entities: new Map(),
-      relationships: new Map(),
-      annotations: new Map(),
-      metadata: {
-        conceptType,
-        layoutStrategy: resolvedGrammar.layoutStrategy,
-        title: semState.name || model.problem?.objective,
-        rootEntityId: stateRootId,
-      },
-    };
+    // Compile authoritative SceneGraph for this state using the visual reasoning plan
+    const graph = VisualReasoningEngine.compileSceneGraphForState(
+      model,
+      visualPlan,
+      sIdx,
+    );
 
-    // 1. Project Entities maintaining stable IDs
-    for (const [id, ent] of semState.entities.entries()) {
-      let primType = ent.type;
-      const lowerType = ent.type.toLowerCase();
-      const lowerLabel = (ent.label || ent.id).toLowerCase();
-      const lowerRole = (ent.semanticRole || "").toLowerCase();
-
-      if (lowerType.includes("tree")) primType = "TreeNode";
-      else if (lowerType.includes("graph")) primType = "GraphNode";
-      else if (lowerType.includes("array") || lowerType.includes("cell"))
-        primType = "ArrayCell";
-      else if (lowerType.includes("list") || lowerType.includes("link"))
-        primType = "LinkedListNode";
-      else if (lowerType.includes("stack") || lowerType.includes("frame"))
-        primType = "StackFrame";
-      else if (lowerType.includes("queue")) primType = "GenericEntity";
-      else if (
-        lowerType.includes("client") ||
-        lowerLabel.includes("client") ||
-        lowerRole === "client"
-      )
-        primType = "Client";
-      else if (
-        lowerType.includes("server") ||
-        lowerLabel.includes("server") ||
-        lowerRole === "server"
-      )
-        primType = "Server";
-      else if (
-        lowerType.includes("packet") ||
-        lowerType.includes("message") ||
-        lowerRole === "message"
-      )
-        primType = "Packet";
-      else if (lowerType.includes("table") || lowerRole === "table")
-        primType = "DatabaseNode";
-      else if (lowerType.includes("state") || lowerRole === "state_node")
-        primType = "StateNode";
-      else if (lowerType.includes("process") || lowerRole === "process")
-        primType = "ProcessNode";
-      else if (lowerType.includes("memory") || lowerRole === "memory")
-        primType = "MemoryBlock";
-
-      graph.entities.set(id, {
-        id: ent.id,
-        primitiveType: primType,
-        semanticRole: ent.semanticRole || "component",
-        label: ent.label || ent.id,
-        value: ent.value,
-        state: ent.state,
-        properties: {
-          ...(ent.properties || {}),
-          highlight: ent.properties?.highlight,
-          color: ent.properties?.color,
-        },
-      });
-    }
-
-    // 2. Project Relationships maintaining stable IDs
-    for (const [id, rel] of semState.relationships.entries()) {
-      graph.relationships.set(id, {
-        id: rel.id,
-        sourceEntityId: rel.source,
-        targetEntityId: rel.target,
-        type: rel.type,
-        label: rel.label,
-        properties: {
-          directed:
-            rel.direction !== "none" && rel.direction !== "bidirectional",
-          ...(rel.properties || {}),
-          highlight: (rel.properties as any)?.highlight,
-          color: (rel.properties as any)?.color,
-        },
-      });
-    }
-
-    // 3. Compute deterministic layout from graph topology
+    // Compute deterministic layout from graph topology
     const layout = computeSceneGraphLayout(
       graph,
       { x: 140, y: 120 },
@@ -218,30 +143,65 @@ export function compileAuthoritativeTimeline(
     states.push(createSceneState(graph, layout.positions, layout.bounds));
     previousLayoutPositions = layout.positions;
 
-    // 4. Project transformation metadata
+    // Project transformation metadata
+    let stepTitle = "";
+    let stepExplanation = "";
+    let stepCalculations: string | undefined;
+    let stepInsight: string | undefined;
+    let stepCodeContext: CodeContext | undefined;
+    const trans = sIdx > 0 ? model.transformations[sIdx - 1] : undefined;
+
     if (sIdx === 0) {
-      meta.push({
-        id: "initial",
-        title: semState.name || model.problem?.objective || "Initial State",
-        explanation:
-          semState.description || "Initial state of the verified concept.",
-      });
+      stepTitle = semState.name || model.problem?.objective || "Initial State";
+      stepExplanation =
+        semState.description || "Initial state of the verified concept.";
     } else {
-      const trans = model.transformations[sIdx - 1];
-      meta.push({
-        id: trans?.id || `t-${sIdx}`,
-        title: trans?.title || semState.name || `Step ${sIdx}`,
-        explanation: trans?.explanation || semState.description || "",
-        calculations: trans?.calculations,
-        insight: trans?.insight,
-        codeContext: trans?.codeSnippet
-          ? {
-              code: trans.codeSnippet,
-              language: trans.codeLanguage || "typescript",
-            }
-          : undefined,
-      });
+      stepTitle = trans?.title || semState.name || `Step ${sIdx}`;
+      stepExplanation = trans?.explanation || semState.description || "";
+      stepCalculations = trans?.calculations;
+      stepInsight = trans?.insight;
+      if (trans?.codeSnippet) {
+        stepCodeContext = {
+          code: trans.codeSnippet,
+          language: trans.codeLanguage || "typescript",
+        };
+      }
     }
+
+    // Semantic Animation Planning
+    const animPlan = deriveSemanticAnimationPlan(
+      previousGraph,
+      graph,
+      sIdx,
+      trans,
+    );
+
+    // Visual Evidence Validation
+    const evidenceReport = VisualEvidenceValidator.validateStepEvidence(
+      model,
+      graph,
+      sIdx,
+      stepExplanation,
+    );
+
+    const stepVisualPlan =
+      sIdx > 0 && visualPlan.transformationPlan.steps[sIdx - 1]
+        ? visualPlan.transformationPlan.steps[sIdx - 1]
+        : undefined;
+
+    meta.push({
+      id: trans?.id || (sIdx === 0 ? "initial" : `t-${sIdx}`),
+      title: stepTitle,
+      explanation: stepExplanation,
+      calculations: stepCalculations,
+      insight: stepInsight,
+      codeContext: stepCodeContext,
+      animationPlan: animPlan,
+      evidenceValidation: evidenceReport,
+      visualStep: stepVisualPlan,
+    });
+
+    previousGraph = graph;
   }
 
   return {
@@ -253,6 +213,8 @@ export function compileAuthoritativeTimeline(
     states,
     meta,
     currentIndex: 0,
+    milestones: options?.milestones || model.transformations,
+    visualPlan,
   };
 }
 
@@ -654,11 +616,18 @@ export async function renderTimelineStep(
 
   timeline.currentIndex = clampedIndex;
 
+  // Camera Stability: Frame the scene on initial render, then keep the camera
+  // completely stable during Next / Previous navigation without continuous recentering.
+  const shouldFocus = !timeline.hasFramedViewport || clampedIndex === 0;
+
   if (options?.animate) {
     await animateSceneTransition(excalidrawAPI, reconcileRes.elements, {
       duration: options.duration ?? 380,
       onComplete: () => {
-        focusOnActiveElements(excalidrawAPI, timeline.lessonId);
+        if (shouldFocus) {
+          focusOnActiveElements(excalidrawAPI, timeline.lessonId);
+          timeline.hasFramedViewport = true;
+        }
         options.onComplete?.();
       },
     });
@@ -668,7 +637,10 @@ export async function renderTimelineStep(
       elements: reconcileRes.elements,
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });
-    focusOnActiveElements(excalidrawAPI, timeline.lessonId);
+    if (shouldFocus) {
+      focusOnActiveElements(excalidrawAPI, timeline.lessonId);
+      timeline.hasFramedViewport = true;
+    }
     options?.onComplete?.();
   }
 }

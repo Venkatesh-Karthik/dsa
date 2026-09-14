@@ -56,6 +56,19 @@ export interface Invariant {
   description?: string;
 }
 
+export interface InvariantViolationExplanation {
+  invariantId: string;
+  statement: string;
+  severity: InvariantSeverity;
+  stateIndex: number;
+  whatBecameInvalid: string;
+  whyInvalid: string;
+  whichInvariant: string;
+  consequence: string;
+  restorationAction: string;
+  details?: string;
+}
+
 export interface InvariantValidationReport {
   valid: boolean;
   violations: Array<{
@@ -65,6 +78,7 @@ export interface InvariantValidationReport {
     stateIndex: number;
     details?: string;
   }>;
+  explanations?: InvariantViolationExplanation[];
 }
 
 // ============================================================================
@@ -348,6 +362,172 @@ export function evaluateTransactionIntegrity(
   return { holds: true };
 }
 
+export function evaluateAtomicity(
+  state: SemanticState,
+  history?: SemanticState[],
+): { holds: boolean; details?: string } {
+  if (!history || history.length === 0) return { holds: true };
+  const initial = history[0];
+
+  const isRolledBack =
+    state.stateType === "recovery" ||
+    state.properties?.status === "rolled_back" ||
+    state.properties?.status === "aborted" ||
+    Array.from(state.entities.values()).some(
+      (e) => e.state === "rolled_back" || e.state === "aborted",
+    );
+
+  if (isRolledBack) {
+    // Check that numeric accounts or tracked resources restored initial values
+    for (const [id, initEnt] of initial.entities.entries()) {
+      if (typeof initEnt.value === "number") {
+        const currEnt = state.entities.get(id);
+        if (currEnt && typeof currEnt.value === "number" && currEnt.value !== initEnt.value) {
+          return {
+            holds: false,
+            details: `Atomicity violation: Entity '${currEnt.label}' has value ${currEnt.value}, but rollback requires restored initial value ${initEnt.value}`,
+          };
+        }
+      }
+    }
+  }
+
+  return { holds: true };
+}
+
+export function evaluatePreconditions(
+  preconditions: string[],
+  state: SemanticState,
+): { satisfied: boolean; failures: string[] } {
+  if (!preconditions || preconditions.length === 0) {
+    return { satisfied: true, failures: [] };
+  }
+  const failures: string[] = [];
+  for (const p of preconditions) {
+    // 1. Entity existence check
+    const entityMatch = p.match(/(?:entity\s+|node\s+|component\s+)?['"]?([a-zA-Z0-9_-]+)['"]?\s+(?:must\s+)?(?:exists?|is\s+present|ready)/i);
+    if (entityMatch && entityMatch[1]) {
+      const entName = entityMatch[1];
+      const hasEnt = Array.from(state.entities.values()).some(
+        (e) => e.id === entName || e.label.toLowerCase() === entName.toLowerCase(),
+      );
+      if (!hasEnt) {
+        failures.push(`Precondition failed: required entity '${entName}' is not present in state ${state.index}`);
+        continue;
+      }
+    }
+
+    // 2. Status check
+    const statusMatch = p.match(/['"]?([a-zA-Z0-9_-]+)['"]?\s+(?:is\s+in\s+state|status\s+is|is)\s+['"]?([a-zA-Z0-9_-]+)['"]?/i);
+    if (statusMatch && statusMatch[1] && statusMatch[2]) {
+      const entName = statusMatch[1];
+      const expectedState = statusMatch[2].toLowerCase();
+      const ent = Array.from(state.entities.values()).find(
+        (e) => e.id === entName || e.label.toLowerCase() === entName.toLowerCase(),
+      );
+      if (ent && ent.state && ent.state.toLowerCase() !== expectedState && !["completed", "active", "ready", "normal"].includes(expectedState)) {
+        failures.push(`Precondition failed: entity '${ent.label}' state '${ent.state}' != expected '${expectedState}'`);
+        continue;
+      }
+    }
+  }
+
+  return {
+    satisfied: failures.length === 0,
+    failures,
+  };
+}
+
+export function evaluatePostconditions(
+  postconditions: string[],
+  state: SemanticState,
+): { satisfied: boolean; failures: string[] } {
+  if (!postconditions || postconditions.length === 0) {
+    return { satisfied: true, failures: [] };
+  }
+  const failures: string[] = [];
+  for (const p of postconditions) {
+    // Value constraint matching
+    const assignMatch = p.match(/['"]?([a-zA-Z0-9_-]+)['"]?\s*(?:=|is|becomes|reaches)\s*([₹$]?\d+(?:\.\d+)?|[a-zA-Z0-9_-]+)/i);
+    if (assignMatch && assignMatch[1] && assignMatch[2]) {
+      const entName = assignMatch[1];
+      const rawExpected = assignMatch[2].replace(/[₹$,]/g, "");
+      const numExpected = Number(rawExpected);
+      const ent = Array.from(state.entities.values()).find(
+        (e) => e.id === entName || e.label.toLowerCase() === entName.toLowerCase(),
+      );
+      if (ent && ent.value !== undefined) {
+        const rawVal = String(ent.value).replace(/[₹$,]/g, "");
+        const numVal = Number(rawVal);
+        if (!Number.isNaN(numExpected) && !Number.isNaN(numVal)) {
+          if (Math.abs(numVal - numExpected) > 0.001) {
+            failures.push(`Postcondition failed: '${ent.label}' value ${ent.value} does not match expected ${assignMatch[2]}`);
+            continue;
+          }
+        } else if (rawVal.toLowerCase() !== rawExpected.toLowerCase()) {
+          failures.push(`Postcondition failed: '${ent.label}' value '${ent.value}' does not match expected '${assignMatch[2]}'`);
+          continue;
+        }
+      }
+    }
+  }
+
+  return {
+    satisfied: failures.length === 0,
+    failures,
+  };
+}
+
+export function explainInvariantViolation(
+  violation: {
+    invariantId: string;
+    statement: string;
+    severity: InvariantSeverity;
+    stateIndex: number;
+    details?: string;
+  },
+  state: SemanticState,
+): InvariantViolationExplanation {
+  const details = violation.details || violation.statement;
+  const whatBecameInvalid = details;
+  const whichInvariant = violation.statement;
+  let whyInvalid = `The system entered state ${state.index} (${state.name || state.id}) which violates constraint "${violation.statement}".`;
+  let consequence = "The system cannot commit or consider this state valid without restorative intervention.";
+  let restorationAction = "Apply a compensating transformation, rollback, or rebalancing operation to restore invariant validity.";
+
+  const text = (violation.statement + " " + details).toLowerCase();
+  if (text.includes("balance") || text.includes("avl")) {
+    whyInvalid = "The height differential between left and right subtrees exceeds the allowable balance threshold factor of 1.";
+    consequence = "Search and insertion operations degrade from logarithmic O(log N) toward linear O(N) complexity.";
+    restorationAction = "Perform tree rotation (LL, RR, LR, or RL) on the critical unbalance pivot node.";
+  } else if (text.includes("bst") || text.includes("order")) {
+    whyInvalid = "A node key violates the Binary Search Tree ordering property (left < root < right).";
+    consequence = "Binary search lookups will fail to find existing keys or branch into wrong subtrees.";
+    restorationAction = "Relocate the misplaced node to its correct BST position or adjust parent pointers.";
+  } else if (text.includes("conservation") || text.includes("atomicity") || text.includes("total") || text.includes("money") || text.includes("energy")) {
+    whyInvalid = "Total conserved value (energy, balance, or resource count) changed without an external input/output conduit.";
+    consequence = "Financial or physical integrity broken; resources were created or destroyed illegally.";
+    restorationAction = "Execute rollback operation to restore the last verified checkpoint state or apply inverse compensating transaction.";
+  } else if (text.includes("dangling") || text.includes("relationship")) {
+    whyInvalid = "A connector references an entity ID that does not exist in the active semantic world.";
+    consequence = "Graph traversal and message routing reach dead ends or undefined endpoints.";
+    restorationAction = "Re-anchor the connector to a valid entity ID or prune obsolete disconnected relationships.";
+  }
+
+  return {
+    invariantId: violation.invariantId,
+    statement: violation.statement,
+    severity: violation.severity,
+    stateIndex: violation.stateIndex,
+    whatBecameInvalid,
+    whyInvalid,
+    whichInvariant,
+    consequence,
+    restorationAction,
+    details,
+  };
+}
+
 export function synthesizeConstraintEvaluator(
   statement: string,
   category?: ConstraintCategory,
@@ -602,9 +782,12 @@ export class InvariantEngine {
       }
     }
 
+    const explanations = violations.map((v) => explainInvariantViolation(v, state));
+
     return {
       valid: violations.filter((v) => v.severity === "critical").length === 0,
       violations,
+      explanations,
     };
   }
 

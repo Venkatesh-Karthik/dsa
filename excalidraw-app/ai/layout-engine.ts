@@ -779,25 +779,50 @@ export function computeSceneGraphLayout(
   }
 
   const conceptType = graph.metadata?.conceptType;
+  const explicitStrategy = graph.metadata?.layoutStrategy;
   const isTree =
+    explicitStrategy === "tree" ||
+    explicitStrategy === "hierarchy" ||
+    explicitStrategy === "hierarchical" ||
     conceptType === "tree" ||
     entityList.some((e) => e.primitiveType === "TreeNode");
   const isArray =
+    explicitStrategy === "array" ||
     conceptType === "array" ||
     entityList.some((e) => e.primitiveType === "ArrayCell");
   const isLinkedList =
+    (explicitStrategy === "linear" &&
+      entityList.some((e) => e.primitiveType === "LinkedListNode")) ||
     conceptType === "linked_list" ||
     entityList.some((e) => e.primitiveType === "LinkedListNode");
   const isStack =
+    (explicitStrategy === "memory" &&
+      entityList.some(
+        (e) =>
+          e.primitiveType === "StackFrame" || e.primitiveType === "CallFrame",
+      )) ||
     conceptType === "stack" ||
     entityList.some((e) => e.primitiveType === "StackFrame");
   const isGraph =
-    conceptType === "graph" ||
-    entityList.some((e) => e.primitiveType === "GraphNode");
+    (explicitStrategy === "graph" ||
+      explicitStrategy === "radial" ||
+      conceptType === "graph" ||
+      (!explicitStrategy &&
+        entityList.some((e) => e.primitiveType === "GraphNode"))) &&
+    explicitStrategy !== "dag" &&
+    explicitStrategy !== "flow";
 
   if (isTree) {
     // 1. Build tree structure from entities & relationships
     const treeNodes = entityList.filter((e) => e.primitiveType === "TreeNode");
+    if (treeNodes.length === 0) {
+      // No TreeNode primitives; gracefully bypass tree layout
+      return computeSceneGraphLayout(
+        { ...graph, metadata: { ...graph.metadata, layoutStrategy: "dag" } },
+        origin,
+        previousLayout,
+      );
+    }
     const childSet = new Set<string>();
 
     const treeInputs: TreeNodeInput[] = treeNodes.map((entity) => {
@@ -844,7 +869,7 @@ export function computeSceneGraphLayout(
     if (!rootId || !treeNodes.some((n) => n.id === rootId)) {
       // Pick first node with in-degree 0 among tree relationships
       const potentialRoot = treeNodes.find((n) => !childSet.has(n.id));
-      rootId = potentialRoot ? potentialRoot.id : treeNodes[0].id;
+      rootId = potentialRoot ? potentialRoot.id : (treeNodes[0]?.id || entityList[0]?.id || "root");
     }
 
     // Use an appropriately centered tree anchor to prevent left-subtree clipping
@@ -941,9 +966,9 @@ export function computeSceneGraphLayout(
 
     const startX = previousLayout?.get(cells[0].id)?.x ?? origin.x;
     const startY = previousLayout?.get(cells[0].id)?.y ?? origin.y;
-    const cellW = 60;
-    const cellH = 40;
-    const gap = 2;
+    const cellW = 64;
+    const cellH = 64;
+    const gap = 8;
 
     for (let i = 0; i < cells.length; i++) {
       positions.set(cells[i].id, {
@@ -1076,52 +1101,275 @@ export function computeSceneGraphLayout(
     };
   }
 
-  // 6. Two-party / Client-Server Protocol Layout (e.g. TCP Handshake, HTTP, Client/Server)
-  const partyA = entityList.find((e) => {
+  // 6. Universal Swimlane / Sequence / Multi-Actor Interaction Layout
+  const isSwimlaneOrSequence =
+    explicitStrategy === "swimlane" ||
+    explicitStrategy === "sequence" ||
+    explicitStrategy === "interaction";
+
+  const actorEntities = entityList.filter((e) => {
+    const pType = e.primitiveType;
+    if (
+      pType === "Actor" ||
+      pType === "Client" ||
+      pType === "ClientNode" ||
+      pType === "Server" ||
+      pType === "ServerNode" ||
+      pType === "Device" ||
+      pType === "Worker"
+    ) {
+      return true;
+    }
     const idOrLabel = (e.label || e.id).toLowerCase();
-    return idOrLabel.includes("client") || idOrLabel.includes("sender");
-  });
-  const partyB = entityList.find((e) => {
-    const idOrLabel = (e.label || e.id).toLowerCase();
-    return idOrLabel.includes("server") || idOrLabel.includes("receiver");
+    return (
+      idOrLabel.includes("client") ||
+      idOrLabel.includes("server") ||
+      idOrLabel.includes("sender") ||
+      idOrLabel.includes("receiver")
+    );
   });
 
-  if (partyA && partyB && partyA.id !== partyB.id) {
-    const posA = previousLayout?.get(partyA.id) ?? { x: origin.x, y: origin.y };
-    const posB = previousLayout?.get(partyB.id) ?? {
-      x: origin.x + 380,
-      y: origin.y,
-    };
-    positions.set(partyA.id, posA);
-    positions.set(partyB.id, posB);
+  if ((isSwimlaneOrSequence || actorEntities.length >= 2) && actorEntities.length >= 2) {
+    const actorSpacing = 360;
+    const actorPositions: LayoutPoint[] = [];
 
+    for (let i = 0; i < actorEntities.length; i++) {
+      const actor = actorEntities[i];
+      const prevPos = previousLayout?.get(actor.id);
+      const pos = prevPos ?? { x: origin.x + i * actorSpacing, y: origin.y };
+      positions.set(actor.id, pos);
+      actorPositions.push(pos);
+    }
+
+    const nonActorEntities = entityList.filter(
+      (e) => !actorEntities.some((a) => a.id === e.id),
+    );
     let currentY = origin.y + 70;
-    for (const entity of entityList) {
-      if (entity.id === partyA.id || entity.id === partyB.id) continue;
+
+    for (const entity of nonActorEntities) {
       const prevPos = previousLayout?.get(entity.id);
       if (prevPos) {
         positions.set(entity.id, prevPos);
       } else {
-        positions.set(entity.id, {
-          x: (posA.x + posB.x) / 2 - 40,
-          y: currentY,
-        });
-        currentY += 60;
+        const b = deriveEntityBounds(entity);
+        const midX =
+          (actorPositions[0].x +
+            actorPositions[actorPositions.length - 1].x) /
+            2 -
+          b.width / 2;
+        positions.set(entity.id, { x: midX, y: currentY });
+        currentY += b.height + 24;
+      }
+    }
+
+    const minX = Math.min(...actorPositions.map((p) => p.x));
+    const maxX = Math.max(...actorPositions.map((p) => p.x + 140));
+
+    return {
+      positions,
+      bounds: {
+        x: minX,
+        y: origin.y,
+        width: Math.max(380, maxX - minX),
+        height: Math.max(160, currentY - origin.y + 40),
+      },
+    };
+  }
+
+  // 7. Universal Table / Memory / Record Stack Layout
+  const isTableOrMemory =
+    explicitStrategy === "table" ||
+    explicitStrategy === "tabular" ||
+    explicitStrategy === "memory" ||
+    explicitStrategy === "matrix" ||
+    entityList.some(
+      (e) =>
+        e.primitiveType === "Table" ||
+        e.primitiveType === "MemoryBlock" ||
+        e.primitiveType === "Record",
+    );
+
+  if (isTableOrMemory && entityList.length > 0) {
+    const memoryBlocks = entityList.filter(
+      (e) =>
+        e.primitiveType !== "Annotation" && e.primitiveType !== "Callout",
+    );
+
+    const isAllTables =
+      memoryBlocks.length > 0 &&
+      memoryBlocks.every((e) => e.primitiveType === "Table");
+
+    if (isAllTables && memoryBlocks.length >= 2) {
+      // Coherent Multi-Table Layout (Relational Queries, Matrix operations, Comparisons)
+      // Identify output/result tables (target of relationships or labeled 'result'/'joined'/'output')
+      const targetTableIds = new Set<string>();
+      for (const rel of graph.relationships.values()) {
+        targetTableIds.add(rel.targetEntityId);
+      }
+
+      const inputTables: SemanticEntity[] = [];
+      const resultTables: SemanticEntity[] = [];
+
+      for (const t of memoryBlocks) {
+        const idLower = t.id.toLowerCase();
+        const labelLower = (t.label || "").toLowerCase();
+        const isDerived =
+          targetTableIds.has(t.id) ||
+          idLower.includes("result") ||
+          idLower.includes("output") ||
+          idLower.includes("joined") ||
+          labelLower.includes("result") ||
+          labelLower.includes("output") ||
+          labelLower.includes("joined");
+
+        if (isDerived && memoryBlocks.length > 1) {
+          resultTables.push(t);
+        } else {
+          inputTables.push(t);
+        }
+      }
+
+      const activeInputs =
+        inputTables.length > 0 ? inputTables : memoryBlocks;
+      const activeResults = inputTables.length > 0 ? resultTables : [];
+
+      let currentX = origin.x;
+      let maxRow1Height = 0;
+      const tableBoundsMap = new Map<string, LayoutBounds>();
+
+      // Layout input tables side by side
+      for (const table of activeInputs) {
+        const b = deriveEntityBounds(table);
+        tableBoundsMap.set(table.id, b);
+        const prevPos = previousLayout?.get(table.id);
+        if (prevPos) {
+          positions.set(table.id, prevPos);
+          maxRow1Height = Math.max(maxRow1Height, b.height);
+          currentX = Math.max(currentX, prevPos.x + b.width + 48);
+        } else {
+          positions.set(table.id, { x: currentX, y: origin.y });
+          maxRow1Height = Math.max(maxRow1Height, b.height);
+          currentX += b.width + 48;
+        }
+      }
+
+      const row1Width = Math.max(160, currentX - origin.x - 48);
+
+      // Layout result tables centered below input tables
+      if (activeResults.length > 0) {
+        const row2Y = origin.y + maxRow1Height + 56;
+        let resX = origin.x;
+        let maxRow2Height = 0;
+
+        for (const resTable of activeResults) {
+          const b = deriveEntityBounds(resTable);
+          tableBoundsMap.set(resTable.id, b);
+          const prevPos = previousLayout?.get(resTable.id);
+          if (prevPos) {
+            positions.set(resTable.id, prevPos);
+            maxRow2Height = Math.max(maxRow2Height, b.height);
+          } else {
+            const centeredX = Math.max(
+              origin.x,
+              origin.x + (row1Width - b.width) / 2,
+            );
+            const posX = activeResults.length === 1 ? centeredX : resX;
+            positions.set(resTable.id, { x: posX, y: row2Y });
+            resX += b.width + 48;
+            maxRow2Height = Math.max(maxRow2Height, b.height);
+          }
+        }
+      }
+
+      // Position annotations relative to their target table
+      const annotations = entityList.filter(
+        (e) =>
+          e.primitiveType === "Annotation" || e.primitiveType === "Callout",
+      );
+      for (const ann of annotations) {
+        const prevPos = previousLayout?.get(ann.id);
+        if (prevPos) {
+          positions.set(ann.id, prevPos);
+        } else {
+          const targetId = ann.properties?.targetEntityId as
+            | string
+            | undefined;
+          const targetPos = targetId ? positions.get(targetId) : null;
+          const targetBounds = targetId ? tableBoundsMap.get(targetId) : null;
+          if (targetPos && targetBounds) {
+            positions.set(ann.id, {
+              x: targetPos.x + targetBounds.width + 24,
+              y: targetPos.y + 10,
+            });
+          } else {
+            positions.set(ann.id, {
+              x: origin.x + Math.max(row1Width, 300) + 40,
+              y: origin.y + 10,
+            });
+          }
+        }
+      }
+
+      let maxX = origin.x;
+      let maxY = origin.y;
+      for (const [id, pos] of positions.entries()) {
+        const b = tableBoundsMap.get(id) ?? { width: 140, height: 70 };
+        maxX = Math.max(maxX, pos.x + b.width);
+        maxY = Math.max(maxY, pos.y + b.height);
+      }
+
+      return {
+        positions,
+        bounds: {
+          x: origin.x,
+          y: origin.y,
+          width: Math.max(160, maxX - origin.x),
+          height: Math.max(80, maxY - origin.y),
+        },
+      };
+    }
+
+    // Default vertical stack layout for MemoryBlocks, single tables, or records
+    let currentY = origin.y;
+    let maxW = 160;
+
+    for (const block of memoryBlocks) {
+      const b = deriveEntityBounds(block);
+      maxW = Math.max(maxW, b.width);
+      const prevPos = previousLayout?.get(block.id);
+      if (prevPos) {
+        positions.set(block.id, prevPos);
+      } else {
+        positions.set(block.id, { x: origin.x, y: currentY });
+        currentY += b.height + 24;
+      }
+    }
+
+    const annotations = entityList.filter(
+      (e) =>
+        e.primitiveType === "Annotation" || e.primitiveType === "Callout",
+    );
+    for (const ann of annotations) {
+      const prevPos = previousLayout?.get(ann.id);
+      if (prevPos) {
+        positions.set(ann.id, prevPos);
+      } else {
+        positions.set(ann.id, { x: origin.x + maxW + 40, y: origin.y + 10 });
       }
     }
 
     return {
       positions,
       bounds: {
-        x: posA.x,
-        y: posA.y,
-        width: 380 + 140,
-        height: Math.max(160, currentY - origin.y + 40),
+        x: origin.x,
+        y: origin.y,
+        width: maxW + (annotations.length > 0 ? 240 : 0),
+        height: Math.max(80, currentY - origin.y),
       },
     };
   }
 
-  // 7. Universal Generic Concept Layout (Flow, Pipeline, Cycle, Grid, or Multi-Rank DAG)
+  // 8. Universal Generic Concept Layout (Flow, Pipeline, Cycle, Grid, or Multi-Rank DAG)
   // Handles completely arbitrary subjects (e.g. Rainbow, Photosynthesis, Refrigerator, HTTP, SQL, etc.)
   const annotations = entityList.filter(
     (e) => e.primitiveType === "Annotation" || e.primitiveType === "Callout",
@@ -1173,10 +1421,11 @@ export function computeSceneGraphLayout(
 
   // Check for closed loop / cycle (e.g. Thermodynamic / Metabolic cycle)
   const isLoop =
-    activeEntities.length >= 3 &&
-    activeEntities.length <= 8 &&
-    Array.from(inDegrees.values()).every((d) => d >= 1) &&
-    Array.from(outDegrees.values()).every((d) => d >= 1);
+    explicitStrategy === "cycle" ||
+    (activeEntities.length >= 3 &&
+      activeEntities.length <= 8 &&
+      Array.from(inDegrees.values()).every((d) => d >= 1) &&
+      Array.from(outDegrees.values()).every((d) => d >= 1));
 
   if (isLoop) {
     // Dynamically size the cycle radius so circumference accommodates all node bounding boxes
@@ -1280,11 +1529,87 @@ export function computeSceneGraphLayout(
           positions.set(ent.id, { x, y });
         }
       }
+    } else if (graph.metadata?.readingDirection === "top_to_bottom") {
+      // Multi-Rank DAG Vertical Progression (Top to Bottom)
+      let currentY = origin.y;
+
+      // Calculate dynamic clearance based on edge labels between ranks
+      let maxInterRankLabelWidth = 0;
+      for (const rel of graph.relationships.values()) {
+        const src = resolveEntityId(rel.sourceEntityId);
+        const tgt = resolveEntityId(rel.targetEntityId);
+        const rSrc = ranks.get(src);
+        const rTgt = ranks.get(tgt);
+        if (rSrc !== undefined && rTgt !== undefined && rSrc !== rTgt) {
+          const lbl = rel.label || (rel.properties?.label as string | undefined) || "";
+          if (lbl) {
+            maxInterRankLabelWidth = Math.max(maxInterRankLabelWidth, Math.min(220, lbl.length * 7.5 + 40));
+          }
+        }
+      }
+
+      const rowGap = Math.max(70, maxInterRankLabelWidth > 0 ? Math.round(maxInterRankLabelWidth / 2 + 50) : 70);
+      const colGap = 48;
+
+      const rankWidths = new Map<number, number>();
+      const rankMaxHeights = new Map<number, number>();
+
+      for (const [rank, ents] of rankGroups.entries()) {
+        let maxH = 50;
+        let totalW = 0;
+        for (let i = 0; i < ents.length; i++) {
+          const b = deriveEntityBounds(ents[i]);
+          maxH = Math.max(maxH, b.height);
+          totalW += b.width + (i > 0 ? colGap : 0);
+        }
+        rankMaxHeights.set(rank, maxH);
+        rankWidths.set(rank, totalW);
+      }
+
+      const maxOverallWidth = Math.max(...Array.from(rankWidths.values()), 160);
+      const centerX = origin.x + maxOverallWidth / 2;
+
+      for (const rank of distinctRanks) {
+        const ents = rankGroups.get(rank) ?? [];
+        const rowH = rankMaxHeights.get(rank) ?? 60;
+        const totalW = rankWidths.get(rank) ?? 140;
+        let currentX = Math.max(origin.x, centerX - totalW / 2);
+
+        for (const ent of ents) {
+          const b = deriveEntityBounds(ent);
+          const prevPos = previousLayout?.get(ent.id);
+          if (prevPos) {
+            positions.set(ent.id, prevPos);
+          } else {
+            const nodeY = currentY + Math.round((rowH - b.height) / 2);
+            positions.set(ent.id, { x: currentX, y: nodeY });
+          }
+          currentX += b.width + colGap;
+        }
+
+        currentY += rowH + rowGap;
+      }
     } else {
-      // Multi-Rank DAG / Pipeline Layout
+      // Multi-Rank DAG / Pipeline Layout (Left to Right)
       let currentX = origin.x;
-      const colGap = 50;
-      const rowGap = 30;
+
+      // Calculate dynamic clearance based on edge labels between ranks
+      let maxInterRankLabelWidth = 0;
+      for (const rel of graph.relationships.values()) {
+        const src = resolveEntityId(rel.sourceEntityId);
+        const tgt = resolveEntityId(rel.targetEntityId);
+        const rSrc = ranks.get(src);
+        const rTgt = ranks.get(tgt);
+        if (rSrc !== undefined && rTgt !== undefined && rSrc !== rTgt) {
+          const lbl = rel.label || (rel.properties?.label as string | undefined) || "";
+          if (lbl) {
+            maxInterRankLabelWidth = Math.max(maxInterRankLabelWidth, Math.min(220, lbl.length * 7.5 + 40));
+          }
+        }
+      }
+
+      const colGap = Math.max(90, maxInterRankLabelWidth > 0 ? maxInterRankLabelWidth + 56 : 100);
+      const rowGap = 36;
 
       // Compute total height for each rank to vertically center groups
       const rankHeights = new Map<number, number>();
@@ -1534,6 +1859,75 @@ export function computeAdaptiveAnnotationBounds(
 }
 
 /**
+ * Computes deterministic, content-aware bounds for a Table entity based on its
+ * columns, rows, and cell text measurements so no clipping or wrapping occurs.
+ */
+export function computeTableEntityBounds(
+  entity: SemanticEntity,
+): LayoutBounds {
+  const rawCols = entity.properties?.columns as any[] | undefined;
+  const rawRows = entity.properties?.rows as any[] | undefined;
+  const tableName = (entity.properties?.tableName as string) || entity.label;
+
+  let colCount = 2;
+  const colTitles: string[] = [];
+  if (Array.isArray(rawCols) && rawCols.length > 0) {
+    colCount = rawCols.length;
+    for (const c of rawCols) {
+      colTitles.push(typeof c === "string" ? c : c.title || c.key || "");
+    }
+  } else if (Array.isArray(rawRows) && rawRows.length > 0) {
+    const first = rawRows[0];
+    if (first && typeof first === "object" && !Array.isArray(first) && !("values" in first)) {
+      const keys = Object.keys(first);
+      colCount = keys.length;
+      colTitles.push(...keys);
+    } else if (Array.isArray(first)) {
+      colCount = first.length;
+    } else if (first && typeof first === "object" && "values" in first && Array.isArray(first.values)) {
+      colCount = first.values.length;
+    }
+  }
+
+  const rowCount = Array.isArray(rawRows) ? rawRows.length : 0;
+  let totalW = 0;
+  for (let c = 0; c < colCount; c++) {
+    const title = colTitles[c] || `Col ${c + 1}`;
+    let maxCellW = measureTextBounds(title, 12, 20).width;
+    if (Array.isArray(rawRows)) {
+      for (const r of rawRows) {
+        let val = "";
+        if (Array.isArray(r)) {
+          val = String(r[c] ?? "");
+        } else if (r && typeof r === "object" && "values" in r && Array.isArray(r.values)) {
+          val = String(r.values[c] ?? "");
+        } else if (r && typeof r === "object") {
+          val = String((r as any)[title] ?? (r as any)[Object.keys(r)[c]] ?? "");
+        }
+        if (val) {
+          const w = measureTextBounds(val, 12, 20).width;
+          if (w > maxCellW) maxCellW = w;
+        }
+      }
+    }
+    totalW += Math.max(72, Math.min(260, Math.round(maxCellW + 24)));
+  }
+
+  const hasTitle = Boolean(tableName && tableName.trim().length > 0);
+  const titleHeight = hasTitle ? 30 : 0;
+  const headerHeight = 32;
+  const rowHeight = 30;
+  const totalH = titleHeight + headerHeight + Math.max(1, rowCount) * rowHeight;
+
+  return {
+    x: 0,
+    y: 0,
+    width: Math.max(160, totalW),
+    height: Math.max(70, totalH),
+  };
+}
+
+/**
  * Computes exact content-aware bounding box for any semantic entity based on its primitive type,
  * value length, role, and properties.
  */
@@ -1595,8 +1989,10 @@ export function deriveEntityBounds(
       break;
     case "Client":
     case "ClientNode":
+    case "ClientEndpoint":
     case "Server":
     case "ServerNode":
+    case "ServerEndpoint":
       w = (entity.properties?.width as number) ?? 120;
       h = (entity.properties?.height as number) ?? 60;
       break;
@@ -1606,11 +2002,17 @@ export function deriveEntityBounds(
       break;
     case "Packet":
     case "Message":
+    case "MessagePacket":
       w = (entity.properties?.width as number) ?? 90;
       h = (entity.properties?.height as number) ?? 36;
       break;
+    case "Table": {
+      const tb = computeTableEntityBounds(entity);
+      w = (entity.properties?.width as number) ?? tb.width;
+      h = (entity.properties?.height as number) ?? tb.height;
+      break;
+    }
     case "DatabaseNode":
-    case "Table":
       w = (entity.properties?.width as number) ?? 140;
       h = (entity.properties?.height as number) ?? 70;
       break;
@@ -1625,6 +2027,60 @@ export function deriveEntityBounds(
     case "MemoryBlock":
       w = (entity.properties?.width as number) ?? 120;
       h = (entity.properties?.height as number) ?? 48;
+      break;
+    case "Ray":
+    case "TrajectoryRay":
+      w = (entity.properties?.width as number) ?? 160;
+      h = (entity.properties?.height as number) ?? 40;
+      break;
+    case "Medium":
+      w = (entity.properties?.width as number) ?? 220;
+      h = (entity.properties?.height as number) ?? 140;
+      break;
+    case "Boundary":
+      w = (entity.properties?.width as number) ?? 180;
+      h = (entity.properties?.height as number) ?? 32;
+      break;
+    case "Decision":
+    case "DecisionNode":
+      w = (entity.properties?.width as number) ?? 100;
+      h = (entity.properties?.height as number) ?? 70;
+      break;
+    case "CircleNode": {
+      const diameter = (entity.properties?.diameter as number) ?? 70;
+      w = diameter;
+      h = diameter;
+      break;
+    }
+    case "QueueItem":
+      w = (entity.properties?.width as number) ?? 60;
+      h = (entity.properties?.height as number) ?? 40;
+      break;
+    case "EquationBlock":
+      w = (entity.properties?.width as number) ?? 160;
+      h = (entity.properties?.height as number) ?? 44;
+      break;
+    case "Card":
+    case "Panel":
+      w = (entity.properties?.width as number) ?? 200;
+      h = (entity.properties?.height as number) ?? 120;
+      break;
+    case "Cluster":
+      w = (entity.properties?.width as number) ?? 240;
+      h = (entity.properties?.height as number) ?? 160;
+      break;
+    case "Record":
+    case "TableRecord":
+      w = (entity.properties?.width as number) ?? 140;
+      h = (entity.properties?.height as number) ?? 36;
+      break;
+    case "Header":
+      w = (entity.properties?.width as number) ?? 140;
+      h = (entity.properties?.height as number) ?? 32;
+      break;
+    case "Cell":
+      w = (entity.properties?.width as number) ?? 60;
+      h = (entity.properties?.height as number) ?? 36;
       break;
     case "Annotation":
     case "Callout": {

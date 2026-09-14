@@ -8,6 +8,7 @@
 
 import {
   newArrowElement,
+  newElement,
   newElementWith,
   newTextElement,
   syncInvalidIndices,
@@ -24,12 +25,22 @@ import {
   computePerimeterPoint,
   detectObstaclesBetween,
   type ConnectorEndpoint,
+  type BoundingBox,
 } from "./connector-renderer";
 import {
   createVisualPrimitive,
   updateVisualPrimitive,
 } from "./visual-primitives/primitive-factory";
 import { TOKENS, mapSemanticStateToEdgeTokens } from "./visual-primitives/design-tokens";
+import {
+  computeOptimalRoute,
+  planRelationshipLabel,
+  computeOptimalCalloutPosition,
+  sanitizeVisualText,
+  isVisualDebugEnabled,
+  generateDiagnosticsElements,
+  type DiagnosticsBox,
+} from "./visual-reasoning";
 
 export interface ReconcileResult {
   elements: ExcalidrawElement[];
@@ -48,22 +59,42 @@ export function reconcileSceneState(
   // Index existing elements by semanticId / dslId
   const existingBySemanticId = new Map<string, ExcalidrawElement[]>();
   const existingConnectors = new Map<string, ExcalidrawElement>();
+  const existingEdgeLabels = new Map<string, ExcalidrawElement>();
+  const existingAnnotations = new Map<string, ExcalidrawElement>();
   const unmanagedElements: ExcalidrawElement[] = [];
 
   for (const el of currentElements) {
-    const semanticId =
-      (el.customData?.semanticId as string | undefined) ??
-      (el.customData?.dslId as string | undefined);
-
-    if (el.type === "arrow" && semanticId) {
-      existingConnectors.set(semanticId, el);
-    } else if (semanticId) {
-      const list = existingBySemanticId.get(semanticId) ?? [];
-      list.push(el);
-      existingBySemanticId.set(semanticId, list);
+    if (el.customData?.isEdgeLabel) {
+      const dslId =
+        (el.customData?.dslId as string | undefined) ??
+        (el.customData?.semanticId as string | undefined) ??
+        el.id;
+      existingEdgeLabels.set(dslId, el);
+    } else if (el.customData?.isAnnotation) {
+      const dslId =
+        (el.customData?.dslId as string | undefined) ??
+        (el.customData?.semanticId as string | undefined) ??
+        el.id;
+      existingAnnotations.set(dslId, el);
+    } else if (el.type === "arrow") {
+      const semanticId =
+        (el.customData?.semanticId as string | undefined) ??
+        (el.customData?.dslId as string | undefined);
+      if (semanticId) {
+        existingConnectors.set(semanticId, el);
+      }
     } else {
-      // User manual drawings or unmanaged elements
-      unmanagedElements.push(el);
+      const semanticId =
+        (el.customData?.semanticId as string | undefined) ??
+        (el.customData?.dslId as string | undefined);
+      if (semanticId) {
+        const list = existingBySemanticId.get(semanticId) ?? [];
+        list.push(el);
+        existingBySemanticId.set(semanticId, list);
+      } else {
+        // User manual drawings or unmanaged elements
+        unmanagedElements.push(el);
+      }
     }
   }
 
@@ -126,46 +157,85 @@ export function reconcileSceneState(
 
   // 3. Reconcile Relationships (Connectors follow entities)
   const activeRelationshipIds = new Set<string>();
+  const activeEdgeLabelIds = new Set<string>();
 
-  // Helper to resolve entity element with multi-pass lookup (exact ID, lowercase, label, alias, or suffix)
+  // Helper to resolve entity element with strict multi-pass priority:
+  // 1. Authoritative semantic ID (exact)
+  // 2. Case-insensitive exact ID
+  // 3. Unique alias (rawId)
+  // 4. Unique exact semantic reference (label or value)
+  // Never guess when multiple candidates exist (reject ambiguous references).
   const resolvePrimaryElement = (
     idOrLabel: string,
   ): ExcalidrawElement | undefined => {
     if (!idOrLabel) return undefined;
+
+    // Priority 1: Authoritative semantic ID (exact)
     if (primaryElementMap.has(idOrLabel)) {
       return primaryElementMap.get(idOrLabel);
     }
+
     const needle = idOrLabel.trim().toLowerCase();
+
+    // Priority 2: Exact case-insensitive ID
     for (const [k, el] of primaryElementMap.entries()) {
       if (k.toLowerCase() === needle) return el;
     }
+
+    // Priority 3: Unique alias (rawId)
+    const aliasMatches: string[] = [];
+    for (const [k, ent] of targetState.graph.entities.entries()) {
+      const rawId = (ent.properties?.rawId as string | undefined)?.toLowerCase();
+      if (rawId === needle) {
+        aliasMatches.push(k);
+      }
+    }
+    if (aliasMatches.length === 1) {
+      return primaryElementMap.get(aliasMatches[0]);
+    } else if (aliasMatches.length > 1) {
+      // Ambiguous alias - do not guess
+      return undefined;
+    }
+
+    // Priority 4: Unique exact semantic reference (label or value)
+    const refMatches: string[] = [];
     for (const [k, ent] of targetState.graph.entities.entries()) {
       const entLabel = (ent.label || "").trim().toLowerCase();
       const entVal = String(ent.value ?? "").trim().toLowerCase();
-      const rawId = (
-        ent.properties?.rawId as string | undefined
-      )?.toLowerCase();
-      if (entLabel === needle || entVal === needle || rawId === needle) {
-        return primaryElementMap.get(k);
-      }
-      if (
-        k.toLowerCase().includes(needle) ||
-        needle.includes(k.toLowerCase())
-      ) {
-        return primaryElementMap.get(k);
+      if (entLabel === needle || entVal === needle) {
+        refMatches.push(k);
       }
     }
+    if (refMatches.length === 1) {
+      return primaryElementMap.get(refMatches[0]);
+    }
+
+    // No unique candidate found
     return undefined;
   };
 
-  for (const [relId, rel] of targetState.graph.relationships.entries()) {
-    activeRelationshipIds.add(relId);
+  const placedLabelBoxes: BoundingBox[] = [];
+  if (targetState.graph.relationships) {
+    for (const [relId, rel] of targetState.graph.relationships.entries()) {
     const sourceEl = resolvePrimaryElement(rel.sourceEntityId);
     const targetEl = resolvePrimaryElement(rel.targetEntityId);
 
-    if (!sourceEl || !targetEl || sourceEl.id === targetEl.id) {
+    // Connector Safety: strictly reject missing, self-referential, or deleted endpoints
+    if (
+      !sourceEl ||
+      !targetEl ||
+      sourceEl.id === targetEl.id ||
+      sourceEl.isDeleted ||
+      targetEl.isDeleted
+    ) {
+      const existingArrow = existingConnectors.get(relId);
+      if (existingArrow && !existingArrow.isDeleted) {
+        resultElements.push(newElementWith(existingArrow, { isDeleted: true }));
+      }
       continue;
     }
+
+    activeRelationshipIds.add(relId);
 
     const sourceShape = sourceEl.type === "ellipse" ? "ellipse" : "rectangle";
     const targetShape = targetEl.type === "ellipse" ? "ellipse" : "rectangle";
@@ -198,95 +268,70 @@ export function reconcileSceneState(
       targetShape,
     );
 
-    const sourceBounds = {
-      x: sourceEl.x,
-      y: sourceEl.y,
-      width: sourceEl.width,
-      height: sourceEl.height,
-    };
-    const targetBounds = {
-      x: targetEl.x,
-      y: targetEl.y,
-      width: targetEl.width,
-      height: targetEl.height,
+    const getEntityFullBounds = (entityId: string, fallbackEl: ExcalidrawElement): BoundingBox => {
+      const els = entityElementMap.get(entityId);
+      if (!els || els.length === 0) {
+        return { x: fallbackEl.x, y: fallbackEl.y, width: fallbackEl.width, height: fallbackEl.height };
+      }
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const el of els) {
+        minX = Math.min(minX, el.x);
+        minY = Math.min(minY, el.y);
+        maxX = Math.max(maxX, el.x + el.width);
+        maxY = Math.max(maxY, el.y + el.height);
+      }
+      return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     };
 
-    // Obstacle avoidance check
-    const obstacles: ConnectorEndpoint[] = [];
-    for (const [k, el] of primaryElementMap.entries()) {
-      if (el.id !== sourceEl.id && el.id !== targetEl.id) {
-        obstacles.push({
-          primaryElement: el,
-          bounds: { x: el.x, y: el.y, width: el.width, height: el.height },
+    const sourceBounds = getEntityFullBounds(rel.sourceEntityId, sourceEl);
+    const targetBounds = getEntityFullBounds(rel.targetEntityId, targetEl);
+
+    // Pre-calculate relationship lanes for parallel connectors
+    const endpointPairCounts = new Map<string, number>();
+    const relationshipLanes = new Map<string, { laneIndex: number; totalLanes: number }>();
+    if (targetState.graph.relationships) {
+      for (const [rId, r] of targetState.graph.relationships.entries()) {
+        const key = [r.sourceEntityId, r.targetEntityId].sort().join("<->");
+        endpointPairCounts.set(key, (endpointPairCounts.get(key) ?? 0) + 1);
+      }
+      const currentLaneCounter = new Map<string, number>();
+      for (const [rId, r] of targetState.graph.relationships.entries()) {
+        const key = [r.sourceEntityId, r.targetEntityId].sort().join("<->");
+        const laneIndex = currentLaneCounter.get(key) ?? 0;
+        currentLaneCounter.set(key, laneIndex + 1);
+        relationshipLanes.set(rId, {
+          laneIndex,
+          totalLanes: endpointPairCounts.get(key) ?? 1,
         });
       }
     }
 
-    const blockingObstacles = detectObstaclesBetween(
+    // Obstacle avoidance check: include full entity footprints (both containers and text elements)
+    const obstacleBoxes: BoundingBox[] = [];
+    for (const [k, els] of entityElementMap.entries()) {
+      if (k !== rel.sourceEntityId && k !== rel.targetEntityId) {
+        for (const el of els) {
+          obstacleBoxes.push({ x: el.x, y: el.y, width: el.width, height: el.height });
+        }
+      }
+    }
+
+    const laneInfo = relationshipLanes.get(relId) || { laneIndex: 0, totalLanes: 1 };
+    const route = computeOptimalRoute(
       sourceBounds,
       targetBounds,
-      obstacles,
+      obstacleBoxes,
+      {
+        laneIndex: laneInfo.laneIndex,
+        totalLanes: laneInfo.totalLanes,
+        preferredRouting: rel.properties?.elbowed ? "elbowed" : "auto",
+      },
     );
 
-    let points: readonly LocalPoint[];
-    let arrowStartX: number;
-    let arrowStartY: number;
-    let isElbowed = Boolean(rel.properties?.elbowed);
-
-    if (blockingObstacles.length > 0) {
-      isElbowed = true;
-      const isVertical =
-        Math.abs(targetBounds.y - sourceBounds.y) >=
-        Math.abs(targetBounds.x - sourceBounds.x);
-      if (isVertical) {
-        let maxRight = Math.max(
-          sourceBounds.x + sourceBounds.width,
-          targetBounds.x + targetBounds.width,
-        );
-        for (const obs of blockingObstacles) {
-          maxRight = Math.max(maxRight, obs.bounds.x + obs.bounds.width);
-        }
-        const flankX = maxRight + 36;
-        arrowStartX = sourceBounds.x + sourceBounds.width;
-        arrowStartY = sourceBounds.y + sourceBounds.height / 2;
-        const arrowEndX = targetBounds.x + targetBounds.width;
-        const arrowEndY = targetBounds.y + targetBounds.height / 2;
-
-        points = [
-          pointFrom(0, 0) as LocalPoint,
-          pointFrom(flankX - arrowStartX, 0) as LocalPoint,
-          pointFrom(flankX - arrowStartX, arrowEndY - arrowStartY) as LocalPoint,
-          pointFrom(arrowEndX - arrowStartX, arrowEndY - arrowStartY) as LocalPoint,
-        ];
-      } else {
-        let maxBottom = Math.max(
-          sourceBounds.y + sourceBounds.height,
-          targetBounds.y + targetBounds.height,
-        );
-        for (const obs of blockingObstacles) {
-          maxBottom = Math.max(maxBottom, obs.bounds.y + obs.bounds.height);
-        }
-        const flankY = maxBottom + 36;
-        arrowStartX = sourceBounds.x + sourceBounds.width / 2;
-        arrowStartY = sourceBounds.y + sourceBounds.height;
-        const arrowEndX = targetBounds.x + targetBounds.width / 2;
-        const arrowEndY = targetBounds.y + targetBounds.height;
-
-        points = [
-          pointFrom(0, 0) as LocalPoint,
-          pointFrom(0, flankY - arrowStartY) as LocalPoint,
-          pointFrom(arrowEndX - arrowStartX, flankY - arrowStartY) as LocalPoint,
-          pointFrom(arrowEndX - arrowStartX, arrowEndY - arrowStartY) as LocalPoint,
-        ];
-      }
-    } else {
-      arrowStartX = startPt.x;
-      arrowStartY = startPt.y;
-      points = [
-        pointFrom(0, 0) as LocalPoint,
-        pointFrom(endPt.x - startPt.x, endPt.y - startPt.y) as LocalPoint,
-      ];
-    }
+    const arrowStartX = route.startX;
+    const arrowStartY = route.startY;
+    const points = route.points;
+    const isElbowed = route.isElbowed;
 
     const edgeStyle = mapSemanticStateToEdgeTokens(
       rel.properties?.highlight as string | undefined,
@@ -368,35 +413,143 @@ export function reconcileSceneState(
       resultElements.push(newArrow);
     }
 
-    // Edge label rendering — floating capsule style
+    // Edge label rendering — intelligent collision-free capsule style
     if (rel.label) {
-      const midPoint =
-        points[Math.floor(points.length / 2)] || points[0];
-      const labelX = Math.round(arrowStartX + midPoint[0] - 18);
-      const labelY = Math.round(arrowStartY + midPoint[1] - 22);
-
-      const labelEl = newTextElement({
-        text: rel.label,
-        x: labelX,
-        y: labelY,
-        fontSize: TOKENS.TYPOGRAPHY.EdgeWeight.fontSize,
-        fontFamily: TOKENS.TYPOGRAPHY.EdgeWeight.fontFamily,
-        textAlign: "center",
-        verticalAlign: "middle",
-        strokeColor: "#475569",
-        backgroundColor: "#ffffff",
-        fillStyle: "solid" as const,
-        strokeWidth: 0,
-        roughness: 0,
-        customData: {
-          dslId: `${relId}-label`,
-          semanticId: `${relId}-label`,
-          lessonId,
-          isAiTeaching: true,
-          isEdgeLabel: true,
-        },
+      const labelResult = planRelationshipLabel({
+        id: relId,
+        rawLabel: rel.label,
+        route,
+        sourceBounds,
+        targetBounds,
+        obstacles: obstacleBoxes,
+        existingLabels: placedLabelBoxes,
+        highlight: rel.properties?.highlight as string | undefined,
+        lessonId,
       });
-      resultElements.push(labelEl);
+
+      if (labelResult) {
+        placedLabelBoxes.push({
+          x: labelResult.x,
+          y: labelResult.y,
+          width: labelResult.width,
+          height: labelResult.height,
+        });
+
+        for (const labelEl of labelResult.elements) {
+          const dslId = (labelEl.customData?.dslId as string) || labelEl.id;
+          activeEdgeLabelIds.add(dslId);
+          const existing = existingEdgeLabels.get(dslId);
+          if (existing) {
+            resultElements.push(
+              newElementWith(existing as any, {
+                ...labelEl,
+                x: labelEl.x,
+                y: labelEl.y,
+                isDeleted: false,
+              }),
+            );
+          } else {
+            resultElements.push(labelEl);
+          }
+        }
+      }
+    }
+  }
+  }
+
+  // Mark removed edge labels as deleted
+  for (const [labelDslId, labelEl] of existingEdgeLabels.entries()) {
+    if (!activeEdgeLabelIds.has(labelDslId) && !labelEl.isDeleted) {
+      resultElements.push(newElementWith(labelEl, { isDeleted: true }));
+    }
+  }
+
+  // 3.5 Reconcile Annotations (Decision badges, constraint callouts, invariant markers)
+  const activeAnnotationIds = new Set<string>();
+  if (targetState.graph.annotations && targetState.graph.annotations.size > 0) {
+    let annIdx = 0;
+    for (const [annId, ann] of targetState.graph.annotations.entries()) {
+      activeAnnotationIds.add(annId);
+      let posX = 120;
+      let posY = 60 + annIdx * 32;
+
+      if (ann.targetEntityId) {
+        const targetEl = resolvePrimaryElement(ann.targetEntityId);
+        if (targetEl) {
+          const anchorBounds: BoundingBox = {
+            x: targetEl.x,
+            y: targetEl.y,
+            width: targetEl.width,
+            height: targetEl.height,
+          };
+          const obstacleBoxes: BoundingBox[] = [];
+          for (const [k, el] of primaryElementMap.entries()) {
+            if (el.id !== targetEl.id) {
+              obstacleBoxes.push({ x: el.x, y: el.y, width: el.width, height: el.height });
+            }
+          }
+          const calloutPos = computeOptimalCalloutPosition({
+            anchorBounds,
+            calloutWidth: 140,
+            calloutHeight: 32,
+            obstacles: obstacleBoxes,
+            preferredPlacement: (ann.placement as any) || "above",
+          });
+          posX = calloutPos.x;
+          posY = calloutPos.y;
+        }
+      }
+
+      const existingAnn = existingAnnotations.get(annId);
+      if (existingAnn) {
+        const updatedAnn = newElementWith(existingAnn as any, {
+          text: ann.text,
+          x: posX,
+          y: posY,
+          strokeColor: ann.color || "#9333ea",
+          isDeleted: false,
+          customData: {
+            ...(existingAnn.customData ?? {}),
+            dslId: annId,
+            semanticId: annId,
+            lessonId,
+            isAiTeaching: true,
+            isAnnotation: true,
+          },
+        });
+        resultElements.push(updatedAnn);
+      } else {
+        const badgeTextEl = newTextElement({
+          text: ann.text,
+          x: posX,
+          y: posY,
+          fontSize: TOKENS.TYPOGRAPHY.Annotation.fontSize,
+          fontFamily: TOKENS.TYPOGRAPHY.Annotation.fontFamily,
+          textAlign: "left",
+          verticalAlign: "middle",
+          strokeColor: ann.color || "#9333ea",
+          backgroundColor: "#faf5ff",
+          fillStyle: "solid" as const,
+          strokeWidth: 0,
+          roughness: 0,
+          customData: {
+            dslId: annId,
+            semanticId: annId,
+            lessonId,
+            isAiTeaching: true,
+            isAnnotation: true,
+          },
+        });
+        resultElements.push(badgeTextEl);
+      }
+      annIdx++;
+    }
+  }
+
+  // Mark removed annotations as deleted
+  for (const [annId, annEl] of existingAnnotations.entries()) {
+    if (!activeAnnotationIds.has(annId) && !annEl.isDeleted) {
+      resultElements.push(newElementWith(annEl, { isDeleted: true }));
     }
   }
 
@@ -405,6 +558,24 @@ export function reconcileSceneState(
     if (!activeRelationshipIds.has(relId) && !arrow.isDeleted) {
       resultElements.push(newElementWith(arrow, { isDeleted: true }));
     }
+  }
+
+  // 5. Developer Diagnostics Overlay
+  if (isVisualDebugEnabled()) {
+    const diagBoxes: DiagnosticsBox[] = [];
+    for (const [entId, el] of primaryElementMap.entries()) {
+      const ent = targetState.graph.entities.get(entId);
+      diagBoxes.push({
+        id: entId,
+        x: el.x,
+        y: el.y,
+        width: el.width,
+        height: el.height,
+        primitiveType: ent?.primitiveType,
+      });
+    }
+    const diagEls = generateDiagnosticsElements(diagBoxes);
+    resultElements.push(...diagEls);
   }
 
   // 6. Deduplicate by element ID to strictly preserve ElementsDelta invariants

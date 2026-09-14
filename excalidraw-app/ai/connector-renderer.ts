@@ -1,6 +1,8 @@
 import { TYPOGRAPHY } from "./visual-primitives/typography";
 import { TOKENS, mapSemanticStateToEdgeTokens } from "./visual-primitives/design-tokens";
 import { createEdgeWeight } from "./visual-primitives/edge-weight";
+import { computeOptimalRoute } from "./visual-reasoning/connector-router";
+import { planRelationshipLabel } from "./visual-reasoning/relationship-label-planner";
 
 /**
  * Semantic Connector Renderer
@@ -384,82 +386,22 @@ export function renderSemanticConnector(
     { fromShape, toShape },
   );
 
-  // Check for intermediate obstacles
-  const blockingObstacles =
-    obstacles && obstacles.length > 0
-      ? detectObstaclesBetween(fromRecord.bounds, toRecord.bounds, obstacles)
-      : [];
+  const obstacleBoxes: BoundingBox[] = (obstacles || []).map((o) => o.bounds);
+  const route = computeOptimalRoute(
+    fromRecord.bounds,
+    toRecord.bounds,
+    obstacleBoxes,
+    {
+      preferredRouting: spec.elbowed ?? spec.style?.elbowed ? "elbowed" : "auto",
+    },
+  );
 
-  let startX = directPoints.startX;
-  let startY = directPoints.startY;
-  let endX = directPoints.endX;
-  let endY = directPoints.endY;
-
-  let points: readonly LocalPoint[];
-  let isElbowed = Boolean(spec.elbowed ?? spec.style?.elbowed);
-
-  if (blockingObstacles.length > 0) {
-    // Route around obstacles via outer flank
-    isElbowed = true;
-
-    // Check if flow is predominantly vertical
-    const isVerticalFlow =
-      Math.abs(toRecord.bounds.y - fromRecord.bounds.y) >=
-      Math.abs(toRecord.bounds.x - fromRecord.bounds.x);
-
-    if (isVerticalFlow) {
-      // Route along the right flank with clearance
-      let maxRight = Math.max(
-        fromRecord.bounds.x + fromRecord.bounds.width,
-        toRecord.bounds.x + toRecord.bounds.width,
-      );
-      for (const obs of blockingObstacles) {
-        if (obs.bounds.x + obs.bounds.width > maxRight) {
-          maxRight = obs.bounds.x + obs.bounds.width;
-        }
-      }
-      const flankX = maxRight + 36;
-
-      startX = fromRecord.bounds.x + fromRecord.bounds.width;
-      startY = fromRecord.bounds.y + fromRecord.bounds.height / 2;
-      endX = toRecord.bounds.x + toRecord.bounds.width;
-      endY = toRecord.bounds.y + toRecord.bounds.height / 2;
-
-      const p0 = pointFrom<LocalPoint>(0, 0);
-      const p1 = pointFrom<LocalPoint>(flankX - startX, 0);
-      const p2 = pointFrom<LocalPoint>(flankX - startX, endY - startY);
-      const p3 = pointFrom<LocalPoint>(endX - startX, endY - startY);
-      points = [p0, p1, p2, p3];
-    } else {
-      // Route along the bottom flank with clearance
-      let maxBottom = Math.max(
-        fromRecord.bounds.y + fromRecord.bounds.height,
-        toRecord.bounds.y + toRecord.bounds.height,
-      );
-      for (const obs of blockingObstacles) {
-        if (obs.bounds.y + obs.bounds.height > maxBottom) {
-          maxBottom = obs.bounds.y + obs.bounds.height;
-        }
-      }
-      const flankY = maxBottom + 36;
-
-      startX = fromRecord.bounds.x + fromRecord.bounds.width / 2;
-      startY = fromRecord.bounds.y + fromRecord.bounds.height;
-      endX = toRecord.bounds.x + toRecord.bounds.width / 2;
-      endY = toRecord.bounds.y + toRecord.bounds.height;
-
-      const p0 = pointFrom<LocalPoint>(0, 0);
-      const p1 = pointFrom<LocalPoint>(0, flankY - startY);
-      const p2 = pointFrom<LocalPoint>(endX - startX, flankY - startY);
-      const p3 = pointFrom<LocalPoint>(endX - startX, endY - startY);
-      points = [p0, p1, p2, p3];
-    }
-  } else {
-    // Direct path
-    const dx = endX - startX;
-    const dy = endY - startY;
-    points = [pointFrom<LocalPoint>(0, 0), pointFrom<LocalPoint>(dx, dy)];
-  }
+  const startX = route.startX;
+  const startY = route.startY;
+  const endX = route.endX;
+  const endY = route.endY;
+  const points = route.points;
+  const isElbowed = route.isElbowed;
 
   const resolvedDirection = directionForRole(spec.role, spec.direction);
   const isUndirected =
@@ -534,28 +476,33 @@ export function renderSemanticConnector(
   let labelText: ExcalidrawTextElement | undefined;
 
   if (spec.label) {
-    const midX = Math.round((startX + endX) / 2);
-    const midY = Math.round((startY + endY) / 2);
-    
-    const weightPrimitive = createEdgeWeight({
-      id: `${spec.id}-label`,
-      x: midX,
-      y: midY,
-      value: spec.label,
+    const labelResult = planRelationshipLabel({
+      id: spec.id,
+      rawLabel: spec.label,
+      route,
+      sourceBounds: fromRecord.bounds,
+      targetBounds: toRecord.bounds,
+      obstacles: obstacleBoxes,
       highlight: spec.highlight,
-      arrowId: arrow.id,
     });
-    
-    labelText = weightPrimitive.textElement;
-    
-    // Bind the text to the arrow so it stays with the edge
-    arrow = newElementWith(arrow, {
-      boundElements: [...(arrow.boundElements ?? []), { type: "text", id: labelText.id }]
-    });
-    
-    // Replace the arrow in the elements array
-    elements[0] = arrow;
-    elements.push(labelText);
+
+    if (labelResult) {
+      for (const el of labelResult.elements) {
+        if (el.type === "text") {
+          labelText = el as ExcalidrawTextElement;
+        }
+        elements.push(el);
+      }
+      if (labelText) {
+        arrow = newElementWith(arrow, {
+          boundElements: [
+            ...(arrow.boundElements ?? []),
+            { type: "text", id: labelText.id },
+          ],
+        });
+        elements[0] = arrow;
+      }
+    }
   }
 
   return {

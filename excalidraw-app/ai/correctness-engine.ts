@@ -23,10 +23,31 @@
  */
 
 import { type ProblemModel } from "./problem-model";
-import { type SemanticWorld, type SemanticState, type Entity, type Relationship, cloneSemanticState } from "./semantic-world";
-import { type Rule, type Invariant, InvariantEngine, type DerivedValueDefinition } from "./rules-invariants";
-import { type AuthoritativeSemanticModel, type AuthoritativeTransformation, type GoalSatisfactionReport } from "./authoritative-model";
-import { type Confidence, createConfidence, CONFIDENCE_KNOWN } from "./confidence-model";
+import {
+  type SemanticWorld,
+  type SemanticState,
+  type Entity,
+  type Relationship,
+  cloneSemanticState,
+} from "./semantic-world";
+import {
+  type Rule,
+  type Invariant,
+  InvariantEngine,
+  type DerivedValueDefinition,
+  evaluatePreconditions,
+  evaluatePostconditions,
+} from "./rules-invariants";
+import {
+  type AuthoritativeSemanticModel,
+  type AuthoritativeTransformation,
+  type GoalSatisfactionReport,
+} from "./authoritative-model";
+import {
+  type Confidence,
+  createConfidence,
+  CONFIDENCE_KNOWN,
+} from "./confidence-model";
 
 export interface ValidationIssue {
   stage: number;
@@ -50,7 +71,10 @@ export class SemanticRepairEngine {
    * - Ensures every entity has a unique ID and non-empty label
    * - Eliminates zero-diff consecutive duplicate states (anti-fake-step repair)
    */
-  public static repairSemanticWorld(world: SemanticWorld): { world: SemanticWorld; repairedCount: number } {
+  public static repairSemanticWorld(world: SemanticWorld): {
+    world: SemanticWorld;
+    repairedCount: number;
+  } {
     let repairedCount = 0;
 
     // 1. Repair Entities
@@ -109,7 +133,10 @@ export class SemanticRepairEngine {
    * If they are identical in entities, relationships, values, and highlights,
    * the transition is a FAKE STEP and must be rejected or repaired.
    */
-  public static hasMeaningfulDifference(stateA: SemanticState, stateB: SemanticState): boolean {
+  public static hasMeaningfulDifference(
+    stateA: SemanticState,
+    stateB: SemanticState,
+  ): boolean {
     if (stateA.entities.size !== stateB.entities.size) return true;
     if (stateA.relationships.size !== stateB.relationships.size) return true;
 
@@ -127,9 +154,11 @@ export class SemanticRepairEngine {
     for (const [id, relA] of stateA.relationships.entries()) {
       const relB = stateB.relationships.get(id);
       if (!relB) return true;
-      if (relA.source !== relB.source || relA.target !== relB.target) return true;
+      if (relA.source !== relB.source || relA.target !== relB.target)
+        return true;
       if (relA.label !== relB.label) return true;
-      if (relA.properties?.highlight !== relB.properties?.highlight) return true;
+      if (relA.properties?.highlight !== relB.properties?.highlight)
+        return true;
     }
 
     // Check global properties
@@ -139,6 +168,11 @@ export class SemanticRepairEngine {
     for (const k of Object.keys(stateB.properties)) {
       if (!(k in stateA.properties)) return true;
     }
+
+    if (stateA.stateType !== stateB.stateType) return true;
+    if (stateA.activeDecision?.id !== stateB.activeDecision?.id) return true;
+    if (stateA.decisionOutcome !== stateB.decisionOutcome) return true;
+    if (stateA.persistence !== stateB.persistence) return true;
 
     return false;
   }
@@ -250,7 +284,12 @@ export class CorrectnessEngine {
     // 10. Invariant Discovery & Verification
     const activeInvariants = [
       ...invariants,
-      ...InvariantEngine.discoverInvariants(problem.question, problem.constraints, world.entities, rules),
+      ...InvariantEngine.discoverInvariants(
+        problem.question,
+        problem.constraints,
+        world.entities,
+        rules,
+      ),
     ];
 
     const totalStates = world.states.length;
@@ -263,7 +302,10 @@ export class CorrectnessEngine {
         return true;
       });
 
-      const invReport = InvariantEngine.validateStateInvariants(st, applicableInvariants);
+      const invReport = InvariantEngine.validateStateInvariants(
+        st,
+        applicableInvariants,
+      );
       if (!invReport.valid) {
         for (const viol of invReport.violations) {
           issues.push({
@@ -277,7 +319,7 @@ export class CorrectnessEngine {
       }
     }
 
-    // 11. Transformations: Enforce MEANINGFUL TRANSFORMATION RULE (Anti-Fake-Step)
+    // 11. Transformations: Enforce MEANINGFUL TRANSFORMATION RULE & Pre/Postconditions
     const validTransformations: AuthoritativeTransformation[] = [];
     for (let i = 0; i < rawTransformations.length; i++) {
       const t = rawTransformations[i];
@@ -285,7 +327,51 @@ export class CorrectnessEngine {
       const toState = world.states[t.toStateIndex];
 
       if (fromState && toState) {
-        const hasDiff = SemanticRepairEngine.hasMeaningfulDifference(fromState, toState);
+        // Precondition evaluation
+        if (t.preconditions && t.preconditions.length > 0) {
+          const preResult = evaluatePreconditions(t.preconditions, fromState);
+          if (!preResult.satisfied) {
+            issues.push({
+              stage: 11,
+              stageName: "Preconditions",
+              code: "PRECONDITION_UNSATISFIED",
+              message: `Transformation '${
+                t.title
+              }' precondition failed: ${preResult.failures.join("; ")}`,
+              severity: "warning",
+            });
+          }
+        }
+
+        // Postcondition evaluation
+        if (t.postconditions && t.postconditions.length > 0) {
+          const postResult = evaluatePostconditions(t.postconditions, toState);
+          if (!postResult.satisfied) {
+            issues.push({
+              stage: 11,
+              stageName: "Postconditions",
+              code: "POSTCONDITION_UNSATISFIED",
+              message: `Transformation '${
+                t.title
+              }' postcondition failed: ${postResult.failures.join("; ")}`,
+              severity: "warning",
+            });
+          }
+        }
+
+        const isDecisionOrBranch =
+          t.decision !== undefined ||
+          t.stateType === "decision" ||
+          toState.stateType === "decision" ||
+          toState.activeDecision !== undefined ||
+          t.stateType === "failure" ||
+          toState.stateType === "failure" ||
+          t.stateType === "recovery" ||
+          toState.stateType === "recovery";
+
+        const hasDiff =
+          isDecisionOrBranch ||
+          SemanticRepairEngine.hasMeaningfulDifference(fromState, toState);
         if (!hasDiff) {
           // Reject fake step
           issues.push({
@@ -320,100 +406,23 @@ export class CorrectnessEngine {
     const initialState = world.states[0];
 
     // 14. True Semantic Goal Satisfaction Validation
-    // Evaluates whether the terminal semantic state actually satisfies the user's question.
-    const criteriaResults: GoalSatisfactionReport["verifiedCriteria"] = [];
-    const promptText = (problem.question || problem.objective || "").toLowerCase();
+    // Evaluates whether the terminal semantic state actually satisfies the problem goal.
+    const goalSatisfaction = evaluateGoal(
+      world,
+      problem,
+      activeInvariants,
+      issues,
+    );
 
-    for (const crit of problem.successCriteria) {
-      let passed = true;
-      let evidence = "Verified against semantic state graph and invariants";
-
-      const critLower = crit.toLowerCase();
-
-      if (critLower.includes("balance") || critLower.includes("avl") || promptText.includes("avl")) {
-        const avlCheck = InvariantEngine.validateStateInvariants(finalState, [
-          {
-            id: "inv-goal-avl",
-            statement: "AVL Balance Invariant",
-            scope: "global",
-            severity: "critical",
-            source: "goal-verifier",
-            evaluator: (st) => InvariantEngine.discoverInvariants("avl", [], Array.from(st.entities.values()))[2]?.evaluator?.(st) || { holds: true },
-          },
-        ]);
-        if (!avlCheck.valid) {
-          passed = false;
-          evidence = avlCheck.violations.map((v) => v.details).join("; ");
-        } else {
-          evidence = "Terminal state is height-balanced and preserves BST ordering";
-        }
-      } else if (critLower.includes("travers") || critLower.includes("reach") || promptText.includes("bfs") || promptText.includes("dfs")) {
-        // Traversal progression check: final state must have explored nodes
-        const hasExplored = Array.from(finalState.entities.values()).some(
-          (e) => e.state === "visited" || e.properties.highlight || e.semanticRole === "visited",
-        );
-        const diffFromStart = SemanticRepairEngine.hasMeaningfulDifference(initialState, finalState);
-        if (!hasExplored && !diffFromStart) {
-          passed = false;
-          evidence = "Terminal state showed no traversal progression or visited node state";
-        } else {
-          evidence = "Traversal successfully explored target and preserved graph connectivity";
-        }
-      } else if (critLower.includes("reverse") || promptText.includes("reverse")) {
-        // Reversal check: relationships direction must differ or head/tail must swap
-        const diffFromStart = SemanticRepairEngine.hasMeaningfulDifference(initialState, finalState);
-        if (!diffFromStart) {
-          passed = false;
-          evidence = "Final state is identical to initial state; reversal was not executed";
-        } else {
-          evidence = "Pointers reversed and sequence connectivity maintained";
-        }
-      } else {
-        // Check matching world goals if defined
-        const matchingGoal = world.goals.find((g) => g.description === crit || g.targetCondition === crit);
-        if (matchingGoal?.evaluator) {
-          const evalRes = matchingGoal.evaluator(finalState, world.states);
-          passed = evalRes.satisfied;
-          evidence = evalRes.evidence || (passed ? "Goal evaluator passed" : "Goal evaluator failed");
-        } else if (matchingGoal?.isSatisfied) {
-          passed = matchingGoal.isSatisfied(finalState, world.states);
-          evidence = passed ? "Goal predicate satisfied" : "Goal predicate returned false";
-        } else {
-          // General semantic progression check
-          const diffFromStart = SemanticRepairEngine.hasMeaningfulDifference(initialState, finalState);
-          const hasErrors = issues.some((iss) => iss.severity === "error");
-          passed = diffFromStart && !hasErrors;
-          evidence = passed
-            ? "Terminal state progressed meaningfully and satisfies all active invariants"
-            : hasErrors
-            ? "Validation errors occurred during state transformation"
-            : "No meaningful state change achieved to satisfy objective";
-        }
-      }
-
-      criteriaResults.push({
-        criterion: crit,
-        passed,
-        evidence,
-      });
-    }
-
-    const allPassed = criteriaResults.length > 0 && criteriaResults.every((c) => c.passed);
-    const goalSatisfaction: GoalSatisfactionReport = {
-      satisfied: allPassed,
-      objective: problem.objective,
-      verifiedCriteria: criteriaResults,
-      summary: allPassed
-        ? `Successfully established and verified ${problem.objective}`
-        : "Failed one or more correctness verification criteria",
-    };
-
-    if (!allPassed) {
+    if (!goalSatisfaction.satisfied) {
       issues.push({
         stage: 14,
         stageName: "Goal Satisfaction",
         code: "GOAL_NOT_SATISFIED",
-        message: `Final semantic state did not satisfy the problem goal: ${criteriaResults.filter((c) => !c.passed).map((c) => c.criterion).join(", ")}`,
+        message: `Final semantic state did not satisfy the problem goal: ${goalSatisfaction.verifiedCriteria
+          .filter((c) => !c.passed)
+          .map((c) => c.criterion)
+          .join(", ")}`,
         severity: "error",
       });
     }
@@ -440,7 +449,11 @@ export class CorrectnessEngine {
       derivedValuesByState,
       goalSatisfaction,
       strategy: problem.intent,
-      confidence: createConfidence(0.95, "KNOWN", "Passed 16-point correctness pipeline"),
+      confidence: createConfidence(
+        0.95,
+        "KNOWN",
+        "Passed 16-point correctness pipeline",
+      ),
       timestamp: Date.now(),
     };
 
@@ -449,4 +462,113 @@ export class CorrectnessEngine {
       report,
     };
   }
+}
+
+/**
+ * Universal Semantic Goal Evaluator
+ * Evaluates whether the terminal semantic state satisfies the problem goal,
+ * validating progression, invariants, state resolution, and rollback guarantees.
+ */
+export function evaluateGoal(
+  world: SemanticWorld,
+  problem: ProblemModel,
+  activeInvariants: Invariant[],
+  priorIssues: ValidationIssue[] = [],
+): GoalSatisfactionReport {
+  const criteriaResults: GoalSatisfactionReport["verifiedCriteria"] = [];
+  const finalState = world.states[world.states.length - 1] || world.states[0];
+  const initialState = world.states[0];
+  const hasCriticalErrors = priorIssues.some((iss) => iss.severity === "error");
+
+  for (const crit of problem.successCriteria) {
+    let passed = true;
+    let evidence = "Verified against semantic state graph and invariants";
+
+    // 1. Check custom goal evaluator if present
+    const matchingGoal = world.goals.find(
+      (g) => g.description === crit || g.targetCondition === crit,
+    );
+    if (matchingGoal?.evaluator) {
+      const evalRes = matchingGoal.evaluator(finalState, world.states);
+      passed = evalRes.satisfied;
+      evidence =
+        evalRes.evidence ||
+        (passed ? "Goal evaluator passed" : "Goal evaluator failed");
+    } else if (matchingGoal?.isSatisfied) {
+      passed = matchingGoal.isSatisfied(finalState, world.states);
+      evidence = passed
+        ? "Goal predicate satisfied"
+        : "Goal predicate returned false";
+    } else {
+      // Universal Goal Evaluation:
+      // A. Meaningful state progression
+      const diffFromStart =
+        world.states.length > 1
+          ? SemanticRepairEngine.hasMeaningfulDifference(
+              initialState,
+              finalState,
+            )
+          : true;
+
+      // B. Invariant integrity in final state
+      const invReport = InvariantEngine.validateStateInvariants(
+        finalState,
+        activeInvariants,
+        world.states,
+      );
+
+      // C. If terminal state is a recovery or rollback state, verify rollback restored baseline
+      const isRollbackOrRecovery =
+        finalState.stateType === "recovery" ||
+        finalState.properties?.status === "rolled_back" ||
+        Array.from(finalState.entities.values()).some(
+          (e) => e.state === "rolled_back" || e.state === "aborted",
+        );
+
+      if (isRollbackOrRecovery) {
+        let restored = true;
+        for (const [id, initEnt] of initialState.entities.entries()) {
+          if (typeof initEnt.value === "number") {
+            const finalEnt = finalState.entities.get(id);
+            if (finalEnt && finalEnt.value !== initEnt.value) {
+              restored = false;
+              break;
+            }
+          }
+        }
+        passed = restored && invReport.valid && !hasCriticalErrors;
+        evidence = passed
+          ? "Recovery/rollback verified: initial state baseline restored and all invariants hold"
+          : "Rollback failed to restore baseline entity values";
+      } else {
+        passed = diffFromStart && invReport.valid && !hasCriticalErrors;
+        evidence = passed
+          ? "Terminal state progressed meaningfully and satisfies all active invariants"
+          : !diffFromStart
+          ? "No meaningful state change achieved from initial state"
+          : hasCriticalErrors
+          ? "Critical validation errors occurred during state transformation"
+          : `Invariant violations in terminal state: ${invReport.violations
+              .map((v) => v.statement)
+              .join("; ")}`;
+      }
+    }
+
+    criteriaResults.push({
+      criterion: crit,
+      passed,
+      evidence,
+    });
+  }
+
+  const allPassed =
+    criteriaResults.length > 0 && criteriaResults.every((c) => c.passed);
+  return {
+    satisfied: allPassed,
+    objective: problem.objective,
+    verifiedCriteria: criteriaResults,
+    summary: allPassed
+      ? `Successfully established and verified ${problem.objective}`
+      : "Failed one or more correctness verification criteria",
+  };
 }

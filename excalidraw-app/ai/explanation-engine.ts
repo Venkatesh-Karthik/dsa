@@ -22,11 +22,14 @@ export interface SemanticExplanation {
   whatChanged: string;
   whyChanged: string;
   cause: string;
+  whatMustNowBeTrue: string;
+  whatHappensNext: string;
   learnerObservation: string;
   invariantPreserved?: string;
   consequence: string;
   calculations?: string;
   keyInsight?: string;
+  decisionExplanation?: string;
 }
 
 export interface ExplanationValidationResult {
@@ -100,17 +103,41 @@ export class ExplanationEngine {
       inv.statement.toLowerCase().includes(transformation.title.toLowerCase()),
     );
 
+    // 3. What Must Now Be True?
+    const whatMustNowBeTrue =
+      transformation.postconditions && transformation.postconditions.length > 0
+        ? transformation.postconditions.join("; ")
+        : relevantInvariant
+        ? `Preserves invariant: "${relevantInvariant.statement}"`
+        : "State satisfies baseline consistency and integrity constraints";
+
+    // 4. What Happens Next?
+    const whatHappensNext =
+      transformation.consequence ||
+      "Advances to the next conceptual milestone in the journey";
+
+    // 5. Decision explanation
+    let decisionExplanation: string | undefined;
+    if (transformation.decision) {
+      const dec = transformation.decision;
+      const selected = dec.possibleOutcomes.find((o) => o.id === dec.selectedOutcomeId);
+      decisionExplanation = `Decision "${dec.condition}": evaluated outcome "${selected?.label || dec.selectedOutcomeId}".`;
+    }
+
     return {
       title: transformation.title,
       summary: transformation.explanation || transformation.action,
       whatChanged: computedWhatChanged,
       whyChanged: transformation.whyChanged || transformation.cause || "Required by pedagogical progression",
       cause: transformation.cause || "Algorithmic or physical rule triggering state transition",
+      whatMustNowBeTrue,
+      whatHappensNext,
       learnerObservation: transformation.learnerObservation || "Observe the structural transition in the diagram",
       invariantPreserved: relevantInvariant?.statement,
       consequence: transformation.consequence || "State reaches valid intermediate milestone",
       calculations: transformation.calculations,
       keyInsight: transformation.insight || relevantInvariant?.statement,
+      decisionExplanation,
     };
   }
 }

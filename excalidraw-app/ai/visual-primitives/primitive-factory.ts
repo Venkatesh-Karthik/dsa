@@ -20,6 +20,7 @@ import { createLinkedListNode } from "./linked-list-node";
 import { createCallFrame } from "./call-frame";
 import { createGenericEntity } from "./generic-entity";
 import { createAnnotationPrimitive } from "./annotation-primitive";
+import { createTablePrimitive, updateTablePrimitive } from "./table-primitive";
 import { TOKENS, mapSemanticStateToNodeTokens } from "./design-tokens";
 
 export interface RenderedPrimitive {
@@ -259,6 +260,7 @@ export function createVisualPrimitive(
       break;
     }
 
+    case "MessagePacket":
     case "Packet":
     case "Message": {
       const width = (entity.properties?.width as number | undefined) ?? 90;
@@ -277,6 +279,75 @@ export function createVisualPrimitive(
       break;
     }
 
+    case "DecisionNode":
+    case "Decision": {
+      const width = (entity.properties?.width as number | undefined) ?? 100;
+      const height = (entity.properties?.height as number | undefined) ?? 70;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "diamond",
+        highlight: highlight || "warning",
+        role: "decision",
+      });
+      break;
+    }
+
+    case "CircleNode": {
+      const diameter = (entity.properties?.diameter as number | undefined) ?? 70;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width: diameter,
+        height: diameter,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "ellipse",
+        highlight,
+        role: "node",
+      });
+      break;
+    }
+
+    case "QueueItem": {
+      const width = (entity.properties?.width as number | undefined) ?? 60;
+      const height = (entity.properties?.height as number | undefined) ?? 40;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: "queue-element",
+      });
+      break;
+    }
+
+    case "EquationBlock": {
+      const width = (entity.properties?.width as number | undefined) ?? 160;
+      const height = (entity.properties?.height as number | undefined) ?? 44;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight: highlight || "primary",
+        role: "equation",
+      });
+      break;
+    }
+
+
     case "StateNode": {
       const diameter =
         (entity.properties?.diameter as number | undefined) ?? 60;
@@ -294,8 +365,35 @@ export function createVisualPrimitive(
       break;
     }
 
-    case "DatabaseNode":
     case "Table": {
+      const tableName =
+        (entity.properties?.tableName as string | undefined) ||
+        (entity.label && !entity.label.startsWith("Component ") ? entity.label : undefined) ||
+        (typeof entity.value === "string" ? entity.value : undefined) ||
+        entity.id;
+      const columns = (entity.properties?.columns as any) || (entity.properties?.headers as any);
+      const rows = (entity.properties?.rows as any);
+      const highlightRowIndex = (entity.properties?.highlightRowIndex as number | undefined);
+
+      const tableRes = createTablePrimitive({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        tableName,
+        columns,
+        rows,
+        highlightRowIndex,
+        highlight,
+      });
+
+      primitive = {
+        primaryElement: tableRes.primaryElement,
+        allElements: tableRes.allElements,
+      };
+      break;
+    }
+
+    case "DatabaseNode": {
       const width = (entity.properties?.width as number | undefined) ?? 130;
       const height = (entity.properties?.height as number | undefined) ?? 70;
       primitive = createGenericEntity({
@@ -346,6 +444,97 @@ export function createVisualPrimitive(
       break;
     }
 
+
+    case "TrajectoryRay":
+    case "Ray": {
+      const width = (entity.properties?.width as number | undefined) ?? 160;
+      const height = (entity.properties?.height as number | undefined) ?? 36;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight: highlight || "accent",
+        role: "ray",
+      });
+      break;
+    }
+
+    case "Medium": {
+      const width = (entity.properties?.width as number | undefined) ?? 220;
+      const height = (entity.properties?.height as number | undefined) ?? 140;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight: highlight || "default",
+        role: "medium",
+      });
+      break;
+    }
+
+    case "Boundary": {
+      const width = (entity.properties?.width as number | undefined) ?? 180;
+      const height = (entity.properties?.height as number | undefined) ?? 32;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight: highlight || "default",
+        role: "boundary",
+      });
+      break;
+    }
+
+    case "Record":
+    case "Header":
+    case "Cell": {
+      const width = (entity.properties?.width as number | undefined) ?? (entity.primitiveType === "Cell" ? 60 : 140);
+      const height = (entity.properties?.height as number | undefined) ?? 36;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: entity.semanticRole ?? "data",
+      });
+      break;
+    }
+
+    case "Card":
+    case "Panel":
+    case "Cluster": {
+      const width = (entity.properties?.width as number | undefined) ?? 200;
+      const height = (entity.properties?.height as number | undefined) ?? 120;
+      primitive = createGenericEntity({
+        id: rawId,
+        x: pos.x,
+        y: pos.y,
+        width,
+        height,
+        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        shape: "rectangle",
+        highlight,
+        role: entity.semanticRole ?? "container",
+      });
+      break;
+    }
+
     case "GenericEntity":
     default: {
       const width = (entity.properties?.width as number | undefined) ?? 120;
@@ -372,15 +561,15 @@ export function createVisualPrimitive(
     }
   }
 
-  // Tag every created element with canonical semantic identity
+  // Tag every created element with canonical semantic identity, preserving unique sub-dslIds
   const taggedElements = primitive.allElements.map((el) =>
     newElementWith(el, {
       customData: {
         ...(el.customData ?? {}),
-        dslId: entity.id,
+        dslId: (el.customData?.dslId as string | undefined) ?? entity.id,
         semanticId: entity.id,
         primitiveType: entity.primitiveType,
-        role: entity.semanticRole,
+        role: (el.customData?.role as string | undefined) ?? entity.semanticRole,
         isAiTeaching: true,
       },
     }),
@@ -406,6 +595,30 @@ export function updateVisualPrimitive(
   targetPos: LayoutPoint,
 ): ExcalidrawElement[] {
   if (existingElements.length === 0) return [];
+
+  // If Table, delegate to updateTablePrimitive for coherent multi-element update
+  if (entity.primitiveType === "Table") {
+    const tableName =
+      (entity.properties?.tableName as string | undefined) ||
+      (entity.label && !entity.label.startsWith("Component ") ? entity.label : undefined) ||
+      (typeof entity.value === "string" ? entity.value : undefined) ||
+      entity.id;
+    const columns = (entity.properties?.columns as any) || (entity.properties?.headers as any);
+    const rows = (entity.properties?.rows as any);
+    const highlightRowIndex = (entity.properties?.highlightRowIndex as number | undefined);
+    const highlight = entity.properties?.highlight as string | undefined;
+
+    return updateTablePrimitive(existingElements, {
+      id: entity.id,
+      x: targetPos.x,
+      y: targetPos.y,
+      tableName,
+      columns,
+      rows,
+      highlightRowIndex,
+      highlight,
+    });
+  }
 
   // Identify the primary container or shape
   const primaryEl =
@@ -443,13 +656,13 @@ export function updateVisualPrimitive(
       }
     }
 
-    // Refresh customData
+    // Refresh customData while preserving unique sub-dslIds
     updates.customData = {
       ...(el.customData ?? {}),
-      dslId: entity.id,
+      dslId: (el.customData?.dslId as string | undefined) ?? entity.id,
       semanticId: entity.id,
       primitiveType: entity.primitiveType,
-      role: entity.semanticRole,
+      role: (el.customData?.role as string | undefined) ?? entity.semanticRole,
       isAiTeaching: true,
     };
 

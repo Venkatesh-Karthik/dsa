@@ -19,17 +19,26 @@ import {
 
 export type IntentClass =
   | "EXPLAIN"
+  | "HOW"
+  | "WHY"
+  | "WHAT"
+  | "TRACE"
+  | "COMPARE"
+  | "DERIVE"
+  | "SIMULATE"
+  | "DEBUG"
+  | "DESIGN"
+  | "PROVE"
+  | "VISUALIZE"
+  | "PREDICT"
+  | "COUNTERFACTUAL"
+  | "PRACTICE"
   | "DEFINITION"
   | "MECHANISM"
   | "WHY_HOW"
-  | "COMPARE"
   | "EXAMPLE"
   | "DEMONSTRATION"
-  | "DERIVE"
-  | "PROVE"
-  | "DEBUG"
   | "IMPLEMENTATION"
-  | "SIMULATE"
   | "PROCESS"
   | "LIFECYCLE"
   | "ARCHITECTURE"
@@ -43,13 +52,16 @@ export type IntentClass =
   | "SOLVE"
   | "CONSTRUCT"
   | "ANALYZE"
-  | "TRACE"
-  | "PREDICT"
   | "TRANSFORM"
   | "OPTIMIZE"
-  | "PRACTICE"
-  | "VISUALIZE"
   | string;
+
+export type QuestionScope =
+  | "unit"
+  | "system"
+  | "interaction"
+  | "architecture"
+  | "end-to-end";
 
 export type ExplanationDepth =
   | "overview"
@@ -69,10 +81,26 @@ export interface QuestionUnderstandingResult {
   userIntent: IntentClass;
   /** Secondary or compound intents */
   secondaryIntents?: IntentClass[];
+  /** Unified list of all recognized intents */
+  intents: IntentClass[];
+  /** Pedagogical scope */
+  scope: QuestionScope;
+  /** Core formalized goal */
+  goal: string;
+  /** Requested pedagogical output format */
+  requestedOutput: string;
   /** Core subject or concept identified */
   subject: string;
   /** High-level conceptual domain */
   concept: string;
+  /** Extracted key concepts */
+  importantConcepts: string[];
+  /** Explicit requirements directly stated */
+  explicitRequirements: string[];
+  /** Implicit requirements inferred from intent and domain constraints */
+  implicitRequirements: string[];
+  /** Assumed prerequisite knowledge */
+  assumedKnowledge: string[];
   /** Specific mathematical, logical, or structural operation requested */
   requestedOperation?: string;
   /** Parsed inputs (e.g. initial array, numbers, system parameters) */
@@ -87,6 +115,8 @@ export interface QuestionUnderstandingResult {
   desiredExplanationDepth: ExplanationDepth;
   /** Detected ambiguities and their resolutions */
   ambiguity: Ambiguity[];
+  /** Alias for ambiguity for pedagogical models */
+  potentialAmbiguities: Ambiguity[];
   /** Explicit assumptions made */
   assumptions: string[];
   /** Additional pedagogical context */
@@ -116,81 +146,103 @@ export function understandQuestion(
   const p = prompt.trim();
   const lower = p.toLowerCase();
 
-  // 1. Detect Intent Class
-  let userIntent: IntentClass = "EXPLAIN";
-  const secondaryIntents: IntentClass[] = [];
+  // 1. Detect Multi-Dimensional Intent Classes
+  const recognizedIntents: IntentClass[] = [];
 
   if (/\b(what is|define|definition of|meaning of)\b/i.test(lower)) {
-    userIntent = "DEFINITION";
-  } else if (/\b(debug|fix|error|bug|issue|why is.*failing)\b/i.test(lower)) {
-    userIntent = "DEBUG";
-  } else if (/\b(why does|why is|how come|why do|why are|why)\b/i.test(lower)) {
-    userIntent = "WHY_HOW";
-  } else if (
-    /\b(how does.*work|mechanism of|internal mechanism|under the hood)\b/i.test(
+    recognizedIntents.push("WHAT");
+    recognizedIntents.push("DEFINITION");
+  }
+  if (/\b(debug|fix|error|bug|issue|why is.*failing|failed)\b/i.test(lower)) {
+    recognizedIntents.push("DEBUG");
+  }
+  if (/\b(why does|why is|how come|why do|why are|why)\b/i.test(lower)) {
+    recognizedIntents.push("WHY");
+  }
+  if (
+    /\b(how does.*work|how to|mechanism of|internal mechanism|under the hood|how do)\b/i.test(
       lower,
     )
   ) {
-    userIntent = "MECHANISM";
-  } else if (
-    /\b(architecture of|system design|components of|topology)\b/i.test(lower)
+    recognizedIntents.push("HOW");
+    recognizedIntents.push("MECHANISM");
+  }
+  if (
+    /\b(architecture of|system design|components of|topology|design a|structure of)\b/i.test(
+      lower,
+    )
   ) {
-    userIntent = "ARCHITECTURE";
-  } else if (/\b(what if|suppose that|what happens (if|when))\b/i.test(lower)) {
-    userIntent = "WHAT_IF";
-  } else if (/\b(counterexample|when does.*fail|edge case)\b/i.test(lower)) {
-    userIntent = "COUNTEREXAMPLE";
-  } else if (/\b(cause of|effect of|impact of|consequence of)\b/i.test(lower)) {
-    userIntent = "CAUSE_EFFECT";
-  } else if (
-    /\b(code for|implementation of|code explanation|in code)\b/i.test(lower)
+    recognizedIntents.push("DESIGN");
+    recognizedIntents.push("ARCHITECTURE");
+  }
+  if (
+    /\b(what if|suppose that|what happens (if|when)|fails?|disrupted|broken|removed)\b/i.test(
+      lower,
+    )
   ) {
-    userIntent = "CODE_EXPLANATION";
-  } else if (
-    /\b(compare|contrast|vs|versus|difference between)\b/i.test(lower)
+    recognizedIntents.push("COUNTERFACTUAL");
+  }
+  if (
+    /\b(cause of|effect of|impact of|consequence of|causes|leads to)\b/i.test(
+      lower,
+    )
   ) {
-    userIntent = "COMPARE";
-  } else if (
-    /\b(solve|find|calculate|compute|evaluate|determine)\b/i.test(lower)
+    recognizedIntents.push("CAUSE_EFFECT");
+  }
+  if (
+    /\b(compare|contrast|vs|versus|difference between|pros and cons)\b/i.test(
+      lower,
+    )
   ) {
-    userIntent = "SOLVE";
-  } else if (/\b(proof|prove|induction|correctness proof)\b/i.test(lower)) {
-    userIntent = "PROVE";
-  } else if (/\b(derive|derivation|formula for)\b/i.test(lower)) {
-    userIntent = "DERIVE";
-  } else if (/\b(construct|build|create|implement|design)\b/i.test(lower)) {
-    userIntent = "CONSTRUCT";
-  } else if (
-    /\b(simulate|run|execute|step through|lifecycle|flow)\b/i.test(lower)
+    recognizedIntents.push("COMPARE");
+  }
+  if (/\b(solve|find|calculate|compute|evaluate|determine)\b/i.test(lower)) {
+    recognizedIntents.push("SOLVE");
+  }
+  if (/\b(proof|prove|induction|correctness proof|verify)\b/i.test(lower)) {
+    recognizedIntents.push("PROVE");
+  }
+  if (/\b(derive|derivation|formula for|equation)\b/i.test(lower)) {
+    recognizedIntents.push("DERIVE");
+  }
+  if (/\b(simulate|run|execute|step through|lifecycle|flow)\b/i.test(lower)) {
+    recognizedIntents.push("SIMULATE");
+  }
+  if (
+    /\b(trace|walkthrough|step by step|steps of|progression)\b/i.test(lower)
   ) {
-    userIntent = "SIMULATE";
-  } else if (/\b(trace|walkthrough|step by step|steps of)\b/i.test(lower)) {
-    userIntent = "TRACE";
-  } else if (/\b(predict|what happens next)\b/i.test(lower)) {
-    userIntent = "PREDICT";
-  } else if (
-    /\b(optimize|improve|faster|compress|reduce complexity)\b/i.test(lower)
+    recognizedIntents.push("TRACE");
+  }
+  if (/\b(predict|what happens next|subsequent)\b/i.test(lower)) {
+    recognizedIntents.push("PREDICT");
+  }
+  if (/\b(practice|quiz|test me|challenge|exercise)\b/i.test(lower)) {
+    recognizedIntents.push("PRACTICE");
+  }
+  if (/\b(visualize|draw|show me|illustrate|diagram)\b/i.test(lower)) {
+    recognizedIntents.push("VISUALIZE");
+  }
+  if (
+    /\b(optimize|optimizing|optimization|improve performance|speed up|refactor)\b/i.test(
+      lower,
+    )
   ) {
-    userIntent = "OPTIMIZE";
-  } else if (/\b(practice|quiz|test me|challenge|exercise)\b/i.test(lower)) {
-    userIntent = "PRACTICE";
-  } else if (/\b(visualize|draw|show me|illustrate|diagram)\b/i.test(lower)) {
-    userIntent = "VISUALIZE";
-  } else if (/\b(analyze|inspect|metrics|properties of)\b/i.test(lower)) {
-    userIntent = "ANALYZE";
-  } else if (
-    /\b(transform|rotate|balance|insert|delete|reverse)\b/i.test(lower)
-  ) {
-    userIntent = "TRANSFORM";
+    recognizedIntents.push("OPTIMIZE");
   }
 
-  // Detect secondary intents
-  if (/practice|quiz/i.test(lower) && userIntent !== "PRACTICE") {
-    secondaryIntents.push("PRACTICE");
+  // Fallback / default
+  if (recognizedIntents.length === 0) {
+    recognizedIntents.push("EXPLAIN");
+  } else if (
+    !recognizedIntents.includes("EXPLAIN") &&
+    !recognizedIntents.includes("DEFINITION")
+  ) {
+    recognizedIntents.push("EXPLAIN");
   }
-  if (/visual/i.test(lower) && userIntent !== "VISUALIZE") {
-    secondaryIntents.push("VISUALIZE");
-  }
+
+  const userIntent = recognizedIntents[0];
+  const secondaryIntents = recognizedIntents.slice(1);
+  const intents = [...recognizedIntents];
 
   // 2. Extract Subject and Concept
   // Clean punctuation and common prefixes
@@ -207,7 +259,31 @@ export function understandQuestion(
   const concept =
     cleanSubject.split(/\s+with|\s+for|\s+using|\s+in/i)[0]?.trim() || subject;
 
-  // 3. Extract Requested Operation & Numerical / Literal Inputs
+  // 3. Determine Scope
+  let scope: QuestionScope = "unit";
+  if (/\b(architecture|topology|components|system design)\b/i.test(lower)) {
+    scope = "architecture";
+  } else if (
+    /\b(between|handshake|interaction|connection|protocol|client|server|peer|exchange|dialogue|ack|syn|request.*response|send.*receive)\b/i.test(
+      lower,
+    )
+  ) {
+    scope = "interaction";
+  } else if (
+    /\b(loop|feedback|control|network|distribution|cycle|system|converter|storage|alarm)\b/i.test(
+      lower,
+    )
+  ) {
+    scope = "system";
+  } else if (
+    /\b(end-to-end|full flow|lifecycle|pipeline|complete process|across)\b/i.test(
+      lower,
+    )
+  ) {
+    scope = "end-to-end";
+  }
+
+  // 4. Extract Requested Operation & Numerical / Literal Inputs
   let requestedOperation: string | undefined;
   const opMatch = lower.match(
     /\b(insert|delete|remove|search|lookup|rotate|sort|traverse|send|receive|route|dispatch|expand|condense|parse|lex|compile|optimize)\b/i,
@@ -231,15 +307,38 @@ export function understandQuestion(
     numMatches.slice(0, 5).forEach((n) => inputs.push(Number(n)));
   }
 
-  // 4. Inferred Constraints
+  // 5. Inferred Constraints & Requirements
   const constraints: string[] = [];
+  const explicitRequirements: string[] = [];
+  const implicitRequirements: string[] = [
+    "Ensure state transitions are causally justified",
+    "Preserve foundational system invariants",
+    "Distinguish intermediate states from verified final states",
+  ];
+
+  if (/\b(fail|fails|failure|broken|timeout|abort|rollback)\b/i.test(lower)) {
+    explicitRequirements.push(
+      "Explicitly demonstrate failure scenario and consequences/recovery",
+    );
+  }
+  if (/\b(compare|contrast|difference)\b/i.test(lower)) {
+    explicitRequirements.push(
+      "Provide comparative visual contrast between alternatives",
+    );
+  }
+  if (inputs.length > 0) {
+    explicitRequirements.push(
+      `Incorporate explicit input parameters: ${JSON.stringify(inputs[0])}`,
+    );
+  }
+
   if (/\b(sorted|ascending|descending)\b/i.test(lower)) {
     constraints.push("Elements must maintain sorted ordering");
   }
   if (/\b(balanced|avl|red-black)\b/i.test(lower)) {
     constraints.push("Balance invariants must be preserved across mutations");
   }
-  if (/\b(closed cycle|conservation)\b/i.test(lower)) {
+  if (/\b(closed cycle|conservation|conserve)\b/i.test(lower)) {
     constraints.push("Conservation of mass and energy must be preserved");
   }
   if (/\b(acyclic|dag|tree)\b/i.test(lower)) {
@@ -249,7 +348,7 @@ export function understandQuestion(
     constraints.push("Edge weights must be non-negative");
   }
 
-  // 5. Desired Explanation Depth
+  // 6. Desired Explanation Depth
   let desiredExplanationDepth: ExplanationDepth = "standard";
   if (/\b(rigorous|mathematical proof|formal|axiom|theorem)\b/i.test(lower)) {
     desiredExplanationDepth = "rigorous";
@@ -265,7 +364,65 @@ export function understandQuestion(
     desiredExplanationDepth = "overview";
   }
 
-  // 6. Ambiguity Handling
+  // 7. Extract Important Concepts
+  const stopWords = new Set([
+    "explain",
+    "how",
+    "does",
+    "what",
+    "is",
+    "a",
+    "the",
+    "an",
+    "and",
+    "or",
+    "in",
+    "of",
+    "to",
+    "for",
+    "with",
+    "work",
+    "show",
+    "me",
+    "teach",
+    "if",
+    "when",
+    "by",
+  ]);
+  const words = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !stopWords.has(w));
+  const importantConcepts = Array.from(new Set([concept, ...words])).slice(
+    0,
+    8,
+  );
+
+  // 8. Assumed Prerequisite Knowledge
+  const assumedKnowledge: string[] = [
+    `Foundational familiarity with ${concept} terminology`,
+  ];
+  if (scope === "system" || scope === "architecture") {
+    assumedKnowledge.push(
+      "Basic understanding of component modularity and interconnected dataflow",
+    );
+  }
+  if (intents.includes("COUNTERFACTUAL")) {
+    assumedKnowledge.push(
+      "Baseline nominal behavior of the system before failure injection",
+    );
+  }
+
+  // 9. Formalized Goal & Requested Output
+  const goal = `Demonstrate and verify ${concept} through causal mechanisms, state transitions, and invariant preservation.`;
+  const requestedOutput = intents.includes("COUNTERFACTUAL")
+    ? "Causal progression demonstrating both nominal and alternative/failure paths"
+    : intents.includes("COMPARE")
+    ? "Comparative structural evaluation"
+    : "Sequential conceptual milestone walkthrough";
+
+  // 10. Ambiguity Handling
   const ambiguity: Ambiguity[] = [];
   const assumptions: string[] = [];
 
@@ -314,13 +471,22 @@ export function understandQuestion(
     userIntent,
     secondaryIntents:
       secondaryIntents.length > 0 ? secondaryIntents : undefined,
+    intents,
+    scope,
+    goal,
+    requestedOutput,
     subject,
     concept,
+    importantConcepts,
+    explicitRequirements,
+    implicitRequirements,
+    assumedKnowledge,
     requestedOperation,
     inputs,
     constraints,
     desiredExplanationDepth,
     ambiguity,
+    potentialAmbiguities: ambiguity,
     assumptions,
     relevantContext: context?.selectedEntities?.length
       ? `Selected entities: ${context.selectedEntities.join(", ")}`
