@@ -2,33 +2,35 @@
 
 ## Project Structure
 
-Excalidraw is a **monorepo** with a clear separation between the core library and the application:
+Codenora is a **monorepo** comprising the Codenora visual learning application and the underlying editable canvas engine:
 
-- **`packages/excalidraw/`** - Main React component library published to npm as `@excalidraw/excalidraw`
-- **`excalidraw-app/`** - Full-featured web application (excalidraw.com) that uses the library
+- **`codenora-app/`** - Full-featured Codenora web application with Cognora AI visual teaching engine
+- **`packages/excalidraw/`** - Core editable canvas library
 - **`packages/`** - Core packages: `@excalidraw/common`, `@excalidraw/element`, `@excalidraw/math`, `@excalidraw/utils`
-- **`examples/`** - Integration examples (NextJS, browser script)
 
 ## Development Workflow
 
-1. **Package Development**: Work in `packages/*` for editor features
-2. **App Development**: Work in `excalidraw-app/` for app-specific features
-3. **Testing**: Always run `yarn test:update` before committing
+1. **Package Development**: Work in `packages/*` for canvas editor features
+2. **App Development**: Work in `codenora-app/` for Codenora features and AI teaching system
+3. **Testing**: Always run `yarn test` before committing
 4. **Type Safety**: Use `yarn test:typecheck` to verify TypeScript
 
 ## Development Commands
 
 ```bash
 yarn test:typecheck  # TypeScript type checking
-yarn test:update     # Run all tests (with snapshot updates)
-yarn fix             # Auto-fix formatting and linting issues
+yarn test            # Run test suites
+yarn test:code       # ESLint validation
+yarn test:other      # Prettier formatting verification
+yarn build           # Production bundle build
+yarn start           # Development server
 ```
 
 ## Architecture Notes
 
 ### Package System
 
-- Uses Yarn workspaces for monorepo management
-- Internal packages use path aliases (see `vitest.config.mts`)
-- Build system uses esbuild for packages, Vite for the app
+- Uses Yarn workspaces for monorepo management (`codenora-app`, `packages/*`)
+- Internal packages use path aliases (see `vitest.config.mts` and `tsconfig.json`)
+- Build system uses Vite for `codenora-app`
 - TypeScript throughout with strict configuration
