@@ -35,6 +35,6 @@
       "@excalidraw/utils/*": ["./packages/utils/src/*"]
     }
   },
-  "include": ["packages", "excalidraw-app"],
+  "include": ["packages", "codenora-app"],
   "exclude": ["examples", "dist", "types", "tests"]
 }

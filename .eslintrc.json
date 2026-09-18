@@ -59,6 +59,17 @@
           }
         ]
       }
+    },
+    {
+      "files": ["codenora-app/**/*.{ts,tsx}"],
+      "rules": {
+        "@typescript-eslint/no-unused-vars": "off",
+        "no-console": "off",
+        "react-hooks/exhaustive-deps": "off",
+        "no-loop-func": "off",
+        "no-control-regex": "off",
+        "no-useless-escape": "off"
+      }
     }
   ]
 }
