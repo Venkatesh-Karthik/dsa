@@ -37,6 +37,7 @@ import {
 } from "./scene-state";
 
 import { computeSceneGraphLayout } from "./layout-engine";
+import { validateSceneVisualInvariants } from "./visual-validation";
 import { reconcileSceneState } from "./scene-reconciler";
 import {
   animateSceneTransition,
@@ -142,6 +143,9 @@ export function compileAuthoritativeTimeline(
       previousLayoutPositions,
     );
 
+    // Pre-render visual invariants validation
+    validateSceneVisualInvariants(graph, layout.positions, layout.bounds);
+
     states.push(createSceneState(graph, layout.positions, layout.bounds));
     previousLayoutPositions = layout.positions;
 
@@ -238,6 +242,11 @@ export function compileVisualLesson(lesson: VisualLesson): CompiledTimeline {
     x: 140,
     y: 120,
   });
+  validateSceneVisualInvariants(
+    initialGraph,
+    initialLayout.positions,
+    initialLayout.bounds,
+  );
   states.push(
     createSceneState(
       initialGraph,
@@ -283,6 +292,12 @@ export function compileVisualLesson(lesson: VisualLesson): CompiledTimeline {
       nextGraph,
       { x: 140, y: 120 },
       previousLayoutPositions,
+    );
+
+    validateSceneVisualInvariants(
+      nextGraph,
+      nextLayout.positions,
+      nextLayout.bounds,
     );
 
     const nextState = createSceneState(

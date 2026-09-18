@@ -412,6 +412,36 @@ If you must reason internally, wrap it ONLY inside <think>...</think> tags BEFOR
 The JSON object itself MUST start with { and end with }.
 Output: [optional <think>...</think>] then the JSON object. No other text.
 
+SEMANTIC / VISUAL ENTITY CONTRACT (CRITICAL):
+TEACHING DATA (NEVER becomes a visual entity):
+  - The user's question text ("how", "dijkstra", "shortest", "algorithm", "explain", "works", etc.)
+  - The lesson title, topic name, algorithm name
+  - Internal operation IDs (t1-op0, ptr-low, arr-0)
+  - Explanation text, reasoning, metadata
+  - Edge weight numbers that are LABELS on relationships (not separate nodes)
+
+VALID VISUAL ENTITIES (the ONLY things that may appear on canvas):
+  - Array elements: { type: "create_array", id: string, elements: [{value}] }
+  - Graph NODES: circles/ellipses with a semantic role in the GRAPH BEING VISUALIZED
+  - Tree NODES: nodes in the tree data structure being taught
+  - Linked list NODES: nodes in the linked list being taught
+  - Stack/Queue items: elements in the stack or queue
+  - Boxes, circles, arrows: only when explicitly modeling a STRUCTURAL CONCEPT
+  - Annotations: labels/pointers that describe VISUAL ENTITIES (not the question)
+
+VIOLATION EXAMPLES (FORBIDDEN):
+  WRONG: { type: "create_box", id: "how", label: "how" }  ← question word
+  WRONG: { type: "create_box", id: "dijkstra", label: "dijkstra" }  ← algorithm name
+  WRONG: { type: "create_box", id: "weighted", label: "weighted" }  ← description word
+  WRONG: { type: "create_box", id: "arrow10-40", label: "10→40" }  ← internal ID as label
+  WRONG: { type: "create_text", id: "t2-op0", text: "t2-op0" }  ← internal operation ID
+
+CORRECT EXAMPLES:
+  RIGHT: { type: "create_graph", id: "dijkstra-graph", nodes: [{id:"A",label:"A"}, ...], edges: [...] }
+  RIGHT: { type: "create_linked_list", id: "mylist", elements: [{value:10},{value:25},{value:40}] }
+  RIGHT: { type: "create_array", id: "arr", elements: [{value:4},{value:56},{value:85}] }
+
+
 OUTPUT JSON CONTRACT:
 You MUST return this exact outer structure with "visualLesson". NEVER return a bare visual action alone.
 {
@@ -502,12 +532,14 @@ STABLE IDS:
 
 For OTHER concepts (arrays, graphs, stacks, networking, databases, operating systems, ML, etc.) apply the same delta principle:
 - Arrays: update highlights on cells using "highlight", or replace the array with a new state using delete + create_array.
-- Graphs: add/remove edges, highlight traversal nodes.
+- Graphs: add/remove edges, highlight traversal nodes. Edge weights go in the "weight" field of the edge object — NEVER as separate boxes or text nodes.
+- Dijkstra's algorithm: use create_graph for the initial graph with all nodes and weighted edges. Then in transformations, use highlight to show visited nodes (success color), current node (warning), unvisited neighbors (info). Use create_box or create_text ONLY for the distance table, NOT for individual edge weights.
 - Linked lists: delete and recreate with updated links.
 - Networking / HTTP: create client and server boxes; move or highlight request and response arrows/boxes.
 - Databases / SQL: create table boxes, highlight matching rows, show result set.
 - Operating Systems: show CPU core and ready queue items, move active process into running state.
 - Generic / Cross-domain: compose with create_box, create_circle, create_arrow, and create_text with stable IDs.
+
 
 SUPPORTED VISUAL ACTIONS (valid in both initialScene and operations):
 - create_tree: { "type": "create_tree", "id": string, "root": string, "nodes": [{ "id": string, "value": string|number, "left"?: string, "right"?: string, "highlight"?: SemanticColor }] }

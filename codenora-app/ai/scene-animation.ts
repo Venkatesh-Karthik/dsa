@@ -308,14 +308,18 @@ export function animateSceneTransition(
     }
 
     // Identify exiting AI elements (existed in current scene, but absent in target)
+    const exitingElements: ExcalidrawElement[] = [];
     for (const cur of currentScene) {
       if (
         !cur.isDeleted &&
         cur.customData?.isAiTeaching &&
-        !matchedCurrentIds.has(cur.id)
+        !matchedCurrentIds.has(cur.id) &&
+        !matchedTargetIds.has(cur.id)
       ) {
+        const delEl = newElementWith(cur, { isDeleted: true });
+        exitingElements.push(delEl);
         animatedItems.push({
-          targetElement: newElementWith(cur, { isDeleted: true }),
+          targetElement: delEl,
           startX: cur.x,
           startY: cur.y,
           targetX: cur.x,
@@ -448,6 +452,7 @@ export function animateSceneTransition(
           excalidrawAPI.updateScene({
             elements: syncInvalidIndices([
               ...staticElements,
+              ...exitingElements,
               ...(targetElements as ExcalidrawElement[]),
             ]),
             captureUpdate: CaptureUpdateAction.IMMEDIATELY,
@@ -481,6 +486,7 @@ export function animateSceneTransition(
         excalidrawAPI.updateScene({
           elements: syncInvalidIndices([
             ...staticElements,
+            ...exitingElements,
             ...(targetElements as ExcalidrawElement[]),
           ]),
           captureUpdate: CaptureUpdateAction.IMMEDIATELY,

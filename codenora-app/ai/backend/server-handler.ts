@@ -9,8 +9,6 @@ import fs from "fs";
 
 import path from "path";
 
-import { UniversalConceptIntelligenceEngine } from "../universal-engine";
-
 import { MockTeachingProvider } from "./mock-provider";
 
 import {
@@ -87,7 +85,7 @@ export function logStartupConfiguration(): void {
   const primaryModel =
     process.env.NVIDIA_MODEL || "nvidia/nemotron-3-ultra-550b-a55b";
   const maxTokens =
-    process.env.NVIDIA_MAX_TOKENS || process.env.COGNORA_MAX_TOKENS || "1800";
+    process.env.NVIDIA_MAX_TOKENS || process.env.COGNORA_MAX_TOKENS || "32768";
   const nvidiaKeyStatus =
     process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.trim().length > 0
       ? "Present (configured)"
@@ -349,108 +347,12 @@ export async function handleTeachingRequest(
     teachingResponse.generationId = generationId;
 
     // 3. Validate generated response against Visual DSL schema
-    let responseValidation = validateTeachingResponse(teachingResponse);
+    const responseValidation = validateTeachingResponse(teachingResponse);
     if (!responseValidation.valid || !responseValidation.data) {
-      // Reconcile via UniversalConceptIntelligenceEngine
-      console.warn(
-        `[COGNORA][TEACH][BACKEND][RECOVER] generationId=${generationId} initial validation had errors (${responseValidation.errors.join(
-          "; ",
-        )}). Reconciling via UniversalConceptIntelligenceEngine...`,
-      );
-      try {
-        const engineResult = UniversalConceptIntelligenceEngine.processQuestion(
-          requestValidation.data.prompt,
-          teachingResponse as any,
-        );
-        const reconciledResponse: TeachingResponse = {
-          topic:
-            engineResult.visualLesson.title ||
-            engineResult.visualLesson.concept ||
-            teachingResponse.topic ||
-            "Visual Lesson",
-          message:
-            engineResult.visualLesson.transformations?.[0]?.explanation ||
-            teachingResponse.message ||
-            `Visual explanation of ${
-              engineResult.visualLesson.title || "concept"
-            }`,
-          visual_actions:
-            engineResult.visualLesson.initialScene &&
-            engineResult.visualLesson.initialScene.length > 0
-              ? engineResult.visualLesson.initialScene
-              : [
-                  {
-                    type: "create_box",
-                    id: "concept-overview",
-                    label:
-                      engineResult.visualLesson.title || "Concept Overview",
-                    style: { color: "primary" },
-                  },
-                ],
-          visualLesson: engineResult.visualLesson,
-          steps: engineResult.visualLesson.steps || [],
-          generationId,
-        };
-        responseValidation = validateTeachingResponse(reconciledResponse);
-      } catch (recErr) {
-        console.error(
-          `[COGNORA][TEACH][BACKEND][ERROR] Reconcile attempt failed:`,
-          recErr,
-        );
-      }
-    }
-
-    if (!responseValidation.valid || !responseValidation.data) {
-      console.warn(
-        `[COGNORA][TEACH][BACKEND][RECOVER] generationId=${generationId} initial validation still invalid (${responseValidation.errors.join(
-          "; ",
-        )}). Synthesizing clean authoritative lesson...`,
-      );
-      try {
-        const engineResult = UniversalConceptIntelligenceEngine.processQuestion(
-          requestValidation.data.prompt,
-        );
-        const cleanResponse: TeachingResponse = {
-          topic:
-            engineResult.visualLesson.title ||
-            engineResult.visualLesson.concept ||
-            "Visual Lesson",
-          message:
-            engineResult.visualLesson.transformations?.[0]?.explanation ||
-            teachingResponse?.message ||
-            `Visual explanation of ${
-              engineResult.visualLesson.title || "concept"
-            }`,
-          visual_actions:
-            engineResult.visualLesson.initialScene &&
-            engineResult.visualLesson.initialScene.length > 0
-              ? engineResult.visualLesson.initialScene
-              : [
-                  {
-                    type: "create_box",
-                    id: "concept-overview",
-                    label:
-                      engineResult.visualLesson.title || "Concept Overview",
-                    style: { color: "primary" },
-                  },
-                ],
-          visualLesson: engineResult.visualLesson,
-          steps: engineResult.visualLesson.steps || [],
-          generationId,
-        };
-        responseValidation = validateTeachingResponse(cleanResponse);
-      } catch (cleanErr) {
-        console.error(
-          `[COGNORA][TEACH][BACKEND][ERROR] Clean synthesis failed:`,
-          cleanErr,
-        );
-      }
-    }
-
-    if (!responseValidation.valid || !responseValidation.data) {
-      // eslint-disable-next-line no-console
       console.error(
-        `[COGNORA][TEACH][BACKEND][ERROR] generationId=${generationId} requestId=${requestId} schema validation failed`,
+        `[COGNORA][TEACH][BACKEND][ERROR] generationId=${generationId} requestId=${requestId} schema validation failed: ${responseValidation.errors.join(
+          "; ",
+        )}`,
       );
       sendJson(res, 502, {
         error:
@@ -465,8 +367,7 @@ export async function handleTeachingRequest(
     // Ensure generationId is preserved on validated data
     responseValidation.data.generationId = generationId;
 
-    // 4. Return successful response
-    // eslint-disable-next-line no-console
+    // 4. Return successful response (only genuine validated lessons from provider)
     console.log(
       `[COGNORA][TEACH][BACKEND][SUCCESS] generationId=${generationId} requestId=${requestId} topic="${
         responseValidation.data.topic || ""
@@ -476,73 +377,6 @@ export async function handleTeachingRequest(
   } catch (err: unknown) {
     inFlightGenerations.delete(dedupKey);
 
-    // If ProviderSchemaError or structured output error occurred:
-    const isSchemaFailure =
-      err instanceof ProviderSchemaError ||
-      (err instanceof ProviderError &&
-        (err.code === "SCHEMA_ERROR" ||
-          err.code === "STRUCTURED_OUTPUT_ERROR")) ||
-      (err instanceof Error &&
-        (err.message.includes("Visual DSL") ||
-          err.message.includes("structured JSON") ||
-          err.message.includes("JSON Parse error")));
-
-    if (isSchemaFailure) {
-      console.warn(
-        `[COGNORA][TEACH][BACKEND][RECOVER] generationId=${generationId} requestId=${requestId} provider schema error (${
-          (err as Error).message
-        }). Synthesizing authoritative lesson via UniversalConceptIntelligenceEngine...`,
-      );
-      try {
-        const engineResult = UniversalConceptIntelligenceEngine.processQuestion(
-          requestValidation.data.prompt,
-        );
-        const reconciledResponse: TeachingResponse = {
-          topic:
-            engineResult.visualLesson.title ||
-            engineResult.visualLesson.concept ||
-            "Visual Lesson",
-          message:
-            engineResult.visualLesson.transformations?.[0]?.explanation ||
-            `Visual explanation of ${
-              engineResult.visualLesson.title || "concept"
-            }`,
-          visual_actions:
-            engineResult.visualLesson.initialScene &&
-            engineResult.visualLesson.initialScene.length > 0
-              ? engineResult.visualLesson.initialScene
-              : [
-                  {
-                    type: "create_box",
-                    id: "concept-overview",
-                    label:
-                      engineResult.visualLesson.title || "Concept Overview",
-                    style: { color: "primary" },
-                  },
-                ],
-          visualLesson: engineResult.visualLesson,
-          steps: engineResult.visualLesson.steps || [],
-          generationId,
-        };
-        const validation = validateTeachingResponse(reconciledResponse);
-        if (validation.valid && validation.data) {
-          validation.data.generationId = generationId;
-          console.log(
-            `[COGNORA][TEACH][BACKEND][SUCCESS] generationId=${generationId} requestId=${requestId} topic="${
-              validation.data.topic || ""
-            }" (recovered)`,
-          );
-          sendJson(res, 200, validation.data);
-          return;
-        }
-      } catch (recErr) {
-        console.error(
-          `[COGNORA][TEACH][BACKEND][ERROR] Synthesis recovery failed:`,
-          recErr,
-        );
-      }
-    }
-
     const message =
       err instanceof Error
         ? err.message
@@ -551,7 +385,6 @@ export async function handleTeachingRequest(
     const code = err instanceof ProviderError ? err.code : "INTERNAL_ERROR";
     const details = err instanceof ProviderError ? err.details : undefined;
 
-    // eslint-disable-next-line no-console
     console.error(
       `[COGNORA][TEACH][BACKEND][ERROR] generationId=${generationId} requestId=${requestId} code=${code} error="${message}"`,
     );

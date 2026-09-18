@@ -2,9 +2,11 @@ import React, { useState, useRef, useEffect } from "react";
 
 import { formatSelectedElementChip } from "../ai/selection-context";
 
+import { CognoraCommandPalette } from "./CognoraCommandPalette";
+
 import type { SelectedSemanticElement } from "../ai/teaching-contract";
 import type { CanvasInteractionDelta } from "../ai/semantic-canvas";
-import type { AutocompleteSuggestion } from "../ai/commands";
+import type { AutocompleteSuggestion, CommandContext } from "../ai/commands";
 
 export interface CognoraAIComposerProps {
   inputValue: string;
@@ -24,11 +26,12 @@ export interface CognoraAIComposerProps {
   suggestions?: string[];
   onSuggestionClick?: (prompt: string) => void;
   onAttachFile?: (file: File) => void;
+  commandContext?: CommandContext;
   children?: React.ReactNode;
 }
 
 export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
-  inputValue,
+  inputValue = "",
   onInputChange,
   onSubmit,
   isLoading,
@@ -45,11 +48,13 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   suggestions = [],
   onSuggestionClick,
   onAttachFile,
+  commandContext,
   children,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isSubmittingRef = useRef(false);
+  const isComposingRef = useRef(false);
   const [isListening, setIsListening] = useState(false);
 
   // Release the synchronous submitting lock when loading settles
@@ -58,6 +63,26 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
       isSubmittingRef.current = false;
     }
   }, [isLoading]);
+
+  // Dynamic auto-resize for multiline textarea
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = "auto";
+    const minHeight = 26;
+    const maxHeight = 160;
+    const currentScroll = textarea.scrollHeight;
+
+    if (currentScroll > maxHeight) {
+      textarea.style.height = `${maxHeight}px`;
+      textarea.style.overflowY = "auto";
+    } else {
+      textarea.style.height = `${Math.max(minHeight, currentScroll)}px`;
+      textarea.style.overflowY = "hidden";
+    }
+  }, [inputValue]);
 
   const handleFormSubmit = (e?: React.FormEvent) => {
     if (e) {
@@ -76,8 +101,16 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposingRef.current || e.nativeEvent.isComposing) {
+      return;
+    }
+
+    if (e.key === "Enter") {
+      if (e.shiftKey) {
+        // Shift + Enter: native newline insertion without submission
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
 
@@ -134,7 +167,7 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   };
 
   const toggleVoice = () => {
-    const win = inputRef.current?.ownerDocument?.defaultView as any;
+    const win = textareaRef.current?.ownerDocument?.defaultView as any;
     const SpeechRecognition =
       win?.SpeechRecognition || win?.webkitSpeechRecognition;
 
@@ -191,79 +224,35 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
         onChange={handleFileChange}
       />
 
-      {/* Autocomplete Popup */}
-      {showAutocomplete && autocompleteSuggestions.length > 0 && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "100%",
-            marginBottom: "8px",
-            width: "100%",
-            background: "#ffffff",
-            borderRadius: "14px",
-            border: "1px solid #e2e8f0",
-            boxShadow: "0 10px 25px -3px rgba(0,0,0,0.1)",
-            padding: "8px",
-            maxHeight: "220px",
-            overflowY: "auto",
-            zIndex: 40,
+      {/* Universal Liquid Glass Command Palette */}
+      {showAutocomplete && (
+        <CognoraCommandPalette
+          isOpen={showAutocomplete}
+          onClose={() => {}}
+          inputValue={inputValue}
+          context={commandContext}
+          selectedIndex={selectedSuggestionIndex}
+          onSelectedIndexChange={onSuggestionHover}
+          onSelectCommand={(cmdName, syntaxOrExample, executeImmediately) => {
+            if (executeImmediately && syntaxOrExample) {
+              onInputChange("");
+              onSubmit(syntaxOrExample);
+            } else if (onSelectSuggestion) {
+              const matched = autocompleteSuggestions.find(
+                (s) => s.name === cmdName,
+              ) || {
+                name: cmdName,
+                syntax: syntaxOrExample || `/${cmdName}`,
+                description: "",
+                example: syntaxOrExample || `/${cmdName}`,
+                category: "CREATE" as const,
+              };
+              onSelectSuggestion(matched);
+            } else {
+              onInputChange(`/${cmdName} `);
+            }
           }}
-          role="listbox"
-          aria-label="Slash commands"
-        >
-          <div
-            style={{
-              padding: "4px 8px 8px",
-              display: "flex",
-              justifyContent: "space-between",
-              fontSize: "11px",
-              color: "#94a3b8",
-              fontWeight: 600,
-            }}
-          >
-            <span>DSA Commands</span>
-            <span>Tab / Enter to select</span>
-          </div>
-          <div>
-            {autocompleteSuggestions.map((sug, idx) => (
-              <button
-                key={sug.name}
-                type="button"
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "6px 8px",
-                  borderRadius: "8px",
-                  background:
-                    idx === selectedSuggestionIndex ? "#eff6ff" : "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                }}
-                onClick={() => onSelectSuggestion?.(sug)}
-                onMouseEnter={() => onSuggestionHover?.(idx)}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontWeight: 600,
-                    fontSize: "12px",
-                    color: "#0f172a",
-                  }}
-                >
-                  <span style={{ color: "#2563eb" }}>/{sug.name}</span>
-                  <span style={{ fontSize: "10px", color: "#94a3b8" }}>
-                    {sug.category}
-                  </span>
-                </div>
-                <div style={{ fontSize: "11px", color: "#64748b" }}>
-                  {sug.description}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+        />
       )}
 
       {/* Pending User Canvas Interaction Banner */}
@@ -387,21 +376,27 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
             </svg>
           </button>
 
-          {/* Text Input */}
-          <input
-            ref={inputRef}
+          {/* Multiline Textarea Input */}
+          <textarea
+            ref={textareaRef}
+            rows={1}
             className="cognora-ai-composer__input"
             placeholder={
               selectedContext.length > 0
                 ? `Ask about selected ${formatSelectedElementChip(
                     selectedContext,
                   )}...`
-                : "Ask Codenora anything..."
+                : "Ask Cognora anything..."
             }
-            type="text"
             value={inputValue}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
             disabled={isLoading}
             aria-label="AI Prompt"
           />
@@ -448,7 +443,7 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
             type="submit"
             className="cognora-ai-composer__send-btn"
             disabled={
-              isLoading || isSubmittingRef.current || !inputValue.trim()
+              isLoading || isSubmittingRef.current || !inputValue?.trim()
             }
             title={isLoading ? "Generating..." : "Send prompt"}
             aria-label={isLoading ? "Generating..." : "Send prompt"}

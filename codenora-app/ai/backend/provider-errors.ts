@@ -20,6 +20,11 @@ export type ProviderErrorCode =
   | "STRUCTURED_OUTPUT_ERROR"
   | "SCHEMA_ERROR"
   | "VALIDATION_ERROR"
+  | "NVIDIA_EMPTY_COMPLETION"
+  | "NVIDIA_INVALID_COMPLETION"
+  | "NVIDIA_INCOMPLETE_STREAM"
+  | "NVIDIA_OUTPUT_TRUNCATED"
+  | "NVIDIA_STREAM_ERROR"
   | "UNKNOWN_PROVIDER_ERROR"
   | "UNKNOWN_ERROR";
 
@@ -147,5 +152,79 @@ export class ProviderCreditCapacityError extends ProviderError {
     this.name = "ProviderCreditCapacityError";
     this.requestedTokens = details?.requestedTokens;
     this.availableTokens = details?.availableTokens;
+  }
+}
+
+export class NvidiaEmptyCompletionError extends ProviderError {
+  constructor(
+    message: string = "NVIDIA NIM returned empty completion content.",
+    providerId: string = "nvidia",
+  ) {
+    super(message, {
+      code: "NVIDIA_EMPTY_COMPLETION",
+      statusCode: 502,
+      retryable: true,
+      providerId,
+    });
+    this.name = "NvidiaEmptyCompletionError";
+  }
+}
+
+export class NvidiaInvalidCompletionError extends ProviderSchemaError {
+  constructor(
+    message: string = "NVIDIA NIM completion could not be parsed as structured JSON.",
+    validationErrors: readonly string[] = [],
+    providerId: string = "nvidia",
+  ) {
+    super(message, validationErrors, providerId);
+    (this as any).code = "NVIDIA_INVALID_COMPLETION";
+    this.name = "NvidiaInvalidCompletionError";
+  }
+}
+
+export class NvidiaIncompleteStreamError extends ProviderError {
+  constructor(
+    message: string = "NVIDIA NIM stream ended before a valid completion was received.",
+    providerId: string = "nvidia",
+  ) {
+    super(message, {
+      code: "NVIDIA_INCOMPLETE_STREAM",
+      statusCode: 502,
+      retryable: true,
+      providerId,
+    });
+    this.name = "NvidiaIncompleteStreamError";
+  }
+}
+
+export class NvidiaOutputTruncatedError extends ProviderError {
+  constructor(
+    message: string = "NVIDIA NIM response was truncated by output token limit.",
+    providerId: string = "nvidia",
+  ) {
+    super(message, {
+      code: "NVIDIA_OUTPUT_TRUNCATED",
+      statusCode: 502,
+      retryable: false,
+      providerId,
+    });
+    this.name = "NvidiaOutputTruncatedError";
+  }
+}
+
+export class NvidiaStreamError extends ProviderError {
+  constructor(
+    message: string = "NVIDIA NIM streaming error.",
+    code: ProviderErrorCode = "NVIDIA_STREAM_ERROR",
+    statusCode: number = 502,
+    providerId: string = "nvidia",
+  ) {
+    super(message, {
+      code,
+      statusCode,
+      retryable: statusCode >= 500,
+      providerId,
+    });
+    this.name = "NvidiaStreamError";
   }
 }

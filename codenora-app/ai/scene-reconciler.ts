@@ -619,6 +619,21 @@ export function reconcileSceneState(
     }
   }
 
+  // 4.5. Reconcile unmanaged and orphan AI teaching elements
+  for (const el of unmanagedElements) {
+    if (
+      el.customData?.isAiTeaching ||
+      (lessonId && el.customData?.lessonId === lessonId)
+    ) {
+      if (!el.isDeleted) {
+        resultElements.push(newElementWith(el, { isDeleted: true }));
+      }
+    } else {
+      // Preserve genuine user manual drawings
+      resultElements.push(el);
+    }
+  }
+
   // 5. Developer Diagnostics Overlay
   if (isVisualDebugEnabled()) {
     const diagBoxes: DiagnosticsBox[] = [];

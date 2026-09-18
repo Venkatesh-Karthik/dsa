@@ -91,9 +91,10 @@ export const TREE_LAYOUT = {
 export const GRAPH_LAYOUT = {
   NODE_RADIUS: 30,
   NODE_DIAMETER: 60,
-  CIRCLE_RADIUS: 120, // radius of circular arrangement
-  GRID_GAP: 100, // gap for grid fallback
+  CIRCLE_RADIUS: 200, // minimum radius for circular arrangement (was 120 — caused Dijkstra collapse)
+  GRID_GAP: 140, // gap for grid fallback (was 100)
   MAX_CIRCLE_NODES: 12,
+  NODE_SEPARATION_FACTOR: 2.5, // multiplier to ensure minimum arc spacing (was 1.5)
 } as const;
 
 export const GRID_LAYOUT = {
@@ -143,9 +144,9 @@ export function computeTreeLayout(
 
   // 1. Build tree structure and compute subtree widths (bottom-up)
   function buildTree(id: string, depth: number): LayoutNode | null {
-    if (depth >= 5) {
+    if (depth >= 15) {
       return null;
-    } // Cap depth at 5
+    } // Generous depth guard against cycles
 
     const node = nodeMap.get(id);
     if (!node) {
@@ -157,20 +158,8 @@ export function computeTreeLayout(
     const children: LayoutNode[] = [];
     let width = 0;
 
-    if (node.children && node.children.length > 0) {
-      // General tree handling
-      for (const childId of node.children) {
-        const childNode = buildTree(childId, depth + 1);
-        if (childNode) {
-          children.push(childNode);
-          width += childNode.width;
-        }
-      }
-      if (children.length > 1) {
-        width += (children.length - 1) * TREE_LAYOUT.SIBLING_GAP;
-      }
-    } else {
-      // Binary tree handling
+    if (node.left || node.right) {
+      // Explicit binary tree handling
       let leftNode: LayoutNode | null = null;
       let rightNode: LayoutNode | null = null;
 
@@ -192,9 +181,52 @@ export function computeTreeLayout(
       if (leftNode && rightNode) {
         width = leftNode.width + TREE_LAYOUT.SUBTREE_GAP + rightNode.width;
       } else if (leftNode) {
-        width = leftNode.width;
+        width = Math.max(
+          TREE_LAYOUT.NODE_DIAMETER,
+          leftNode.width + TREE_LAYOUT.SUBTREE_GAP + TREE_LAYOUT.NODE_DIAMETER,
+        );
       } else if (rightNode) {
-        width = rightNode.width;
+        width = Math.max(
+          TREE_LAYOUT.NODE_DIAMETER,
+          rightNode.width + TREE_LAYOUT.SUBTREE_GAP + TREE_LAYOUT.NODE_DIAMETER,
+        );
+      }
+    } else if (node.children && node.children.length === 2) {
+      // Binary branching via 2-element children array
+      const leftNode = buildTree(node.children[0], depth + 1);
+      const rightNode = buildTree(node.children[1], depth + 1);
+      if (leftNode) {
+        leftNode.isLeft = true;
+        children.push(leftNode);
+      }
+      if (rightNode) {
+        rightNode.isRight = true;
+        children.push(rightNode);
+      }
+      if (leftNode && rightNode) {
+        width = leftNode.width + TREE_LAYOUT.SUBTREE_GAP + rightNode.width;
+      } else if (leftNode) {
+        width = Math.max(
+          TREE_LAYOUT.NODE_DIAMETER,
+          leftNode.width + TREE_LAYOUT.SUBTREE_GAP + TREE_LAYOUT.NODE_DIAMETER,
+        );
+      } else if (rightNode) {
+        width = Math.max(
+          TREE_LAYOUT.NODE_DIAMETER,
+          rightNode.width + TREE_LAYOUT.SUBTREE_GAP + TREE_LAYOUT.NODE_DIAMETER,
+        );
+      }
+    } else if (node.children && node.children.length > 0) {
+      // General tree handling
+      for (const childId of node.children) {
+        const childNode = buildTree(childId, depth + 1);
+        if (childNode) {
+          children.push(childNode);
+          width += childNode.width;
+        }
+      }
+      if (children.length > 1) {
+        width += (children.length - 1) * TREE_LAYOUT.SIBLING_GAP;
       }
     }
 
@@ -225,7 +257,7 @@ export function computeTreeLayout(
       node.children[0].isLeft &&
       node.children[1].isRight
     ) {
-      // Explicit binary placement
+      // Explicit binary placement (both left and right present)
       const left = node.children[0];
       const right = node.children[1];
       const totalWidth = left.width + TREE_LAYOUT.SUBTREE_GAP + right.width;
@@ -241,6 +273,24 @@ export function computeTreeLayout(
         TREE_LAYOUT.SUBTREE_GAP +
         right.width / 2 -
         TREE_LAYOUT.NODE_DIAMETER / 2;
+      positionTree(right, rightX, y + TREE_LAYOUT.LEVEL_GAP);
+    } else if (node.children.length === 1 && node.children[0].isLeft) {
+      // Single left child in binary tree: position strictly to the left of parent
+      const left = node.children[0];
+      const offset = Math.max(
+        TREE_LAYOUT.NODE_DIAMETER,
+        left.width / 2 + TREE_LAYOUT.SUBTREE_GAP / 2,
+      );
+      const leftX = x - offset;
+      positionTree(left, leftX, y + TREE_LAYOUT.LEVEL_GAP);
+    } else if (node.children.length === 1 && node.children[0].isRight) {
+      // Single right child in binary tree: position strictly to the right of parent
+      const right = node.children[0];
+      const offset = Math.max(
+        TREE_LAYOUT.NODE_DIAMETER,
+        right.width / 2 + TREE_LAYOUT.SUBTREE_GAP / 2,
+      );
+      const rightX = x + offset;
       positionTree(right, rightX, y + TREE_LAYOUT.LEVEL_GAP);
     } else {
       // Linear or general children placement
@@ -300,10 +350,13 @@ export function computeGraphLayout(
   let maxY = -Infinity;
 
   if (n <= GRAPH_LAYOUT.MAX_CIRCLE_NODES) {
-    // Circle Layout: dynamically size radius to prevent overlaps
+    // Circle Layout: dynamically size radius to prevent overlaps.
+    // Use NODE_SEPARATION_FACTOR (2.5) to ensure readable arc spacing.
+    // For Dijkstra (6-9 nodes): radius = max(200, 9*60*2.5/2π) ≈ max(200, 215) = 215
     const dynamicRadius = Math.max(
       GRAPH_LAYOUT.CIRCLE_RADIUS,
-      (n * GRAPH_LAYOUT.NODE_DIAMETER * 1.5) / (2 * Math.PI),
+      (n * GRAPH_LAYOUT.NODE_DIAMETER * GRAPH_LAYOUT.NODE_SEPARATION_FACTOR) /
+        (2 * Math.PI),
     );
     const cx = origin.x + dynamicRadius;
     const cy = origin.y + dynamicRadius;
@@ -792,21 +845,70 @@ export function computeSceneGraphLayout(
 
   const conceptType = graph.metadata?.conceptType;
   const explicitStrategy = graph.metadata?.layoutStrategy;
+
+  // 1. Universal Topological Analysis from Semantic Relationships & Entities
+  const treeRelTypes = new Set([
+    "parentOf",
+    "leftOf",
+    "rightOf",
+    "left",
+    "right",
+    "childOf",
+  ]);
+  const treeRelatedIds = new Set<string>();
+  for (const rel of graph.relationships.values()) {
+    if (treeRelTypes.has(rel.type)) {
+      treeRelatedIds.add(rel.sourceEntityId);
+      treeRelatedIds.add(rel.targetEntityId);
+    }
+  }
+
+  const treeEntities = entityList.filter(
+    (e) =>
+      e.primitiveType === "TreeNode" ||
+      e.semanticRole === "root" ||
+      e.semanticRole === "tree-node" ||
+      treeRelatedIds.has(e.id),
+  );
+
+  const arrayCells = entityList.filter(
+    (e) =>
+      e.primitiveType === "ArrayCell" ||
+      e.semanticRole === "array-element" ||
+      (e.properties?.containerType === "array" &&
+        e.properties?.index !== undefined &&
+        !treeRelatedIds.has(e.id) &&
+        e.primitiveType !== "TreeNode" &&
+        e.primitiveType !== "LinkedListNode"),
+  );
+
+  const isCompositeTreeAndArray =
+    treeEntities.length > 0 && arrayCells.length > 0;
+
   const isTree =
-    explicitStrategy === "tree" ||
-    explicitStrategy === "hierarchy" ||
-    explicitStrategy === "hierarchical" ||
-    conceptType === "tree" ||
-    entityList.some((e) => e.primitiveType === "TreeNode");
+    !isCompositeTreeAndArray &&
+    explicitStrategy !== "dag" &&
+    explicitStrategy !== "flow" &&
+    (explicitStrategy === "tree" ||
+      explicitStrategy === "hierarchy" ||
+      explicitStrategy === "hierarchical" ||
+      conceptType === "tree" ||
+      treeEntities.length > 0);
+
   const isArray =
-    explicitStrategy === "array" ||
-    conceptType === "array" ||
-    entityList.some((e) => e.primitiveType === "ArrayCell");
+    !isCompositeTreeAndArray &&
+    explicitStrategy !== "dag" &&
+    explicitStrategy !== "flow" &&
+    (explicitStrategy === "array" ||
+      conceptType === "array" ||
+      arrayCells.length > 0);
+
   const isLinkedList =
     (explicitStrategy === "linear" &&
       entityList.some((e) => e.primitiveType === "LinkedListNode")) ||
     conceptType === "linked_list" ||
     entityList.some((e) => e.primitiveType === "LinkedListNode");
+
   const isStack =
     (explicitStrategy === "memory" &&
       entityList.some(
@@ -815,6 +917,7 @@ export function computeSceneGraphLayout(
       )) ||
     conceptType === "stack" ||
     entityList.some((e) => e.primitiveType === "StackFrame");
+
   const isGraph =
     (explicitStrategy === "graph" ||
       explicitStrategy === "radial" ||
@@ -824,20 +927,13 @@ export function computeSceneGraphLayout(
     explicitStrategy !== "dag" &&
     explicitStrategy !== "flow";
 
-  if (isTree) {
-    // 1. Build tree structure from entities & relationships
-    const treeNodes = entityList.filter((e) => e.primitiveType === "TreeNode");
-    if (treeNodes.length === 0) {
-      // No TreeNode primitives; gracefully bypass tree layout
-      return computeSceneGraphLayout(
-        { ...graph, metadata: { ...graph.metadata, layoutStrategy: "dag" } },
-        origin,
-        previousLayout,
-      );
-    }
+  // -------------------------------------------------------------
+  // STRATEGY A: Multi-Region Composite Layout (Tree + Array, e.g. Heap)
+  // -------------------------------------------------------------
+  if (isCompositeTreeAndArray) {
+    // 1. Primary Region: Hierarchical Tree Layout
     const childSet = new Set<string>();
-
-    const treeInputs: TreeNodeInput[] = treeNodes.map((entity) => {
+    const treeInputs: TreeNodeInput[] = treeEntities.map((entity) => {
       let left: string | undefined = entity.properties?.left as
         | string
         | undefined;
@@ -848,13 +944,12 @@ export function computeSceneGraphLayout(
         | string[]
         | undefined;
 
-      // Extract from relationships if not explicitly on properties
       for (const rel of graph.relationships.values()) {
         if (rel.sourceEntityId === entity.id) {
           childSet.add(rel.targetEntityId);
-          if (rel.type === "leftOf") {
+          if (rel.type === "leftOf" || rel.type === "left") {
             left = rel.targetEntityId;
-          } else if (rel.type === "rightOf") {
+          } else if (rel.type === "rightOf" || rel.type === "right") {
             right = rel.targetEntityId;
           } else if (rel.type === "parentOf") {
             children = children
@@ -876,17 +971,257 @@ export function computeSceneGraphLayout(
       };
     });
 
-    // Identify root
+    let rootId = graph.metadata?.rootEntityId;
+    if (!rootId || !treeEntities.some((n) => n.id === rootId)) {
+      const potentialRoot = treeEntities.find((n) => !childSet.has(n.id));
+      rootId = potentialRoot ? potentialRoot.id : treeEntities[0]?.id || "root";
+    }
+
+    const treeOrigin: LayoutPoint = {
+      x: Math.max(origin.x, 420),
+      y: origin.y,
+    };
+
+    const rawTreeLayout = computeTreeLayout(treeInputs, rootId, treeOrigin);
+    for (const [id, pos] of rawTreeLayout.positions) {
+      positions.set(id, pos);
+    }
+
+    // 2. Secondary Region: Array Representation Layout
+    const arrayGroups = new Map<string, typeof arrayCells>();
+    for (const cell of arrayCells) {
+      const containerId =
+        (cell.properties?.containerId as string) ||
+        (cell.properties?.arrayId as string) ||
+        (cell.id.includes("-") ? cell.id.split("-")[0] : "main");
+      if (!arrayGroups.has(containerId)) {
+        arrayGroups.set(containerId, []);
+      }
+      arrayGroups.get(containerId)!.push(cell);
+    }
+
+    for (const groupCells of arrayGroups.values()) {
+      groupCells.sort((a, b) => {
+        const idxA = (a.properties?.index as number) ?? 0;
+        const idxB = (b.properties?.index as number) ?? 0;
+        return idxA - idxB;
+      });
+    }
+
+    const cellW = 64;
+    const cellH = 64;
+    const gapX = 8;
+    const gapY = 24;
+
+    // Place secondary array comfortably below the primary tree
+    let currentArrayY =
+      rawTreeLayout.bounds.y + rawTreeLayout.bounds.height + 64;
+
+    for (const [, groupCells] of arrayGroups) {
+      const groupLen = groupCells.length;
+      // Multi-row wrapping for 12+ elements
+      const cols = groupLen > 12 ? Math.ceil(groupLen / 2) : groupLen;
+      const groupRows = Math.ceil(groupLen / cols);
+      const groupWidth = cols * cellW + Math.max(0, cols - 1) * gapX;
+      const groupHeight = groupRows * cellH + Math.max(0, groupRows - 1) * gapY;
+
+      // Center array horizontally relative to tree
+      const arrayStartX = Math.max(
+        origin.x,
+        rawTreeLayout.bounds.x + (rawTreeLayout.bounds.width - groupWidth) / 2,
+      );
+
+      for (let i = 0; i < groupLen; i++) {
+        const r = Math.floor(i / cols);
+        const c = i % cols;
+        positions.set(groupCells[i].id, {
+          x: arrayStartX + c * (cellW + gapX),
+          y: currentArrayY + r * (cellH + gapY),
+        });
+      }
+
+      currentArrayY += groupHeight + 48;
+    }
+
+    // 3. Position pointers, annotations, and auxiliary entities
+    for (const entity of entityList) {
+      if (positions.has(entity.id)) {
+        continue;
+      }
+      const isPointer =
+        entity.semanticRole === "pointer" ||
+        /^ptr-/i.test(entity.id) ||
+        entity.primitiveType === "Pointer" ||
+        /^(low|high|mid|left|right|i|j|k|head|tail|pivot)$/i.test(
+          entity.label || "",
+        );
+
+      if (isPointer) {
+        let targetCellId: string | undefined =
+          (entity.properties?.targetId as string) ||
+          (entity.properties?.target as string) ||
+          (entity.properties?.pointingTo as string);
+
+        if (!targetCellId) {
+          for (const rel of graph.relationships.values()) {
+            if (
+              rel.sourceEntityId === entity.id &&
+              positions.has(rel.targetEntityId)
+            ) {
+              targetCellId = rel.targetEntityId;
+              break;
+            }
+          }
+        }
+
+        if (targetCellId && positions.has(targetCellId)) {
+          const targetPos = positions.get(targetCellId)!;
+          const label = (entity.label || entity.id).toLowerCase();
+          const placeBelow = /^(high|right|j|tail|pivot)/i.test(label);
+          const ptrY = placeBelow ? targetPos.y + cellH + 16 : targetPos.y - 44;
+          positions.set(entity.id, {
+            x: targetPos.x + (cellW - 40) / 2,
+            y: ptrY,
+          });
+        }
+      }
+    }
+
+    let overallMinX = Math.min(rawTreeLayout.bounds.x, origin.x);
+    let overallMaxX = Math.max(
+      rawTreeLayout.bounds.x + rawTreeLayout.bounds.width,
+      origin.x + 300,
+    );
+    let overallMinY = rawTreeLayout.bounds.y;
+    let overallMaxY = currentArrayY;
+
+    for (const [, pos] of positions.entries()) {
+      overallMinX = Math.min(overallMinX, pos.x);
+      overallMaxX = Math.max(overallMaxX, pos.x + cellW);
+      overallMinY = Math.min(overallMinY, pos.y);
+      overallMaxY = Math.max(overallMaxY, pos.y + cellH);
+    }
+
+    const annotations = entityList.filter(
+      (e) => e.primitiveType === "Annotation" || e.primitiveType === "Callout",
+    );
+    for (const ann of annotations) {
+      const prevPos = previousLayout?.get(ann.id);
+      if (prevPos) {
+        positions.set(ann.id, prevPos);
+      } else {
+        const targetId = ann.properties?.targetEntityId as string | undefined;
+        const targetPos = targetId ? positions.get(targetId) : null;
+        if (targetPos) {
+          positions.set(ann.id, {
+            x: targetPos.x + 90,
+            y: targetPos.y - 10,
+          });
+        } else {
+          positions.set(ann.id, {
+            x: overallMaxX + 40,
+            y: overallMinY + 10,
+          });
+        }
+      }
+    }
+
+    for (const entity of entityList) {
+      if (!positions.has(entity.id)) {
+        const prev = previousLayout?.get(entity.id);
+        if (prev) {
+          positions.set(entity.id, prev);
+        } else {
+          positions.set(entity.id, {
+            x: overallMinX,
+            y: overallMaxY + 24,
+          });
+          overallMaxY += 50;
+        }
+      }
+    }
+
+    for (const [, pos] of positions.entries()) {
+      overallMinX = Math.min(overallMinX, pos.x);
+      overallMaxX = Math.max(overallMaxX, pos.x + cellW);
+      overallMinY = Math.min(overallMinY, pos.y);
+      overallMaxY = Math.max(overallMaxY, pos.y + cellH);
+    }
+
+    return {
+      positions,
+      bounds: {
+        x: overallMinX,
+        y: overallMinY,
+        width: Math.max(300, overallMaxX - overallMinX),
+        height: Math.max(160, overallMaxY - overallMinY),
+      },
+    };
+  }
+
+  // -------------------------------------------------------------
+  // STRATEGY B: Pure Hierarchical Tree Layout (AVL, BST, etc.)
+  // -------------------------------------------------------------
+  if (isTree) {
+    const treeNodes =
+      treeEntities.length > 0
+        ? treeEntities
+        : entityList.filter((e) => e.primitiveType === "TreeNode");
+    if (treeNodes.length === 0) {
+      return computeSceneGraphLayout(
+        { ...graph, metadata: { ...graph.metadata, layoutStrategy: "dag" } },
+        origin,
+        previousLayout,
+      );
+    }
+    const childSet = new Set<string>();
+
+    const treeInputs: TreeNodeInput[] = treeNodes.map((entity) => {
+      let left: string | undefined = entity.properties?.left as
+        | string
+        | undefined;
+      let right: string | undefined = entity.properties?.right as
+        | string
+        | undefined;
+      let children: string[] | undefined = entity.properties?.children as
+        | string[]
+        | undefined;
+
+      for (const rel of graph.relationships.values()) {
+        if (rel.sourceEntityId === entity.id) {
+          childSet.add(rel.targetEntityId);
+          if (rel.type === "leftOf" || rel.type === "left") {
+            left = rel.targetEntityId;
+          } else if (rel.type === "rightOf" || rel.type === "right") {
+            right = rel.targetEntityId;
+          } else if (rel.type === "parentOf") {
+            children = children
+              ? [...children, rel.targetEntityId]
+              : [rel.targetEntityId];
+          }
+        }
+      }
+
+      return {
+        id: entity.id,
+        value:
+          typeof entity.value === "string" || typeof entity.value === "number"
+            ? entity.value
+            : String(entity.value ?? entity.label ?? ""),
+        left,
+        right,
+        children,
+      };
+    });
+
     let rootId = graph.metadata?.rootEntityId;
     if (!rootId || !treeNodes.some((n) => n.id === rootId)) {
-      // Pick first node with in-degree 0 among tree relationships
       const potentialRoot = treeNodes.find((n) => !childSet.has(n.id));
       rootId = potentialRoot
         ? potentialRoot.id
         : treeNodes[0]?.id || entityList[0]?.id || "root";
     }
 
-    // Use an appropriately centered tree anchor to prevent left-subtree clipping
     const treeOrigin: LayoutPoint = {
       x: Math.max(origin.x, 420),
       y: origin.y,
@@ -894,9 +1229,6 @@ export function computeSceneGraphLayout(
 
     const rawLayout = computeTreeLayout(treeInputs, rootId, treeOrigin);
 
-    // Tree Layout Anti-Drift:
-    // Anchor root to treeOrigin.x and treeOrigin.y across all states to completely eliminate drift.
-    // When AVL rotation promotes a new root, it takes the root anchor coordinate and subtrees position symmetrically below.
     for (const [id, pos] of rawLayout.positions) {
       positions.set(id, pos);
     }
@@ -908,7 +1240,6 @@ export function computeSceneGraphLayout(
       height: rawLayout.bounds.height,
     };
 
-    // Position any annotations or auxiliary entities alongside the tree
     const annotations = entityList.filter(
       (e) => e.primitiveType === "Annotation" || e.primitiveType === "Callout",
     );
@@ -928,14 +1259,12 @@ export function computeSceneGraphLayout(
       }
     }
 
-    // Ensure all entities in the graph have deterministic positions
     for (const entity of entityList) {
       if (!positions.has(entity.id)) {
         const prev = previousLayout?.get(entity.id);
         if (prev) {
           positions.set(entity.id, prev);
         } else {
-          // Gracefully place auxiliary entity below the tree
           positions.set(entity.id, {
             x: bounds.x,
             y: bounds.y + bounds.height + 40,
@@ -944,7 +1273,6 @@ export function computeSceneGraphLayout(
       }
     }
 
-    // Run collision resolution across all positioned items
     const collisionBoxes: CollisionBox[] = [];
     for (const entity of entityList) {
       const pos = positions.get(entity.id);
@@ -973,51 +1301,338 @@ export function computeSceneGraphLayout(
   }
 
   if (isArray) {
-    const cells = entityList.filter((e) => e.primitiveType === "ArrayCell");
-    cells.sort((a, b) => {
-      const idxA = (a.properties?.index as number) ?? 0;
-      const idxB = (b.properties?.index as number) ?? 0;
-      return idxA - idxB;
-    });
+    const cells =
+      arrayCells.length > 0
+        ? arrayCells
+        : entityList.filter((e) => e.primitiveType === "ArrayCell");
+    if (cells.length === 0) {
+      return computeSceneGraphLayout(
+        { ...graph, metadata: { ...graph.metadata, layoutStrategy: "dag" } },
+        origin,
+        previousLayout,
+      );
+    }
+
+    // 1. Group cells by container/array identifier
+    const arrayGroups = new Map<string, typeof cells>();
+    for (const cell of cells) {
+      const containerId =
+        (cell.properties?.containerId as string) ||
+        (cell.properties?.arrayId as string) ||
+        (cell.id.includes("-") ? cell.id.split("-")[0] : "main");
+      if (!arrayGroups.has(containerId)) {
+        arrayGroups.set(containerId, []);
+      }
+      arrayGroups.get(containerId)!.push(cell);
+    }
+
+    // Sort cells within each group by index
+    for (const groupCells of arrayGroups.values()) {
+      groupCells.sort((a, b) => {
+        const idxA = (a.properties?.index as number) ?? 0;
+        const idxB = (b.properties?.index as number) ?? 0;
+        return idxA - idxB;
+      });
+    }
 
     const startX = previousLayout?.get(cells[0].id)?.x ?? origin.x;
     const startY = previousLayout?.get(cells[0].id)?.y ?? origin.y;
     const cellW = 64;
     const cellH = 64;
-    const gap = 8;
+    const gapX = 8;
+    const gapY = 32;
 
-    for (let i = 0; i < cells.length; i++) {
-      positions.set(cells[i].id, {
-        x: startX + i * (cellW + gap),
-        y: startY,
-      });
+    // Separate primary array from child/merged subarrays if multiple groups exist
+    const groupEntries = Array.from(arrayGroups.entries());
+    groupEntries.sort(([idA], [idB]) => {
+      const isParentA = /^(main|orig|parent|input)/i.test(idA);
+      const isParentB = /^(main|orig|parent|input)/i.test(idB);
+      if (isParentA && !isParentB) {
+        return -1;
+      }
+      if (!isParentA && isParentB) {
+        return 1;
+      }
+
+      const isFinalA = /^(final|merged|sorted|result|output)/i.test(idA);
+      const isFinalB = /^(final|merged|sorted|result|output)/i.test(idB);
+      if (isFinalA && !isFinalB) {
+        return 1;
+      }
+      if (!isFinalA && isFinalB) {
+        return -1;
+      }
+
+      return idA.localeCompare(idB);
+    });
+
+    let tier0: typeof groupEntries = [];
+    const tier1: typeof groupEntries = [];
+    const tier2: typeof groupEntries = [];
+
+    if (groupEntries.length === 1) {
+      tier0 = [groupEntries[0]];
+    } else {
+      for (const entry of groupEntries) {
+        const id = entry[0];
+        if (/^(main|orig|parent|input)/i.test(id)) {
+          tier0.push(entry);
+        } else if (/^(final|merged|sorted|result|output)/i.test(id)) {
+          tier2.push(entry);
+        } else {
+          tier1.push(entry);
+        }
+      }
+      if (tier0.length === 0 && tier1.length > 0) {
+        tier0 = [tier1.shift()!];
+      }
+    }
+
+    const tiers = [tier0, tier1, tier2].filter((t) => t.length > 0);
+    let currentTierY = startY;
+
+    for (const tier of tiers) {
+      let tierCursorX = startX;
+      let maxTierHeight = 0;
+
+      for (const [, groupCells] of tier) {
+        const groupLen = groupCells.length;
+        // Responsive multi-row wrapping for 8+ elements (e.g. 2 rows of 5 for 10 elements)
+        const cols =
+          groupLen >= 8
+            ? groupLen >= 10
+              ? Math.ceil(groupLen / 2)
+              : 6
+            : groupLen;
+
+        const groupRows = Math.ceil(groupLen / cols);
+        const groupWidth = cols * cellW + Math.max(0, cols - 1) * gapX;
+        const groupHeight =
+          groupRows * cellH + Math.max(0, groupRows - 1) * gapY;
+
+        for (let i = 0; i < groupLen; i++) {
+          const r = Math.floor(i / cols);
+          const c = i % cols;
+          positions.set(groupCells[i].id, {
+            x: tierCursorX + c * (cellW + gapX),
+            y: currentTierY + r * (cellH + gapY),
+          });
+        }
+
+        tierCursorX += groupWidth + 48;
+        maxTierHeight = Math.max(maxTierHeight, groupHeight);
+      }
+
+      currentTierY += maxTierHeight + 72;
+    }
+
+    // Position pointer entities (e.g. ptr-left, ptr-right, low, high, mid, i, j)
+    for (const entity of entityList) {
+      if (positions.has(entity.id)) {
+        continue;
+      }
+      const isPointer =
+        entity.semanticRole === "pointer" ||
+        /^ptr-/i.test(entity.id) ||
+        entity.primitiveType === "Pointer" ||
+        /^(low|high|mid|left|right|i|j|k|head|tail|pivot)$/i.test(
+          entity.label || "",
+        );
+
+      if (isPointer) {
+        let targetCellId: string | undefined =
+          (entity.properties?.targetId as string) ||
+          (entity.properties?.target as string) ||
+          (entity.properties?.pointingTo as string);
+
+        if (!targetCellId) {
+          for (const rel of graph.relationships.values()) {
+            if (
+              rel.sourceEntityId === entity.id &&
+              positions.has(rel.targetEntityId)
+            ) {
+              targetCellId = rel.targetEntityId;
+              break;
+            }
+          }
+        }
+
+        if (targetCellId && positions.has(targetCellId)) {
+          const targetPos = positions.get(targetCellId)!;
+          const label = (entity.label || entity.id).toLowerCase();
+          const placeBelow = /^(high|right|j|tail|pivot)/i.test(label);
+          const ptrY = placeBelow ? targetPos.y + cellH + 16 : targetPos.y - 44;
+          positions.set(entity.id, {
+            x: targetPos.x + (cellW - 40) / 2,
+            y: ptrY,
+          });
+        }
+      }
+    }
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const [, pos] of positions.entries()) {
+      minX = Math.min(minX, pos.x);
+      maxX = Math.max(maxX, pos.x + cellW);
+      minY = Math.min(minY, pos.y);
+      maxY = Math.max(maxY, pos.y + cellH);
+    }
+
+    let auxY = (maxY === -Infinity ? origin.y : maxY) + 40;
+    for (const entity of entityList) {
+      if (!positions.has(entity.id)) {
+        const pos = previousLayout?.get(entity.id) ?? {
+          x: minX === Infinity ? origin.x : minX,
+          y: auxY,
+        };
+        positions.set(entity.id, pos);
+        auxY += 56;
+        minX = Math.min(minX, pos.x);
+        maxX = Math.max(maxX, pos.x + 120);
+        minY = Math.min(minY, pos.y);
+        maxY = Math.max(maxY, pos.y + 40);
+      }
     }
 
     return {
       positions,
       bounds: {
-        x: startX,
-        y: startY,
-        width: cells.length * (cellW + gap),
-        height: cellH,
+        x: minX === Infinity ? origin.x : minX,
+        y: minY === Infinity ? origin.y : minY,
+        width: maxX === -Infinity ? 0 : maxX - minX,
+        height: maxY === -Infinity ? 0 : maxY - minY,
       },
     };
   }
 
   if (isLinkedList) {
-    const nodes = entityList.filter(
-      (e) => e.primitiveType === "LinkedListNode",
+    const rawNodes = entityList.filter(
+      (e) =>
+        e.primitiveType === "LinkedListNode" ||
+        e.semanticRole === "list-node" ||
+        e.semanticRole === "head" ||
+        e.semanticRole === "tail",
     );
-    const startX = previousLayout?.get(nodes[0].id)?.x ?? origin.x;
-    const startY = previousLayout?.get(nodes[0].id)?.y ?? origin.y;
+
+    if (rawNodes.length === 0) {
+      return computeSceneGraphLayout(
+        { ...graph, metadata: { ...graph.metadata, layoutStrategy: "dag" } },
+        origin,
+        previousLayout,
+      );
+    }
+
+    // Trace linked list sequence strictly from semantic relationships (next / points_to)
+    const nextRelMap = new Map<string, string>();
+    const hasIncomingNext = new Set<string>();
+    for (const rel of graph.relationships.values()) {
+      if (rel.type === "next" || rel.type === "points_to") {
+        nextRelMap.set(rel.sourceEntityId, rel.targetEntityId);
+        hasIncomingNext.add(rel.targetEntityId);
+      }
+    }
+
+    const headNode =
+      rawNodes.find(
+        (n) => n.semanticRole === "head" || !hasIncomingNext.has(n.id),
+      ) || rawNodes[0];
+
+    const orderedNodes: typeof rawNodes = [];
+    const visited = new Set<string>();
+    let curr: typeof headNode | undefined = headNode;
+    while (curr && !visited.has(curr.id)) {
+      orderedNodes.push(curr);
+      visited.add(curr.id);
+      const nextId = nextRelMap.get(curr.id);
+      curr = nextId ? rawNodes.find((n) => n.id === nextId) : undefined;
+    }
+    for (const n of rawNodes) {
+      if (!visited.has(n.id)) {
+        orderedNodes.push(n);
+      }
+    }
+
+    const startX = previousLayout?.get(orderedNodes[0].id)?.x ?? origin.x;
+    const startY = previousLayout?.get(orderedNodes[0].id)?.y ?? origin.y;
     const nodeW = 80;
     const gap = 60;
+    const maxRowWidth = 840;
 
-    for (let i = 0; i < nodes.length; i++) {
-      positions.set(nodes[i].id, {
-        x: startX + i * (nodeW + gap),
-        y: startY,
+    let cursorX = startX;
+    let cursorY = startY;
+    let maxW = 0;
+
+    for (let i = 0; i < orderedNodes.length; i++) {
+      const node = orderedNodes[i];
+      // Check for wrapping if row gets excessively wide
+      if (i > 0 && cursorX + nodeW > startX + maxRowWidth) {
+        cursorX = startX;
+        cursorY += 100;
+      }
+
+      positions.set(node.id, {
+        x: cursorX,
+        y: cursorY,
       });
+
+      maxW = Math.max(maxW, cursorX + nodeW - startX);
+      cursorX += nodeW + gap;
+    }
+
+    // Position pointer entities (head, tail, curr, prev, ptr-*)
+    for (const entity of entityList) {
+      if (positions.has(entity.id)) {
+        continue;
+      }
+      const isPointer =
+        entity.semanticRole === "pointer" ||
+        /^ptr-/i.test(entity.id) ||
+        entity.primitiveType === "Pointer" ||
+        /^(head|tail|curr|prev|p|q)$/i.test(entity.label || "");
+
+      if (isPointer) {
+        let targetId =
+          (entity.properties?.targetId as string) ||
+          (entity.properties?.target as string) ||
+          (entity.properties?.pointingTo as string);
+
+        if (!targetId) {
+          for (const rel of graph.relationships.values()) {
+            if (
+              rel.sourceEntityId === entity.id &&
+              positions.has(rel.targetEntityId)
+            ) {
+              targetId = rel.targetEntityId;
+              break;
+            }
+          }
+        }
+
+        if (targetId && positions.has(targetId)) {
+          const tPos = positions.get(targetId)!;
+          const label = (entity.label || entity.id).toLowerCase();
+          const placeBelow = /^(tail|q)/i.test(label);
+          positions.set(entity.id, {
+            x: tPos.x + 20,
+            y: placeBelow ? tPos.y + 60 + 16 : tPos.y - 44,
+          });
+        }
+      }
+    }
+
+    let auxY = cursorY + 80;
+    for (const entity of entityList) {
+      if (!positions.has(entity.id)) {
+        positions.set(entity.id, {
+          x: startX,
+          y: auxY,
+        });
+        auxY += 50;
+      }
     }
 
     return {
@@ -1025,8 +1640,8 @@ export function computeSceneGraphLayout(
       bounds: {
         x: startX,
         y: startY,
-        width: nodes.length * (nodeW + gap),
-        height: 60,
+        width: Math.max(160, maxW),
+        height: Math.max(60, auxY - startY),
       },
     };
   }
@@ -1043,6 +1658,15 @@ export function computeSceneGraphLayout(
         x: startX,
         y: startY + i * (frameH + gap),
       });
+    }
+
+    for (const entity of entityList) {
+      if (!positions.has(entity.id)) {
+        positions.set(entity.id, {
+          x: startX + 160,
+          y: startY,
+        });
+      }
     }
 
     return {

@@ -88,6 +88,8 @@ export interface AuthoritativeTransformation {
   persistence?: StatePersistence;
   /** Causal relationship role */
   causalRole?: "causes" | "enables" | "requires" | "prevents" | "restores";
+  /** Operations and visual actions executed in this transformation */
+  operations?: any[];
 }
 
 export interface AuthoritativeSemanticModel {

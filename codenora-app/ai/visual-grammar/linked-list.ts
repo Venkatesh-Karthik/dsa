@@ -13,6 +13,35 @@ import type {
 } from "../visual-dsl";
 import type { RenderContext } from "../visual-renderer";
 
+/**
+ * Generates a stable semantic ID for a linked list node.
+ *
+ * Uses the VALUE of the node, not its position index, so that:
+ *   - Moving a node (e.g. inserting before it) does not change its ID
+ *   - The reconciler sees the node as the same element across transformations
+ *   - Duplicate values get a numeric suffix: value=56 appears as "56-1", "56-2"
+ *
+ * This is the root fix for: duplication, distortion, and zombie elements
+ * when a linked list is recreated after insertion/deletion.
+ */
+function stableNodeId(
+  listId: string,
+  value: string | number,
+  occurrenceMap: Map<string, number>,
+): string {
+  const safeVal = String(value)
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .toLowerCase()
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  const key = `${listId}::${safeVal}`;
+  const count = (occurrenceMap.get(key) ?? 0) + 1;
+  occurrenceMap.set(key, count);
+  return count === 1
+    ? `${listId}-node-${safeVal}`
+    : `${listId}-node-${safeVal}-${count}`;
+}
+
 export function renderLinkedListGrammar(
   action: CreateLinkedListAction,
   context: RenderContext,
@@ -51,6 +80,10 @@ export function renderLinkedListGrammar(
     return elements;
   }
 
+  // Track occurrence counts for stable value-based IDs
+  const occurrenceMap = new Map<string, number>();
+  const nodeIds: string[] = [];
+
   let lastNodeX = originX;
   for (let i = 0; i < n; i++) {
     const el = action.elements[i];
@@ -58,8 +91,12 @@ export function renderLinkedListGrammar(
     const cellY = originY;
     lastNodeX = cellX;
 
+    // Use stable value-based ID instead of fragile index-based ID
+    const nodeId = stableNodeId(action.id, el.value, occurrenceMap);
+    nodeIds.push(nodeId);
+
     const primitive = createLinkedListNode({
-      id: `${action.id}-${i}`,
+      id: nodeId,
       x: cellX,
       y: cellY,
       width: W * 1.5,
@@ -70,11 +107,24 @@ export function renderLinkedListGrammar(
 
     elements.push(...primitive.allElements);
     context.register(
-      `${action.id}-${i}`,
+      nodeId,
       primitive.primaryElement,
       primitive.allElements.find((e) => e.type === "text") as any,
       primitive.allElements,
     );
+
+    // Also register a positional alias (e.g. "mylist-0") for backwards
+    // compatibility with AI-generated DSL that uses index-based references.
+    // This alias points to the same element without creating a duplicate.
+    const indexAlias = `${action.id}-${i}`;
+    if (indexAlias !== nodeId && !context.hasDirect(indexAlias)) {
+      context.register(
+        indexAlias,
+        primitive.primaryElement,
+        primitive.allElements.find((e) => e.type === "text") as any,
+        primitive.allElements,
+      );
+    }
   }
 
   // Null node
@@ -94,12 +144,12 @@ export function renderLinkedListGrammar(
   elements.push(nullText);
   context.register(`${action.id}-null`, nullText, nullText, [nullText]);
 
-  // Connect adjacent nodes
+  // Connect adjacent nodes using their stable value-based IDs
   for (let i = 0; i < n - 1; i++) {
     const connectorEls = commitSemanticConnector(context, {
-      id: `${action.id}-edge-${i}`,
-      from: `${action.id}-${i}`,
-      to: `${action.id}-${i + 1}`,
+      id: `${action.id}-edge-${nodeIds[i]}-${nodeIds[i + 1]}`,
+      from: nodeIds[i],
+      to: nodeIds[i + 1],
       direction: action.variant === "doubly" ? "bidirectional" : "forward",
       role: "relationship",
       style: { color: "default" },
@@ -110,7 +160,7 @@ export function renderLinkedListGrammar(
   // Connect last node to NULL
   const nullConnectorEls = commitSemanticConnector(context, {
     id: `${action.id}-edge-null`,
-    from: `${action.id}-${n - 1}`,
+    from: nodeIds[n - 1],
     to: `${action.id}-null`,
     direction: "forward",
     role: "relationship",

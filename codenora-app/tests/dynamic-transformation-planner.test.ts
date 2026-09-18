@@ -358,6 +358,9 @@ describe("Cognora Dynamic Transformation Planner & Visual Intelligence Upgrade",
         "Updating focusComponent to active state in dll-e1.",
         "Component Client transmits request to Component Server.",
         "Connecting node-10 to node-20 via t1-op3.",
+        "Dividing main-array into left-half and right-half.",
+        "Merge sorted halves into final-sorted-0 with ptr-left and ptr-right.",
+        "Reconciling activeComponents and arrow10-40.",
       ];
 
       for (const dirty of dirtyTexts) {
@@ -368,6 +371,14 @@ describe("Cognora Dynamic Transformation Planner & Visual Intelligence Upgrade",
         expect(clean).not.toMatch(/\bmerge-array-element-\d+\b/i);
         expect(clean).not.toMatch(/\bfocusComponent\b/i);
         expect(clean).not.toMatch(/\bComponent\s+\w+/i);
+        expect(clean).not.toMatch(/\bmain[-_]array\b/i);
+        expect(clean).not.toMatch(/\bleft[-_]half\b/i);
+        expect(clean).not.toMatch(/\bright[-_]half\b/i);
+        expect(clean).not.toMatch(/\bfinal[-_]sorted\b/i);
+        expect(clean).not.toMatch(/\bptr[-_]left\b/i);
+        expect(clean).not.toMatch(/\bptr[-_]right\b/i);
+        expect(clean).not.toMatch(/\bactiveComponents\b/i);
+        expect(clean).not.toMatch(/\barrow\d+[-_]\d+\b/i);
       }
     });
 

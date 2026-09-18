@@ -7,3 +7,4 @@ export * from "./command-parser";
 export * from "./command-generators";
 export * from "./command-registry";
 export * from "./command-executor";
+export * from "./semantic-command-runner";

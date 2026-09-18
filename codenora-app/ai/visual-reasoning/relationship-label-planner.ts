@@ -69,6 +69,26 @@ export function planRelationshipLabel(params: {
     return null;
   }
 
+  // In normal learner mode, suppress internal structural debug labels ("L", "R", "next", "prev", etc.)
+  // Structure topology and directional arrows visually communicate these relationships without cluttering the canvas.
+  const trimmed = rawLabel.trim().toUpperCase();
+  if (
+    trimmed === "L" ||
+    trimmed === "R" ||
+    trimmed === "LEFT" ||
+    trimmed === "RIGHT" ||
+    trimmed === "NEXT" ||
+    trimmed === "PREV" ||
+    trimmed === "PREVIOUS" ||
+    trimmed === "PARENT" ||
+    trimmed === "CHILD" ||
+    trimmed === "POINTS_TO" ||
+    trimmed === "CONNECTS" ||
+    /^T\d+-OP\d+$/i.test(trimmed)
+  ) {
+    return null;
+  }
+
   // 1. Sanitize & Compress Payload
   const sanitized = sanitizeVisualText(rawLabel);
   const compressed = compressSemanticPayload(sanitized, 20);

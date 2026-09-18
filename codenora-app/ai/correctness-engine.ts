@@ -400,28 +400,53 @@ export class CorrectnessEngine {
         const ops = (t as any).operations || [];
         const explicitlyDeletedIds = new Set<string>();
         for (const op of ops) {
-          const opType = (op as any).type;
+          const opType = ((op as any).type || "").toLowerCase();
           if (
             opType === "delete" ||
             opType === "delete_entity" ||
             opType === "remove_entity" ||
-            opType === "REMOVE_ENTITY" ||
-            opType === "delete_node"
+            opType === "delete_node" ||
+            opType === "destroy"
           ) {
             const targetId =
               (op as any).target || (op as any).entityId || (op as any).id;
             if (targetId) {
               explicitlyDeletedIds.add(targetId);
             }
+          } else if (opType === "merge") {
+            const sources =
+              (op as any).sources ||
+              [(op as any).source, (op as any).target].filter(Boolean);
+            for (const s of sources) {
+              if (s) {
+                explicitlyDeletedIds.add(s);
+              }
+            }
+          }
+          if ((op as any).replaces) {
+            const reps = Array.isArray((op as any).replaces)
+              ? (op as any).replaces
+              : [(op as any).replaces];
+            for (const r of reps) {
+              if (r) {
+                explicitlyDeletedIds.add(r);
+              }
+            }
           }
         }
 
         // Check if any entity from fromState disappeared without explicit deletion
         for (const [entId, ent] of fromState.entities.entries()) {
-          if (
-            !toState.entities.has(entId) &&
-            !explicitlyDeletedIds.has(entId)
-          ) {
+          const isExplicitlyDeleted =
+            explicitlyDeletedIds.has(entId) ||
+            Array.from(explicitlyDeletedIds).some(
+              (delId) =>
+                entId.startsWith(`${delId}-`) ||
+                ent.properties?.containerId === delId ||
+                ent.properties?.parentContainer === delId,
+            );
+
+          if (!toState.entities.has(entId) && !isExplicitlyDeleted) {
             // Unintended entity drop - auto-repair by preserving entity into toState
             toState.entities.set(entId, { ...ent });
             issues.push({

@@ -15,6 +15,11 @@ import {
   ProviderRateLimitError,
   ProviderCreditCapacityError,
   ProviderSchemaError,
+  NvidiaEmptyCompletionError,
+  NvidiaInvalidCompletionError,
+  NvidiaIncompleteStreamError,
+  NvidiaOutputTruncatedError,
+  NvidiaStreamError,
 } from "../ai/backend/provider-errors";
 
 import type {
@@ -252,7 +257,12 @@ describe("NvidiaNemotronProvider", () => {
       const body = JSON.parse(init.body);
       expect(body.model).toBe(NVIDIA_DEFAULT_MODEL);
       expect(body.max_tokens).toBe(NVIDIA_DEFAULT_MAX_TOKENS);
-      expect(body.temperature).toBe(0.1);
+      expect(NVIDIA_DEFAULT_MAX_TOKENS).toBe(32768);
+      expect(body.temperature).toBe(0);
+      expect(body.stream).toBe(true);
+      expect(body.reasoning_effort).toBe("high");
+      expect(provider.getReasoningEffort()).toBe("high");
+      expect(provider.getReasoningBudget()).toBe(32768);
 
       expect(response.topic).toBe("Binary Search");
       expect(response.visual_actions.length).toBe(2);
@@ -372,7 +382,7 @@ describe("NvidiaNemotronProvider", () => {
       });
     });
 
-    it("clamps explanation_steps to 10 when model produces excess steps", async () => {
+    it("preserves dynamic explanation_steps without arbitrary 10-step clamping", async () => {
       const excessSteps = Array.from({ length: 15 }, (_, i) => `Step ${i + 1}`);
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -401,7 +411,7 @@ describe("NvidiaNemotronProvider", () => {
         requestId: "req-steps-clamp",
       });
 
-      expect(response.explanation_steps?.length).toBe(10);
+      expect(response.explanation_steps?.length).toBe(15);
     });
 
     it("strictly guards against super-120b and ensures payload model is Ultra 550B", async () => {
@@ -436,6 +446,467 @@ describe("NvidiaNemotronProvider", () => {
       const callArgs = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(callArgs[1].body);
       expect(requestBody.model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+    });
+
+    // Test A: NVIDIA valid non-streaming response
+    it("Test A: handles NVIDIA valid non-streaming response correctly", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "chatcmpl-test-a",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: JSON.stringify(VALID_TEACHING_JSON),
+              },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-a",
+        stream: false,
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const response = await provider.generateTeachingLesson({
+        prompt: "Test A non-streaming",
+        requestId: "req-test-a",
+      });
+
+      expect(response.topic).toBe("Binary Search");
+      expect(response.visual_actions.length).toBe(2);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    // Test B: NVIDIA valid streaming response
+    it("Test B: handles NVIDIA valid streaming response correctly", async () => {
+      const jsonStr = JSON.stringify(VALID_TEACHING_JSON);
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: jsonStr } }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-b",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const response = await provider.generateTeachingLesson({
+        prompt: "Test B streaming",
+        requestId: "req-test-b",
+      });
+
+      expect(response.topic).toBe("Binary Search");
+      expect(response.visual_actions.length).toBe(2);
+    });
+
+    // Test C: reasoning_content + content
+    it("Test C: correctly isolates reasoning_content and parses content without corruption", async () => {
+      const jsonStr = JSON.stringify(VALID_TEACHING_JSON);
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                role: "assistant",
+                reasoning_content:
+                  "Internal step-by-step reasoning about Binary Search algorithm...",
+              },
+            },
+          ],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: jsonStr } }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-c",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const response = await provider.generateTeachingLesson({
+        prompt: "Test C reasoning",
+        requestId: "req-test-c",
+      });
+
+      // Valid Visual DSL returned; reasoning_content was NOT prepended or parsed as DSL
+      expect(response.topic).toBe("Binary Search");
+      expect(response.message).not.toContain("Internal step-by-step reasoning");
+    });
+
+    // Test D: content split across multiple SSE chunks
+    it("Test D: correctly reassembles content split across multiple SSE chunks", async () => {
+      const jsonStr = JSON.stringify(VALID_TEACHING_JSON);
+      const p1 = jsonStr.slice(0, 50);
+      const p2 = jsonStr.slice(50, 150);
+      const p3 = jsonStr.slice(150);
+
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: p1 } }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: p2 } }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: p3 } }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-d",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const response = await provider.generateTeachingLesson({
+        prompt: "Test D split chunks",
+        requestId: "req-test-d",
+      });
+
+      expect(response.topic).toBe("Binary Search");
+      expect(response.visual_actions.length).toBe(2);
+    });
+
+    // Test E: final [DONE]
+    it("Test E: terminates stream cleanly on final [DONE]", async () => {
+      const jsonStr = JSON.stringify(VALID_TEACHING_JSON);
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: jsonStr } }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+        // Subsequent chunk should not be read after [DONE]
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: "extra trailing data" } }],
+        })}\n\n`,
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-e",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      const response = await provider.generateTeachingLesson({
+        prompt: "Test E done",
+        requestId: "req-test-e",
+      });
+
+      expect(response.topic).toBe("Binary Search");
+      // Loop stopped upon [DONE]
+      expect(chunkIdx).toBe(2);
+    });
+
+    // Test F: empty content
+    it("Test F: throws NvidiaEmptyCompletionError when content is empty despite HTTP 200", async () => {
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [{ delta: { role: "assistant" } }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-f",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      await expect(
+        provider.generateTeachingLesson({
+          prompt: "Test F empty content",
+          requestId: "req-test-f",
+        }),
+      ).rejects.toThrow(NvidiaEmptyCompletionError);
+    });
+
+    // Test G: incomplete stream
+    it("Test G: throws NvidiaIncompleteStreamError when stream ends abruptly without [DONE] and without content", async () => {
+      const mockReader = {
+        read: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-g",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      await expect(
+        provider.generateTeachingLesson({
+          prompt: "Test G incomplete stream",
+          requestId: "req-test-g",
+        }),
+      ).rejects.toThrow(NvidiaIncompleteStreamError);
+    });
+
+    // Test H: malformed response
+    it("Test H: throws NvidiaInvalidCompletionError when content cannot be parsed as JSON", async () => {
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: "This is not JSON at all." } }],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-h",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      await expect(
+        provider.generateTeachingLesson({
+          prompt: "Test H malformed JSON",
+          requestId: "req-test-h",
+        }),
+      ).rejects.toThrow(NvidiaInvalidCompletionError);
+    });
+
+    // Test I: finish_reason length throws NvidiaOutputTruncatedError
+    it("Test I: throws NvidiaOutputTruncatedError when finish_reason is length", async () => {
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: { content: '{"topic": "Truncated"' },
+              finish_reason: "length",
+            },
+          ],
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-i",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      await expect(
+        provider.generateTeachingLesson({
+          prompt: "Test I truncated",
+          requestId: "req-test-i",
+        }),
+      ).rejects.toThrow(NvidiaOutputTruncatedError);
+    });
+
+    // Test J: stream error event
+    it("Test J: throws NvidiaStreamError when stream emits an error event chunk", async () => {
+      const sseChunks = [
+        `data: ${JSON.stringify({
+          error: {
+            message: "Internal server error",
+            type: "internal_server_error",
+            code: 500,
+          },
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      let chunkIdx = 0;
+      const mockReader = {
+        read: vi.fn().mockImplementation(async () => {
+          if (chunkIdx < sseChunks.length) {
+            return {
+              done: false,
+              value: new TextEncoder().encode(sseChunks[chunkIdx++]),
+            };
+          }
+          return { done: true, value: undefined };
+        }),
+      };
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === "content-type" ? "text/event-stream" : null,
+        },
+        body: { getReader: () => mockReader, read: mockReader.read },
+      });
+
+      const provider = new NvidiaNemotronProvider({
+        apiKey: "test-key-j",
+        fetchFn: mockFetch as unknown as typeof fetch,
+      });
+
+      await expect(
+        provider.generateTeachingLesson({
+          prompt: "Test J stream error",
+          requestId: "req-test-j",
+        }),
+      ).rejects.toThrow(NvidiaStreamError);
     });
   });
 });

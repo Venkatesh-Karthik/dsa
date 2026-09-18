@@ -338,6 +338,10 @@ export class RenderContext {
     return this.getRecord(dslId) !== undefined;
   }
 
+  hasDirect(dslId: string): boolean {
+    return this.registry.has(dslId);
+  }
+
   getLastRenderedRecord(): RenderedRecord | undefined {
     return this.lastRenderedId
       ? this.getRecord(this.lastRenderedId)
@@ -724,10 +728,26 @@ function renderCreateBox(
   context: RenderContext,
 ): ExcalidrawElement[] {
   const sizeConfig = BOX_SIZES[action.style?.size || "md"];
+  const fontSize =
+    sizeConfig.fontSize || TOKENS.TYPOGRAPHY.NodePrimary.fontSize;
+  const labelStr = action.label ?? "";
+  const lines = labelStr ? labelStr.split("\n") : [];
+  const maxLineLen =
+    lines.length > 0 ? Math.max(...lines.map((l) => l.length)) : 0;
+  const PADDING_X = 14;
+  const PADDING_Y = 12;
+  const estTextWidth = Math.ceil(maxLineLen * (fontSize * 0.48));
+  const estTextHeight = Math.ceil(
+    Math.max(1, lines.length) * (fontSize * 1.25),
+  );
+
+  const boxWidth = Math.max(sizeConfig.width, estTextWidth + PADDING_X * 2);
+  const boxHeight = Math.max(sizeConfig.height, estTextHeight + PADDING_Y * 2);
+
   const { x, y } = computePosition(
     context,
-    sizeConfig.width,
-    sizeConfig.height,
+    boxWidth,
+    boxHeight,
     action.position,
   );
 
@@ -745,8 +765,8 @@ function renderCreateBox(
     id: action.id,
     x,
     y,
-    width: sizeConfig.width,
-    height: sizeConfig.height,
+    width: boxWidth,
+    height: boxHeight,
     label: action.label,
     shape: "rectangle",
     role: action.role,

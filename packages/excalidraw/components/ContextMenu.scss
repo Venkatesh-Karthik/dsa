@@ -8,33 +8,50 @@
 
   .context-menu {
     position: relative;
-    border-radius: 4px;
-    box-shadow: 0 3px 10px color.adjust(#000, $alpha: -0.8);
+    border-radius: 14px;
+    background: var(--cognora-glass-surface-strong, rgba(255, 255, 255, 0.82));
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--cognora-glass-border, rgba(255, 255, 255, 0.65));
+    border-bottom-color: var(
+      --cognora-glass-border-dark,
+      rgba(203, 213, 225, 0.5)
+    );
+    border-right-color: var(
+      --cognora-glass-border-dark,
+      rgba(203, 213, 225, 0.5)
+    );
+    box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.14),
+      0 4px 12px -2px rgba(15, 23, 42, 0.08),
+      inset 0 1px 1px 0 rgba(255, 255, 255, 0.95);
     list-style: none;
     user-select: none;
     margin: 0;
-    padding: 0.5rem 0;
-    background-color: var(--popup-secondary-bg-color);
-    border: 1px solid var(--button-gray-3);
+    padding: 6px;
     cursor: default;
+    transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .context-menu button {
-    color: var(--popup-text-color);
+    color: var(--popup-text-color, #0f172a);
   }
 
   .context-menu-item {
     position: relative;
     width: 100%;
     min-width: 9.5rem;
-    margin: 0;
-    padding: 0.25rem 1rem 0.25rem 1.25rem;
+    margin: 2px 0;
+    padding: 6px 12px 6px 14px;
     text-align: start;
-    border-radius: 0;
+    border-radius: 8px;
     background-color: transparent;
     border: none;
     white-space: nowrap;
     font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--popup-text-color, #1e293b);
+    transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 
     display: grid;
     grid-template-columns: 1fr 0.2fr;
@@ -59,21 +76,23 @@
     }
     .context-menu-item__shortcut {
       justify-self: end;
-      opacity: 0.6;
+      opacity: 0.65;
       font-family: inherit;
-      font-size: 0.7rem;
+      font-size: 0.72rem;
+      font-weight: 500;
     }
   }
 
   .context-menu-item:hover {
-    color: var(--popup-bg-color);
-    background-color: var(--select-highlight-color);
+    color: #1d4ed8;
+    background-color: rgba(59, 130, 246, 0.1);
+    transform: translateX(1.5px);
 
     &.dangerous {
       .context-menu-item__label {
-        color: var(--popup-bg-color);
+        color: #b91c1c;
       }
-      background-color: $color-red-6;
+      background-color: rgba(239, 68, 68, 0.12);
     }
   }
 
@@ -97,6 +116,7 @@
 
   .context-menu-item-separator {
     border: none;
-    border-top: 1px solid $color-gray-5;
+    border-top: 1px solid rgba(226, 232, 240, 0.75);
+    margin: 4px 6px;
   }
 }

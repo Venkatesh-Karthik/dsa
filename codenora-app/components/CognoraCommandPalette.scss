@@ -1,0 +1,391 @@
+/**
+ * Cognora Command Palette - Liquid Glass Styles
+ *
+ * Implements high-end glassmorphism, responsive multi-column layout,
+ * active context recommendations, category chips, and live preview.
+ */
+
+.cognora-command-palette {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  right: 0;
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--cognora-glass-surface-strong, rgba(255, 255, 255, 0.85));
+  backdrop-filter: blur(var(--cognora-glass-blur-lg, 20px)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--cognora-glass-blur-lg, 20px))
+    saturate(180%);
+  border: 1px solid var(--cognora-glass-border, rgba(255, 255, 255, 0.75));
+  box-shadow: var(
+      --cognora-glass-shadow-floating,
+      0 24px 48px -8px rgba(15, 23, 42, 0.14)
+    ),
+    var(
+      --cognora-glass-highlight,
+      inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.92)
+    );
+  border-radius: var(--cognora-radius-lg, 24px);
+  overflow: hidden;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  animation: cognora-palette-in 180ms
+    var(--cognora-liquid-ease, cubic-bezier(0.16, 1, 0.3, 1));
+  font-family: var(--cognora-font-sans, system-ui, -apple-system, sans-serif);
+}
+
+@keyframes cognora-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.cognora-command-palette__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.7);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.cognora-command-palette__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cognora-command-palette__title {
+  font-size: var(--cognora-text-sm, 11.5px);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #334155;
+}
+
+.cognora-command-palette__count {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+}
+
+.cognora-command-palette__shortcut-hint {
+  font-size: 10px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  kbd {
+    background: rgba(241, 245, 249, 0.9);
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 9px;
+    font-family: var(--cognora-font-mono, monospace);
+    color: #475569;
+  }
+}
+
+/* Category Filter Tabs */
+.cognora-command-palette__tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: rgba(248, 250, 252, 0.4);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.5);
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.cognora-command-palette__tab {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+
+  &:hover {
+    background: rgba(241, 245, 249, 0.8);
+    color: #1e293b;
+  }
+
+  &.is-active {
+    background: #ffffff;
+    color: #2563eb;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+}
+
+/* Main Split View: List + Details */
+.cognora-command-palette__body {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  max-height: 280px;
+  min-height: 200px;
+  overflow: hidden;
+}
+
+.cognora-command-palette__list {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid rgba(226, 232, 240, 0.6);
+}
+
+.cognora-command-palette__section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #94a3b8;
+  padding: 4px 8px 2px;
+  letter-spacing: 0.04em;
+}
+
+.cognora-command-palette__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 100ms ease, border-color 100ms ease;
+
+  &:hover,
+  &.is-selected {
+    background: rgba(239, 246, 255, 0.8);
+    border-color: rgba(191, 219, 254, 0.8);
+  }
+
+  &.is-contextual {
+    position: relative;
+  }
+}
+
+.cognora-command-palette__item-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cognora-command-palette__item-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cognora-command-palette__item-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1e293b;
+  font-family: var(--cognora-font-mono, monospace);
+
+  .is-selected & {
+    color: #1d4ed8;
+  }
+}
+
+.cognora-command-palette__item-alias {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.cognora-command-palette__item-desc {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+.cognora-command-palette__item-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Category Badges */
+.cognora-command-palette__category-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+
+  &--create {
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+  }
+
+  &--transform {
+    background: rgba(14, 165, 233, 0.12);
+    color: #0369a1;
+  }
+
+  &--run {
+    background: rgba(99, 102, 241, 0.12);
+    color: #4338ca;
+  }
+
+  &--learn {
+    background: rgba(139, 92, 246, 0.12);
+    color: #6d28d9;
+  }
+
+  &--view {
+    background: rgba(20, 184, 166, 0.12);
+    color: #0f766e;
+  }
+
+  &--playback {
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+  }
+
+  &--session {
+    background: rgba(244, 63, 94, 0.12);
+    color: #be123c;
+  }
+
+  &--output,
+  &--power,
+  &--system {
+    background: rgba(100, 116, 139, 0.12);
+    color: #334155;
+  }
+}
+
+.cognora-command-palette__class-badge {
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+
+  &--local {
+    background: #ecfdf5;
+    color: #059669;
+    border: 1px solid #a7f3d0;
+  }
+
+  &--semantic {
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+  }
+
+  &--teaching {
+    background: #faf5ff;
+    color: #7c3aed;
+    border: 1px solid #ddd6fe;
+  }
+
+  &--developer {
+    background: #fffbeb;
+    color: #b45309;
+    border: 1px solid #fde68a;
+  }
+}
+
+/* Detail Preview Pane */
+.cognora-command-palette__detail {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.3);
+  font-size: 11px;
+}
+
+.cognora-command-palette__detail-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  font-family: var(--cognora-font-mono, monospace);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cognora-command-palette__detail-desc {
+  color: #475569;
+  line-height: 1.4;
+}
+
+.cognora-command-palette__detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cognora-command-palette__detail-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
+}
+
+.cognora-command-palette__detail-syntax {
+  background: rgba(241, 245, 249, 0.95);
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-family: var(--cognora-font-mono, monospace);
+  font-size: 10.5px;
+  color: #1e293b;
+  word-break: break-all;
+}
+
+.cognora-command-palette__detail-example-btn {
+  background: transparent;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-family: var(--cognora-font-mono, monospace);
+  font-size: 10px;
+  color: #2563eb;
+  text-align: left;
+  cursor: pointer;
+  transition: all 120ms ease;
+
+  &:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+  }
+}
+
+.cognora-command-palette__empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 12px;
+}

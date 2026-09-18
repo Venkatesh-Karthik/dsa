@@ -169,5 +169,65 @@ describe("Teaching Backend Service", () => {
       const body = res.getResponseJson();
       expect(body.error).toBe("API rate limited");
     });
+
+    it("returns 502 SCHEMA_ERROR on provider schema failure without silent fallback", async () => {
+      const invalidSchemaProvider = {
+        id: "nvidia",
+        name: "NVIDIA Nemotron",
+        isConfigured: () => true,
+        generateTeachingResponse: vi.fn().mockResolvedValue({
+          topic: "",
+          message: "Invalid",
+          visual_actions: "not-an-array",
+        } as unknown as any),
+      };
+
+      const { req, res } = createMockReqRes({
+        method: "POST",
+        body: { prompt: "Explain TCP Three-Way Handshake" },
+      });
+      await handleTeachingRequest(req, res, {
+        provider: invalidSchemaProvider as any,
+      });
+
+      expect(res.statusCode).toBe(502);
+      const body = res.getResponseJson();
+      expect(body.code).toBe("SCHEMA_ERROR");
+      // MUST NOT have returned 200 (recovered)
+      expect(res.statusCode).not.toBe(200);
+    });
+
+    it("returns 502 NVIDIA_EMPTY_COMPLETION when provider throws empty completion without silent fallback", async () => {
+      const { NvidiaEmptyCompletionError } = await import(
+        "../ai/backend/provider-errors"
+      );
+      const emptyProvider = {
+        id: "nvidia",
+        name: "NVIDIA Nemotron",
+        isConfigured: () => true,
+        generateTeachingResponse: vi
+          .fn()
+          .mockRejectedValue(
+            new NvidiaEmptyCompletionError(
+              "NVIDIA NIM returned empty completion content.",
+            ),
+          ),
+      };
+
+      const { req, res } = createMockReqRes({
+        method: "POST",
+        body: { prompt: "Explain TCP Three-Way Handshake" },
+      });
+      await handleTeachingRequest(req, res, {
+        provider: emptyProvider as any,
+      });
+
+      expect(res.statusCode).toBe(502);
+      const body = res.getResponseJson();
+      expect(body.code).toBe("NVIDIA_EMPTY_COMPLETION");
+      expect(body.error).toContain("empty completion content");
+      // MUST NOT have synthesized a fallback or returned 200
+      expect(res.statusCode).not.toBe(200);
+    });
   });
 });

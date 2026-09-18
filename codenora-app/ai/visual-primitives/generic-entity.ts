@@ -53,12 +53,29 @@ export function createGenericEntity(
   const style = mapSemanticStateToNodeTokens(highlight);
   const groupId = `${id}-group`;
 
+  // Measure text dimensions to prevent text from escaping container bounds
+  const fontSize = TOKENS.TYPOGRAPHY.NodePrimary.fontSize;
+  const labelStr = label ?? "";
+  const lines = labelStr ? labelStr.split("\n") : [];
+  const maxLineLen =
+    lines.length > 0 ? Math.max(...lines.map((l) => l.length)) : 0;
+  const PADDING_X = 14;
+  const PADDING_Y = 12;
+  const estTextWidth = Math.ceil(maxLineLen * (fontSize * 0.48));
+  const estTextHeight = Math.ceil(
+    Math.max(1, lines.length) * (fontSize * 1.25),
+  );
+
+  // Container bounds must dynamically expand if label exceeds base width or height
+  const effectiveWidth = Math.max(width, estTextWidth + PADDING_X * 2);
+  const effectiveHeight = Math.max(height, estTextHeight + PADDING_Y * 2);
+
   const entity = newElement({
     type: shape,
     x,
     y,
-    width,
-    height,
+    width: effectiveWidth,
+    height: effectiveHeight,
     strokeColor: strokeColor ?? style.stroke,
     backgroundColor: backgroundColor ?? style.fill,
     fillStyle,
@@ -77,8 +94,9 @@ export function createGenericEntity(
 
   const textLabel = newTextElement({
     text: label,
-    x: x + width / 2,
-    y: y + height / 2,
+    x: x + effectiveWidth / 2,
+    y: y + effectiveHeight / 2,
+    width: effectiveWidth - PADDING_X * 2,
     fontSize: TOKENS.TYPOGRAPHY.NodePrimary.fontSize,
     fontFamily: TOKENS.TYPOGRAPHY.NodePrimary.fontFamily,
     textAlign: "center",

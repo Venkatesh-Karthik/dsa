@@ -102,8 +102,8 @@ const VALID_DIRECTIONS = new Set<ArrowDirection>([
   "none",
 ]);
 
-export const MAX_VISUAL_ACTIONS = 35;
-export const MAX_EXPLANATION_STEPS = 10;
+export const MAX_VISUAL_ACTIONS = 80;
+export const MAX_EXPLANATION_STEPS = 50;
 export const MAX_LABEL_LENGTH = 300;
 
 export interface ValidationResult<T> {

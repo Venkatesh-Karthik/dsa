@@ -106,6 +106,16 @@ export interface PracticeModel {
   onGenerateNewPractice?: () => void;
 }
 
+export interface OverlayDirectionalControls {
+  canMove: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onMoveLeft: () => void;
+  onMoveRight: () => void;
+  onResetAuto?: () => void;
+  isOverridden?: boolean;
+}
+
 export interface CognoraContextualPanelProps {
   activeTab: PanelTabType;
   onTabChange: (tab: PanelTabType) => void;
@@ -120,6 +130,7 @@ export interface CognoraContextualPanelProps {
   };
   practiceData?: PracticeModel;
   capabilities?: string[];
+  overlayControls?: OverlayDirectionalControls;
 }
 
 export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
@@ -132,6 +143,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
   codeSolution,
   practiceData,
   capabilities = ["explain", "code", "analyze", "practice"],
+  overlayControls,
 }) => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("python");
   const [copied, setCopied] = useState<boolean>(false);
@@ -139,7 +151,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
   // Auto-fallback if activeTab is not permitted in capabilities
   useEffect(() => {
     if (capabilities.length > 0 && !capabilities.includes(activeTab)) {
-      onTabChange(capabilities[0] as PanelTabType);
+      onTabChange?.(capabilities[0] as PanelTabType);
     }
   }, [capabilities, activeTab, onTabChange]);
 
@@ -725,6 +737,139 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
                     </div>
                     <div style={{ color: "#1e3a8a", lineHeight: 1.5 }}>
                       {explainData.insight}
+                    </div>
+                  </div>
+                )}
+
+                {/* Contextual Overlay Position Controls (progressive disclosure) */}
+                {overlayControls?.canMove && (
+                  <div
+                    className="cognora-contextual-panel__overlay-section"
+                    data-purpose="overlay-position-controls"
+                  >
+                    <div className="cognora-contextual-panel__overlay-header">
+                      <span className="title">Explanation Card Position</span>
+                      {overlayControls.isOverridden &&
+                        overlayControls.onResetAuto && (
+                          <button
+                            type="button"
+                            className="reset-btn"
+                            onClick={overlayControls.onResetAuto}
+                            title="Reset to automatic placement"
+                            aria-label="Reset explanation position"
+                          >
+                            Auto Align
+                          </button>
+                        )}
+                    </div>
+                    <div
+                      className="cognora-overlay-dpad"
+                      role="group"
+                      aria-label="Explanation overlay position controls"
+                    >
+                      <div className="cognora-overlay-dpad__row">
+                        <button
+                          type="button"
+                          className="cognora-overlay-dpad__btn"
+                          onClick={overlayControls.onMoveUp}
+                          title="Move explanation up"
+                          aria-label="Move explanation up"
+                        >
+                          <svg
+                            style={{ width: "14px", height: "14px" }}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              d="M5 15l7-7 7 7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2.4"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="cognora-overlay-dpad__row">
+                        <button
+                          type="button"
+                          className="cognora-overlay-dpad__btn"
+                          onClick={overlayControls.onMoveLeft}
+                          title="Move explanation left"
+                          aria-label="Move explanation left"
+                        >
+                          <svg
+                            style={{ width: "14px", height: "14px" }}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              d="M15 19l-7-7 7-7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2.4"
+                            />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="cognora-overlay-dpad__btn cognora-overlay-dpad__btn--center"
+                          onClick={overlayControls.onResetAuto}
+                          title={
+                            overlayControls.isOverridden
+                              ? "Reset to automatic placement"
+                              : "Overlay is automatically positioned"
+                          }
+                          aria-label="Reset to automatic placement"
+                        >
+                          <span className="cognora-overlay-dpad__center-dot" />
+                        </button>
+                        <button
+                          type="button"
+                          className="cognora-overlay-dpad__btn"
+                          onClick={overlayControls.onMoveRight}
+                          title="Move explanation right"
+                          aria-label="Move explanation right"
+                        >
+                          <svg
+                            style={{ width: "14px", height: "14px" }}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              d="M9 5l7 7-7 7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2.4"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="cognora-overlay-dpad__row">
+                        <button
+                          type="button"
+                          className="cognora-overlay-dpad__btn"
+                          onClick={overlayControls.onMoveDown}
+                          title="Move explanation down"
+                          aria-label="Move explanation down"
+                        >
+                          <svg
+                            style={{ width: "14px", height: "14px" }}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              d="M19 9l-7 7-7-7"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2.4"
+                            />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

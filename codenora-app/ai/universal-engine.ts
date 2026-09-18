@@ -181,8 +181,8 @@ export class UniversalConceptIntelligenceEngine {
         });
       }
 
-      // Define composite container action types that should not be extracted as visual node entities
-      const CONTAINER_ACTION_TYPES = new Set([
+      // Define action types that should not be extracted as visual node entities
+      const NON_NODE_ACTION_TYPES = new Set([
         "create_tree",
         "create_graph",
         "create_array",
@@ -193,17 +193,57 @@ export class UniversalConceptIntelligenceEngine {
         "create_container",
         "create_system",
         "create_timeline",
+        "create_arrow",
+        "connect",
+        "create_relationship",
+        "disconnect",
+        "remove_arrow",
+        "delete_arrow",
       ]);
 
       // Universal fallback for any action with an id not captured by scene graph
       for (const act of initialActions) {
         if ("id" in act && typeof (act as any).id === "string") {
           const actType = (act as any).type;
-          if (CONTAINER_ACTION_TYPES.has(actType)) {
-            // Composite container definitions are structural layouts, not individual shape primitives
+          const actId = (act as any).id;
+
+          // Route relationships/arrows to candidateRelationships instead of entities
+          const src = (act as any).from || (act as any).source;
+          const tgt = (act as any).to || (act as any).target;
+          if (
+            src &&
+            tgt &&
+            (actType === "create_arrow" ||
+              actType === "connect" ||
+              actType === "create_relationship" ||
+              /^arrow/i.test(actId) ||
+              /^edge/i.test(actId) ||
+              /^rel-/i.test(actId))
+          ) {
+            if (!candidateRelationships.some((r) => r.id === actId)) {
+              candidateRelationships.push({
+                id: actId,
+                source: src,
+                target: tgt,
+                type: (act as any).relationType || "connects",
+                direction: (act as any).directed !== false ? "forward" : "none",
+                label: (act as any).label,
+                properties: (act as any).properties || {},
+              });
+            }
             continue;
           }
-          const actId = (act as any).id;
+
+          if (
+            NON_NODE_ACTION_TYPES.has(actType) ||
+            /^t\d+-op\d+$/i.test(actId) ||
+            /^arrow/i.test(actId) ||
+            /^edge/i.test(actId) ||
+            /^rel-/i.test(actId)
+          ) {
+            continue;
+          }
+
           if (!candidateEntities.some((e) => e.id === actId)) {
             const label =
               ("label" in act && typeof (act as any).label === "string"
@@ -371,12 +411,23 @@ export class UniversalConceptIntelligenceEngine {
       const entFp = entKeys
         .map((k) => {
           const e = st.entities.get(k)!;
-          return `${k}:${e.value}:${e.properties?.highlight || ""}:${
-            e.label || ""
-          }`;
+          const propsFp = e.properties
+            ? Object.keys(e.properties)
+                .sort()
+                .map((pk) => `${pk}:${(e.properties as any)[pk]}`)
+                .join(";")
+            : "";
+          return `${k}:${e.value}:${e.state || ""}:${e.label || ""}:${propsFp}`;
         })
         .join("|");
-      return `${entFp}#${st.relationships.size}`;
+      const relKeys = Array.from(st.relationships.keys()).sort();
+      const relFp = relKeys
+        .map((rk) => {
+          const r = st.relationships.get(rk)!;
+          return `${rk}:${r.source}->${r.target}:${r.type}:${r.label || ""}`;
+        })
+        .join("|");
+      return `${entFp}#${relFp}`;
     };
 
     // Non-destructive step-to-state derivation engine
@@ -499,6 +550,7 @@ export class UniversalConceptIntelligenceEngine {
                 y: op.y ?? op.position?.y ?? found.entity.properties?.y,
                 slot:
                   op.slot ?? op.position?.slot ?? found.entity.properties?.slot,
+                index: op.index ?? op.toIndex ?? found.entity.properties?.index,
                 containerId:
                   op.toContainer ??
                   op.containerId ??
@@ -655,12 +707,33 @@ export class UniversalConceptIntelligenceEngine {
               foundTarget.entity.properties.highlight =
                 op.highlight || "accent";
               affectedEntities.push(foundTarget.id);
-              for (const sId of sources) {
-                if (sId !== foundTarget.id) {
-                  const sFound = findEntityInMap(nextEntities, sId);
-                  if (sFound) {
-                    nextEntities.delete(sFound.id);
-                    affectedEntities.push(sFound.id);
+            }
+            for (const sId of sources) {
+              if (foundTarget && sId === foundTarget.id) {
+                continue;
+              }
+              const sFound = findEntityInMap(nextEntities, sId);
+              if (sFound) {
+                nextEntities.delete(sFound.id);
+                affectedEntities.push(sFound.id);
+              }
+              // Purge all cells/sub-entities belonging to merged source container sId
+              const toPurge: string[] = [];
+              for (const [eId, ent] of nextEntities.entries()) {
+                if (
+                  ent.properties?.containerId === sId ||
+                  ent.properties?.parentContainer === sId ||
+                  eId.startsWith(`${sId}-`)
+                ) {
+                  toPurge.push(eId);
+                }
+              }
+              for (const pId of toPurge) {
+                nextEntities.delete(pId);
+                affectedEntities.push(pId);
+                for (const [rid, r] of nextRels.entries()) {
+                  if (r.source === pId || r.target === pId) {
+                    nextRels.delete(rid);
                   }
                 }
               }
@@ -883,6 +956,32 @@ export class UniversalConceptIntelligenceEngine {
           ) {
             const entId = op.id || op.entity?.id;
             if (entId) {
+              // Guard against arrows, relationships, pointers, or operation tokens being created as box entities
+              if (
+                /^t\d+-op\d+$/i.test(entId) ||
+                /^arrow/i.test(entId) ||
+                /^edge/i.test(entId) ||
+                /^rel-/i.test(entId) ||
+                /^conn-/i.test(entId)
+              ) {
+                const s = op.source || op.from;
+                const t = op.target || op.to;
+                if (s && t) {
+                  const relId = entId;
+                  nextRels.set(relId, {
+                    id: relId,
+                    source: s,
+                    target: t,
+                    type: op.relationType || op.type || "connects",
+                    direction: op.directed !== false ? "forward" : "none",
+                    label: op.label,
+                    properties: op.properties || {},
+                  });
+                  affectedEntities.push(s, t);
+                }
+                continue;
+              }
+
               nextEntities.set(entId, {
                 id: entId,
                 type:
@@ -1184,6 +1283,59 @@ export class UniversalConceptIntelligenceEngine {
           ) {
             const arr = op as any;
             const arrId = arr.id || "array";
+
+            // If this array replaces or merges previous containers, purge those obsolete containers
+            const replacedContainers: string[] = Array.isArray(arr.replaces)
+              ? arr.replaces
+              : arr.replaces
+              ? [arr.replaces]
+              : Array.isArray(arr.sources)
+              ? arr.sources
+              : Array.isArray(arr.mergedFrom)
+              ? arr.mergedFrom
+              : [];
+            for (const repId of replacedContainers) {
+              if (repId === arrId) {
+                continue;
+              }
+              const toPurge: string[] = [];
+              for (const [eId, ent] of nextEntities.entries()) {
+                if (
+                  ent.properties?.containerId === repId ||
+                  ent.properties?.parentContainer === repId ||
+                  eId.startsWith(`${repId}-`) ||
+                  eId === repId
+                ) {
+                  toPurge.push(eId);
+                }
+              }
+              for (const pId of toPurge) {
+                nextEntities.delete(pId);
+                affectedEntities.push(pId);
+                for (const [rid, r] of nextRels.entries()) {
+                  if (r.source === pId || r.target === pId) {
+                    nextRels.delete(rid);
+                  }
+                }
+              }
+            }
+
+            // Clean up stale cells previously belonging to this array beyond its new size
+            for (const [eId, ent] of nextEntities.entries()) {
+              if (
+                ent.properties?.containerId === arrId ||
+                eId.startsWith(`${arrId}-`)
+              ) {
+                const idx = Number(
+                  ent.properties?.index ?? eId.replace(`${arrId}-`, ""),
+                );
+                if (!isNaN(idx) && idx >= arr.elements.length) {
+                  nextEntities.delete(eId);
+                  affectedEntities.push(eId);
+                }
+              }
+            }
+
             for (let elIdx = 0; elIdx < arr.elements.length; elIdx++) {
               const el = arr.elements[elIdx];
               const cellId = `${arrId}-${elIdx}`;
@@ -1427,6 +1579,7 @@ export class UniversalConceptIntelligenceEngine {
           codeContext: s.codeContext,
           codeSnippet: s.codeSnippet || s.codeContext?.code,
           codeLanguage: s.codeLanguage || s.codeContext?.language,
+          operations: allOperations,
         });
 
         currentState = nextState;
@@ -1539,14 +1692,22 @@ export class UniversalConceptIntelligenceEngine {
       const initialFp = computeStateFingerprint(states[0]);
       const finalFp = computeStateFingerprint(states[states.length - 1]);
       if (initialFp === finalFp) {
-        console.warn(
-          `[COGNORA][OPTIMIZER] Optimized execution produced identical initial and final state. Discarding optimized plan and falling back to raw plan.`,
+        const rawDerived = deriveStatesFromSteps(rawSteps);
+        const rawInitialFp = computeStateFingerprint(rawDerived.states[0]);
+        const rawFinalFp = computeStateFingerprint(
+          rawDerived.states[rawDerived.states.length - 1],
         );
-        usedOptimized = false;
-        activeSteps = rawSteps;
-        derived = deriveStatesFromSteps(rawSteps);
-        states = derived.states;
-        rawTransformations = derived.rawTransformations;
+        // Only discard if the optimizer flattened an actual progression that existed in raw steps
+        if (rawInitialFp !== rawFinalFp) {
+          console.warn(
+            `[COGNORA][OPTIMIZER] Optimized execution produced identical initial and final state. Discarding optimized plan and falling back to raw plan.`,
+          );
+          usedOptimized = false;
+          activeSteps = rawSteps;
+          derived = rawDerived;
+          states = derived.states;
+          rawTransformations = derived.rawTransformations;
+        }
       }
     }
 

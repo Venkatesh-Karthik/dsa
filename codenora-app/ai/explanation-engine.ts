@@ -211,20 +211,29 @@ export class ExplanationEngine {
       .replace(/\bptr[-_]j\b/gi, "partition boundary j")
       .replace(/\bptr[-_]found(?:[-_]\d+)?\b/gi, "target pointer")
       .replace(/\bptr[-_][a-zA-Z0-9_-]+\b/gi, "pointer")
+      .replace(/\bmain[-_]array\b/gi, "original array")
+      .replace(/\bleft[-_]half\b/gi, "left half")
+      .replace(/\bright[-_]half\b/gi, "right half")
+      .replace(/\bfinal[-_]sorted(?:[-_]\d+)?\b/gi, "sorted array")
       .replace(/\bqs[-_]array\b/gi, "array")
       .replace(/\bbs[-_]array(?:[-_]\d+)?\b/gi, "array")
       .replace(
-        /\b(?:merge[-_]array[-_]element[-_]|elem[-_]|item[-_])(\d+)\b/gi,
+        /\b(?:merge[-_]array[-_]element[-_]|elem[-_]|item[-_]|array[-_]item[-_])(\d+)\b/gi,
         "element $1",
       )
+      .replace(/\bmerge[-_]array[-_]element[-_][a-zA-Z0-9_-]+\b/gi, "element")
+      .replace(/\barray[-_]item[-_][a-zA-Z0-9_-]+\b/gi, "element")
       .replace(
-        /\b(?:dll[-_](?:e|node[-_]?)?|node[-_]|tree[-_]n|avl[-_]tree[-_]n|n)(\d+)\b/gi,
+        /\b(?:dll[-_](?:e|node[-_]?)?|node[-_]|tree[-_]n|tree[-_]node[-_]|avl[-_]tree[-_]n|avl[-_]node[-_]|avl[-_]|n)(\d+)\b/gi,
         "$1",
       )
+      .replace(/\bnode[-_]([a-zA-Z0-9]+)\b/gi, "$1")
       .replace(/\bfocusComponent\b/gi, "target element")
+      .replace(/\bactiveComponents\b/gi, "active components")
       .replace(/\bActive Components\b/gi, "Components")
       .replace(/\bFocus Component\b/gi, "Focus Item")
       .replace(/\b(?:Component|Node)\s+(\w+)/gi, "$1")
+      .replace(/\barrow\d+[-_]\d+\b/gi, "connection")
       .replace(/\bent[-_][a-zA-Z0-9_-]+\b/gi, "element")
       .trim();
   }

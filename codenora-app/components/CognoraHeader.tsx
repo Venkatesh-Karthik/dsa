@@ -43,12 +43,36 @@ export const CognoraHeader: React.FC<CognoraHeaderProps> = ({
 }) => {
   return (
     <header className="cognora-header" data-purpose="top-navigation-bar">
-      {/* Left: Cognora Logo */}
+      {/* Left Group: Cognora Logo & Auto Align */}
       <div className="cognora-header__left">
         <CognoraLogo size={32} showTagline={true} />
+        {onAutoAlign && (
+          <button
+            type="button"
+            className="cognora-header__auto-align-btn"
+            onClick={onAutoAlign}
+            title="Balance Spacing & Eliminate Overlaps"
+            aria-label="Auto Align"
+          >
+            <svg
+              style={{ width: "14px", height: "14px" }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 0h6v6h-6v-6z"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.8"
+              />
+            </svg>
+            <span>Auto Align</span>
+          </button>
+        )}
       </div>
 
-      {/* Center: Mathematically Centered Dynamic Lesson Title */}
+      {/* Center Group: Mathematically Centered Dynamic Lesson Title */}
       <div
         className="cognora-header__center"
         data-purpose="centered-lesson-title"
@@ -56,36 +80,14 @@ export const CognoraHeader: React.FC<CognoraHeaderProps> = ({
         <span
           className="cognora-header__title"
           title={lessonTitle || "Cognora Workspace"}
+          onClick={onLessonTitleClick}
         >
           {lessonTitle || "Cognora Workspace"}
         </span>
       </div>
 
-      {/* Right: Workspace Actions & Profile */}
+      {/* Right Group: Workspace Actions & Profile */}
       <div className="cognora-header__right">
-        {/* Auto-Layout Rebalance Action */}
-        <button
-          type="button"
-          className="cognora-header__auto-align-btn"
-          onClick={onAutoAlign}
-          title="Balance Spacing & Eliminate Overlaps"
-        >
-          <svg
-            style={{ width: "14px", height: "14px" }}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 0h6v6h-6v-6z"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="1.8"
-            />
-          </svg>
-          <span>Auto Align</span>
-        </button>
-
         {/* Undo / Redo */}
         <button
           type="button"

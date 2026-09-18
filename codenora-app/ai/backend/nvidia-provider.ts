@@ -31,6 +31,11 @@ import {
   ProviderNetworkError,
   ProviderSchemaError,
   ProviderCreditCapacityError,
+  NvidiaEmptyCompletionError,
+  NvidiaInvalidCompletionError,
+  NvidiaIncompleteStreamError,
+  NvidiaOutputTruncatedError,
+  NvidiaStreamError,
 } from "./provider-errors";
 import {
   NEMOTRON_COMPACT_SYSTEM_PROMPT,
@@ -60,11 +65,16 @@ export {
   closeTruncatedJson,
   extractJsonFromText,
   isolateMessageContent,
+  NvidiaEmptyCompletionError,
+  NvidiaInvalidCompletionError,
+  NvidiaIncompleteStreamError,
+  NvidiaOutputTruncatedError,
+  NvidiaStreamError,
 };
 
 export const NVIDIA_DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
-export const NVIDIA_DEFAULT_MAX_TOKENS = 4096;
+export const NVIDIA_DEFAULT_MAX_TOKENS = 32768;
 export const NVIDIA_REQUEST_TIMEOUT_MS = 240000;
 export const NVIDIA_REPAIR_TIMEOUT_MS = 60000;
 
@@ -93,6 +103,10 @@ export interface NvidiaProviderOptions {
   timeoutMs?: number;
   repairTimeoutMs?: number;
   systemPrompt?: string;
+  reasoningEffort?: string;
+  reasoningBudget?: number;
+  stream?: boolean;
+  sendReasoningBudget?: boolean;
   fetchFn?: typeof fetch;
 }
 
@@ -107,6 +121,10 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
   private initialTimeoutMs: number;
   private repairTimeoutMs: number;
   private systemPrompt: string;
+  private reasoningEffort: string;
+  private reasoningBudget: number;
+  private stream: boolean;
+  private sendReasoningBudget: boolean;
   private fetchFn: typeof fetch;
 
   constructor(options?: NvidiaProviderOptions) {
@@ -137,6 +155,21 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
         : NVIDIA_REQUEST_TIMEOUT_MS);
     this.repairTimeoutMs = options?.repairTimeoutMs ?? NVIDIA_REPAIR_TIMEOUT_MS;
     this.systemPrompt = options?.systemPrompt ?? NEMOTRON_COMPACT_SYSTEM_PROMPT;
+    this.reasoningEffort =
+      options?.reasoningEffort ??
+      (typeof process !== "undefined" && process.env?.NVIDIA_REASONING_EFFORT
+        ? process.env.NVIDIA_REASONING_EFFORT
+        : "high");
+    this.reasoningBudget =
+      options?.reasoningBudget ??
+      (typeof process !== "undefined" && process.env?.NVIDIA_REASONING_BUDGET
+        ? parseInt(process.env.NVIDIA_REASONING_BUDGET, 10)
+        : 32768);
+    this.stream = options?.stream ?? true;
+    this.sendReasoningBudget =
+      options?.sendReasoningBudget ??
+      (typeof process !== "undefined" &&
+        process.env?.NVIDIA_SEND_REASONING_BUDGET === "true");
     this.fetchFn = options?.fetchFn ?? fetch;
   }
 
@@ -158,6 +191,18 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
 
   getSystemPrompt(): string {
     return this.systemPrompt;
+  }
+
+  getReasoningEffort(): string {
+    return this.reasoningEffort;
+  }
+
+  getReasoningBudget(): number {
+    return this.reasoningBudget;
+  }
+
+  getStream(): boolean {
+    return this.stream;
   }
 
   async generateTeachingLesson(
@@ -222,7 +267,7 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       console.error(
         `[${this.name}] Raw completion could not be parsed as structured JSON.`,
       );
-      throw new ProviderSchemaError(
+      throw new NvidiaInvalidCompletionError(
         `${this.name} completion could not be parsed as structured JSON.`,
         [
           "Invalid JSON format: model output could not be parsed as structured JSON",
@@ -237,17 +282,11 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       )} keys=${Object.keys((parsedData as object) || {}).join(",")}`,
     );
 
-    // Clamp explanation_steps to safety limit of 10 if model produced excess
-    if (
-      parsedData &&
-      typeof parsedData === "object" &&
-      Array.isArray((parsedData as any).explanation_steps) &&
-      (parsedData as any).explanation_steps.length > 10
-    ) {
-      (parsedData as any).explanation_steps = (
-        parsedData as any
-      ).explanation_steps.slice(0, 10);
-    }
+    // NOTE: explanation_steps are NOT clamped. The number of meaningful
+    // transformations is dynamic and determined by pedagogical necessity.
+    // Complex algorithms (Dijkstra, AVL, Merge Sort) legitimately require
+    // many transformations. The only safety limit is MAX_EXPLANATION_STEPS
+    // in dsl-validator.ts which is set to a generous 50.
 
     // 3. Deterministic Normalization
     const tBeforeNorm = Date.now();
@@ -305,7 +344,10 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
   ): Promise<string> {
     const tStart = Date.now();
     console.info(
-      `[COGNORA][AI][NVIDIA][START] requestId=${requestId} model=${this.model} maxTokens=${this.maxTokens}`,
+      `[COGNORA][AI][NVIDIA][CONFIG] provider=nvidia model=${this.model} maxTokens=${this.maxTokens} reasoningEffort=${this.reasoningEffort} reasoningBudget=${this.reasoningBudget} stream=${this.stream}`,
+    );
+    console.info(
+      `[COGNORA][AI][NVIDIA][START] requestId=${requestId} model=${this.model} maxTokens=${this.maxTokens} stream=${this.stream}`,
     );
     console.info(`Provider: NVIDIA`);
     console.info(`Model: ${this.model}`);
@@ -317,9 +359,22 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
     const bodyObj: Record<string, unknown> = {
       model: this.model,
       messages,
-      temperature: 0.1,
+      temperature: 0,
       max_tokens: this.maxTokens,
+      stream: this.stream,
+      reasoning_effort: this.reasoningEffort,
     };
+
+    // NOTE: On NVIDIA NIM with vLLM V2 runner, passing reasoning_budget triggers:
+    // "ValueError: thinking_token_budget is not yet supported by the V2 model runner."
+    // and returns HTTP 400 or SSE 500 error. Only attach if explicitly enabled.
+    if (
+      this.sendReasoningBudget ||
+      (typeof process !== "undefined" &&
+        process.env?.NVIDIA_SEND_REASONING_BUDGET === "true")
+    ) {
+      bodyObj.reasoning_budget = this.reasoningBudget;
+    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -336,20 +391,35 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
         signal: controller.signal,
       });
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") {
+      if (
+        err instanceof TypeError &&
+        err.message.includes("Expected signal") &&
+        err.message.includes("AbortSignal")
+      ) {
+        // Fallback for jsdom test runner where jsdom AbortSignal doesn't match Node undici fetch
+        rawResponse = await this.fetchFn(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(bodyObj),
+        });
+      } else if (err instanceof Error && err.name === "AbortError") {
         console.error(
           `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Request timed out after ${timeoutMs}ms"`,
         );
         throw new ProviderTimeoutError(timeoutMs, this.name);
+      } else {
+        const errMessage = err instanceof Error ? err.message : "Network error";
+        console.error(
+          `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Network error: ${errMessage}"`,
+        );
+        throw new ProviderNetworkError(
+          `Failed to connect to NVIDIA NIM: ${errMessage}`,
+          this.name,
+        );
       }
-      const errMessage = err instanceof Error ? err.message : "Network error";
-      console.error(
-        `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} error="Network error: ${errMessage}"`,
-      );
-      throw new ProviderNetworkError(
-        `Failed to connect to NVIDIA NIM: ${errMessage}`,
-        this.name,
-      );
     } finally {
       clearTimeout(timeoutId);
     }
@@ -431,34 +501,211 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       });
     }
 
-    let completionData: unknown;
-    try {
-      completionData = await rawResponse.json();
-    } catch {
-      throw new ProviderSchemaError(
-        "NVIDIA NIM returned invalid JSON payload.",
-        ["Invalid JSON payload from provider"],
-        this.name,
+    let content: string | null = null;
+    let finishReason: string | null = null;
+    let accumulatedReasoning = "";
+    let accumulatedContent = "";
+    let eventCount = 0;
+    let receivedDone = false;
+    let streamError: {
+      message?: string;
+      code?: unknown;
+      type?: string;
+    } | null = null;
+
+    const contentType = rawResponse.headers?.get?.("content-type") || "";
+    const isSse =
+      (contentType.includes("text/event-stream") ||
+        contentType.includes("event-stream")) &&
+      rawResponse.body &&
+      (typeof (rawResponse.body as any).getReader === "function" ||
+        typeof (rawResponse.body as any).read === "function");
+
+    if (isSse) {
+      // Streamed SSE parsing from NVIDIA NIM
+      const reader =
+        typeof (rawResponse.body as any).getReader === "function"
+          ? (rawResponse.body as any).getReader()
+          : (rawResponse.body as any);
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (
+              !trimmed ||
+              trimmed.startsWith(":") ||
+              !trimmed.startsWith("data:")
+            ) {
+              continue;
+            }
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr === "[DONE]") {
+              receivedDone = true;
+              break;
+            }
+
+            eventCount++;
+            try {
+              const chunk = JSON.parse(dataStr);
+
+              // 1. Check for stream-level error payload (e.g. vLLM internal 500)
+              if (chunk.error) {
+                streamError = chunk.error;
+                break;
+              }
+
+              const choice = chunk.choices?.[0];
+              if (choice?.finish_reason) {
+                finishReason = choice.finish_reason;
+              }
+
+              const delta = choice?.delta;
+              // 2. Accumulate internal reasoning separately (NOT treated as DSL)
+              const reasoningChunk =
+                delta?.reasoning_content || delta?.reasoning;
+              if (reasoningChunk) {
+                accumulatedReasoning += reasoningChunk;
+              }
+
+              // 3. Accumulate learner-facing Visual DSL content
+              if (delta?.content) {
+                accumulatedContent += delta.content;
+              }
+            } catch {
+              // Ignore non-JSON or partial line parse errors within stream
+            }
+          }
+
+          if (receivedDone || streamError) {
+            break;
+          }
+        }
+      } catch (streamReadErr) {
+        const msg =
+          streamReadErr instanceof Error
+            ? streamReadErr.message
+            : "Stream read aborted";
+        console.error(
+          `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} stream read error: ${msg}`,
+        );
+        throw new NvidiaIncompleteStreamError(
+          `NVIDIA NIM stream read error: ${msg}`,
+          this.name,
+        );
+      }
+
+      console.info(
+        `[COGNORA][AI][NVIDIA][STREAM] requestId=${requestId} eventCount=${eventCount} contentLen=${accumulatedContent.length} reasoningLen=${accumulatedReasoning.length} finishReason=${finishReason} receivedDone=${receivedDone}`,
       );
+
+      if (streamError) {
+        const errMsg =
+          streamError.message || "NVIDIA NIM internal stream error";
+        console.error(
+          `[COGNORA][AI][NVIDIA][ERROR] requestId=${requestId} streamError="${errMsg}"`,
+        );
+        throw new NvidiaStreamError(
+          `NVIDIA NIM returned stream error: ${errMsg}`,
+          "NVIDIA_STREAM_ERROR",
+          typeof streamError.code === "number" ? streamError.code : 502,
+          this.name,
+        );
+      }
+
+      if (finishReason === "length") {
+        throw new NvidiaOutputTruncatedError(
+          "NVIDIA NIM response was truncated because max_tokens ceiling was reached.",
+          this.name,
+        );
+      }
+
+      if (!receivedDone && !accumulatedContent.trim()) {
+        throw new NvidiaIncompleteStreamError(
+          "NVIDIA NIM stream terminated before completion without [DONE].",
+          this.name,
+        );
+      }
+
+      content = accumulatedContent.trim() || null;
+    } else {
+      // Standard JSON parsing (non-streaming and unit-test mock compatibility)
+      let completionData: unknown;
+      try {
+        completionData = await rawResponse.json();
+      } catch {
+        throw new NvidiaInvalidCompletionError(
+          "NVIDIA NIM returned invalid JSON payload.",
+          ["Invalid JSON payload from provider"],
+          this.name,
+        );
+      }
+
+      const typedCompletion = completionData as {
+        error?: { message?: string; code?: unknown };
+        choices?: Array<{
+          finish_reason?: string | null;
+          message?: {
+            content?: string | null;
+            reasoning?: string | null;
+            reasoning_content?: string | null;
+          };
+          delta?: {
+            content?: string | null;
+            reasoning_content?: string | null;
+          };
+        }>;
+      };
+
+      if (typedCompletion?.error) {
+        throw new ProviderError(
+          typedCompletion.error.message || "NVIDIA NIM error",
+          {
+            code: "UNKNOWN_PROVIDER_ERROR",
+            statusCode: 502,
+            retryable: false,
+            providerId: this.name,
+          },
+        );
+      }
+
+      const choice = typedCompletion?.choices?.[0];
+      if (choice?.finish_reason === "length") {
+        throw new NvidiaOutputTruncatedError(
+          "NVIDIA NIM response was truncated by output token limit.",
+          this.name,
+        );
+      }
+
+      const msg = choice?.message;
+      if (msg?.reasoning_content || msg?.reasoning) {
+        accumulatedReasoning = (
+          msg.reasoning_content ||
+          msg.reasoning ||
+          ""
+        ).trim();
+      }
+
+      // Isolate content: NEVER treat reasoning as content
+      content = isolateMessageContent(msg);
+      if (!content && choice?.delta?.content) {
+        content = choice.delta.content;
+      }
     }
 
-    const typedCompletion = completionData as {
-      choices?: Array<{
-        message?: {
-          content?: string | null;
-          reasoning?: string | null;
-          reasoning_content?: string | null;
-        };
-      }>;
-    };
-
-    const msg = typedCompletion?.choices?.[0]?.message;
-    const content = isolateMessageContent(msg);
-
-    if (!content) {
-      throw new ProviderSchemaError(
+    if (!content || content.trim().length === 0) {
+      throw new NvidiaEmptyCompletionError(
         "NVIDIA NIM returned empty completion content.",
-        ["Empty completion content in message.content"],
         this.name,
       );
     }

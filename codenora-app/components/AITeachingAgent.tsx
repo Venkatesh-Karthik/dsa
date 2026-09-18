@@ -36,8 +36,11 @@ import { extractSelectedElementsContext } from "../ai/selection-context";
 
 import {
   executeCommand,
+  executeUniversalCommand,
+  computeCanvasPlacement,
   getAutocompleteSuggestions,
   type AutocompleteSuggestion,
+  type CommandContext,
 } from "../ai/commands";
 import { detectUserIntent } from "../ai/intent-router";
 import {
@@ -96,6 +99,17 @@ import {
   CognoraConversation,
   type TeachingRequestState,
 } from "./CognoraConversation";
+import {
+  computeIntelligentOverlayPosition,
+  type ScreenRect,
+} from "./CognoraOverlayPlacement";
+import { SemanticTeachingCallout } from "./SemanticTeachingCallout";
+import { resolveSemanticFocus } from "./semantic-focus-resolver";
+import { computeLeaderLineGeometry } from "./leader-line-geometry";
+import {
+  deriveCompactGlimpse,
+  estimateGlimpseDimensions,
+} from "./glimpse-extractor";
 import { IconAlert, IconInspect, IconChevronRight } from "./CognoraIcons";
 
 import type {
@@ -209,6 +223,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   >([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
 
   // Selected elements & pending interactions on canvas
   const [selectedContext, setSelectedContext] = useState<
@@ -231,6 +246,60 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   } | null>(null);
   const learnerSessionRef = useRef<LearnerSession>(createLearnerSession());
 
+  // Manual directional repositioning offset for contextual explanation overlay
+  const [manualOverlayOffset, setManualOverlayOffset] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const previousOverlayPositionRef = useRef<{ x: number; y: number } | null>(
+    null,
+  );
+
+  // Reset manual offset override when lesson or transformation index changes
+  useEffect(() => {
+    setManualOverlayOffset(null);
+  }, [
+    transformationLesson?.lessonId,
+    transformationLesson?.currentTransformationIndex,
+  ]);
+
+  // Reset previous position when lesson changes
+  useEffect(() => {
+    previousOverlayPositionRef.current = null;
+  }, [transformationLesson?.lessonId]);
+
+  const handleMoveOverlayUp = useCallback(() => {
+    setManualOverlayOffset((prev) => ({
+      x: prev?.x ?? 0,
+      y: (prev?.y ?? 0) - 32,
+    }));
+  }, []);
+
+  const handleMoveOverlayDown = useCallback(() => {
+    setManualOverlayOffset((prev) => ({
+      x: prev?.x ?? 0,
+      y: (prev?.y ?? 0) + 32,
+    }));
+  }, []);
+
+  const handleMoveOverlayLeft = useCallback(() => {
+    setManualOverlayOffset((prev) => ({
+      x: (prev?.x ?? 0) - 32,
+      y: prev?.y ?? 0,
+    }));
+  }, []);
+
+  const handleMoveOverlayRight = useCallback(() => {
+    setManualOverlayOffset((prev) => ({
+      x: (prev?.x ?? 0) + 32,
+      y: prev?.y ?? 0,
+    }));
+  }, []);
+
+  const handleResetOverlay = useCallback(() => {
+    setManualOverlayOffset(null);
+  }, []);
+
   const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousSnapshotRef = useRef<Map<string, SemanticElementSnapshot>>(
     new Map(),
@@ -245,7 +314,19 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // Autocomplete updates
   useEffect(() => {
     if (inputValue.startsWith("/")) {
-      const suggestions = getAutocompleteSuggestions(inputValue);
+      const activeElements = excalidrawAPI?.getSceneElements?.() || [];
+      const suggestions = getAutocompleteSuggestions(inputValue, {
+        isDeveloperMode,
+        sceneElements: activeElements,
+        activeModel: (transformationLesson as any)?.model || null,
+        timeline: transformationLesson?.timeline || null,
+        playbackController: playbackControllerRef.current,
+        currentTransformationIndex:
+          transformationLesson?.currentTransformationIndex ?? 0,
+        selectedEntities: selectedContext.map((s) => s.dslId),
+        focusedEntityId: selectedContext[0]?.dslId || null,
+        history: messages.map((m) => m.content),
+      } as CommandContext);
       setAutocompleteSuggestions(suggestions);
       setSelectedSuggestionIndex(0);
       setShowAutocomplete(suggestions.length > 0);
@@ -253,7 +334,14 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       setShowAutocomplete(false);
       setAutocompleteSuggestions([]);
     }
-  }, [inputValue]);
+  }, [
+    inputValue,
+    isDeveloperMode,
+    excalidrawAPI,
+    transformationLesson,
+    selectedContext,
+    messages,
+  ]);
 
   // Cleanup playback and in-flight requests on unmount
   useEffect(() => {
@@ -768,8 +856,92 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   };
 
   // ============================================================================
-  // AI Prompt Submission & Slash Commands (Single Canonical Lifecycle)
+  // Universal Command Context & AI Prompt Submission (Single Canonical Lifecycle)
   // ============================================================================
+
+  const buildCommandContext = useCallback((): CommandContext => {
+    return {
+      excalidrawAPI,
+      sceneElements: excalidrawAPI?.getSceneElements?.() || [],
+      activeModel: (transformationLesson as any)?.model || null,
+      timeline: transformationLesson?.timeline || null,
+      playbackController: playbackControllerRef.current,
+      currentTransformationIndex:
+        transformationLesson?.currentTransformationIndex ?? 0,
+      activeStructure: null,
+      selectedEntities: selectedContext.map((s) => s.dslId),
+      focusedEntityId: selectedContext[0]?.dslId || null,
+      history: messages.map((m) => m.content),
+      isDeveloperMode,
+      applySemanticLesson: async (lesson, topic) => {
+        await startTransformationLesson(lesson, {
+          messageId: `cmd-${Date.now()}`,
+          topic: topic || lesson.concept || lesson.title,
+          prompt: topic || lesson.title,
+        });
+      },
+      invokeTeaching: async (teachPrompt) => {
+        await handleSubmit(teachPrompt, "command_teach");
+      },
+      navigatePlayback: (action, step) => {
+        if (action === "next") {
+          handleNextTransformation();
+        } else if (action === "previous") {
+          handlePreviousTransformation();
+        } else if (action === "play" || action === "pause") {
+          if (isLessonPlaying) {
+            playbackControllerRef.current?.pause();
+          } else {
+            playbackControllerRef.current?.play();
+          }
+        } else if (action === "step" && step !== undefined) {
+          handleJumpTransformation(step);
+        } else if (action === "replay") {
+          playbackControllerRef.current?.seek(0, true);
+        }
+      },
+      setFocus: (target) => {
+        const el = excalidrawAPI
+          ?.getSceneElements?.()
+          .find(
+            (e: any) =>
+              e.id === String(target) || e.customData?.dslId === String(target),
+          );
+        if (el) {
+          (excalidrawAPI as any)?.scrollToContent?.([el], {
+            animate: true,
+            fitToViewport: false,
+          });
+        }
+      },
+      undo: handleUndo,
+      redo: handleRedo,
+      reset: () => {
+        playbackControllerRef.current?.destroy();
+        playbackControllerRef.current = null;
+        setTransformationLesson(null);
+      },
+      clear: () => {
+        excalidrawAPI?.updateScene({ elements: [] });
+        setTransformationLesson(null);
+      },
+      openInspectorTab: (tab) => {
+        setContextualTab(tab as any);
+        setIsContextualPanelOpen(true);
+      },
+      togglePalette: (open) => {
+        setShowAutocomplete(open !== undefined ? open : (prev) => !prev);
+      },
+      origin: computeCanvasPlacement(excalidrawAPI?.getSceneElements?.() || []),
+    };
+  }, [
+    excalidrawAPI,
+    transformationLesson,
+    selectedContext,
+    messages,
+    isDeveloperMode,
+    isLessonPlaying,
+  ]);
 
   const handleSubmit = async (
     promptText: string,
@@ -802,32 +974,112 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     setErrorCode(null);
     setIsConversationMinimized(false);
 
-    // 3. Check for special slash commands or execute via DSA command executor
+    // 3. Intercept and execute slash commands via Universal Command System
     if (trimmed.startsWith("/")) {
-      if (trimmed === "/clear") {
-        excalidrawAPI.updateScene({ elements: [] });
-        setTransformationLesson(null);
-        activeRequestLockRef.current = null;
-        setRequestState("idle");
-        setInputValue("");
-        return;
-      }
-      if (trimmed === "/align") {
-        handleAutoAlign();
-        activeRequestLockRef.current = null;
-        setRequestState("idle");
-        setInputValue("");
-        return;
-      }
-      const cmdResult = executeCommand(
-        trimmed,
-        excalidrawAPI.getSceneElements(),
-      );
-      if (cmdResult.success && cmdResult.actions.length > 0) {
-        applyVisualActions(excalidrawAPI, cmdResult.actions, {
-          replacePreviousAI: false,
-          focusViewport: true,
+      const cmdContext = buildCommandContext();
+
+      // Support toggling developer mode
+      if (trimmed === "/dev" || trimmed === "/debug") {
+        setIsDeveloperMode((prev) => {
+          const next = !prev;
+          const msg: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: `Developer mode ${
+              next ? "enabled" : "disabled"
+            }. Advanced developer commands (/verify, /stress, /diff) are now ${
+              next ? "unlocked" : "hidden"
+            }.`,
+          };
+          setMessages((m) => [...m, msg]);
+          return next;
         });
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+
+      const cmdResult = await executeUniversalCommand(trimmed, cmdContext);
+
+      if (!cmdResult.success || cmdResult.status === "error") {
+        const errorText =
+          cmdResult.error || `Command execution failed for '${trimmed}'.`;
+        const userMsg: ChatMessage = {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: trimmed,
+        };
+        const assistantErrMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: `⚠️ ${errorText}`,
+        };
+        setMessages((prev) => [...prev, userMsg, assistantErrMsg]);
+        setErrorMessage(errorText);
+        setErrorCode("COMMAND_ERROR");
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+
+      // If command explicitly requests AI Teaching (e.g. /teach, /why, /explain, /trace)
+      if (cmdResult.executionClass === "TEACHING") {
+        promptText = cmdResult.message || trimmed;
+        // Proceed downstream to AI teaching request below
+      } else {
+        // Deterministic Zero-AI Command (LOCAL / SEMANTIC / DEVELOPER)
+        if (cmdResult.lesson) {
+          await startTransformationLesson(cmdResult.lesson, {
+            messageId: generationId,
+            topic: cmdResult.commandName,
+            prompt: trimmed,
+          });
+        } else if (cmdResult.actions && cmdResult.actions.length > 0) {
+          applyVisualActions(excalidrawAPI, cmdResult.actions, {
+            replacePreviousAI: false,
+            focusViewport: true,
+          });
+        }
+
+        if (cmdResult.uiAction) {
+          const { type, payload } = cmdResult.uiAction;
+          if (type === "FIT_VIEWPORT") {
+            (excalidrawAPI as any)?.scrollToContent?.(
+              excalidrawAPI.getSceneElements(),
+              {
+                fitToViewport: true,
+                animate: true,
+              },
+            );
+          } else if (type === "OPEN_INSPECTOR" || type === "SET_TAB") {
+            if (payload?.tab) {
+              setContextualTab(payload.tab);
+            }
+            setIsContextualPanelOpen(true);
+          } else if (type === "OPEN_PALETTE") {
+            setShowAutocomplete(true);
+          } else if (type === "CLOSE_PALETTE") {
+            setShowAutocomplete(false);
+          } else if (type === "CLEAR") {
+            excalidrawAPI?.updateScene({ elements: [] });
+            setTransformationLesson(null);
+          }
+        }
+
+        const userMsg: ChatMessage = {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: trimmed,
+        };
+        const assistantMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: cmdResult.message || `Executed /${cmdResult.commandName}`,
+        };
+        setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
         activeRequestLockRef.current = null;
         setRequestState("idle");
         setInputValue("");
@@ -1936,8 +2188,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     return undefined;
   })();
 
-  // Active Node Callout Pin (dynamically attached to active highlighted node on canvas)
-  const activeCallout = (() => {
+  // Contextual Teaching Glimpse Overlay Placement (minimal, placement-aware, avoids covering primary visual content)
+  const overlayPlacement = (() => {
     if (!transformationLesson || !excalidrawAPI || excalidrawAPI.isDestroyed) {
       return null;
     }
@@ -1945,122 +2197,112 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     const activeT =
       idx >= 0 ? transformationLesson.lesson.transformations[idx] : null;
 
-    if (!activeT) {
-      return null;
-    }
+    const rawTitle = activeT?.title || currentStepTitle || "";
+    const rawExpl = activeT?.explanation || currentExplanation || "";
 
-    const highlightTarget =
-      activeT.highlights && activeT.highlights.length > 0
-        ? activeT.highlights[0]
-        : null;
+    // Derive compact contextual glimpse dynamically
+    const derivedGlimpse = deriveCompactGlimpse({
+      title: rawTitle,
+      explanation: rawExpl,
+      whatChanged: derivedWhatChanged,
+      action: activeT?.operations?.[0]?.type,
+      topic: currentTopic,
+    });
 
-    if (!highlightTarget) {
+    if (!derivedGlimpse.title && !derivedGlimpse.glimpse) {
       return null;
     }
 
     try {
       const elements = excalidrawAPI.getSceneElements();
-      if (!elements || elements.length === 0) {
-        return null;
-      }
-      const targetEl = elements.find(
-        (el) =>
-          el.customData?.dslId === highlightTarget ||
-          el.customData?.nodeId === highlightTarget ||
-          el.id === highlightTarget ||
-          el.customData?.dslId?.endsWith(`-${highlightTarget}`),
+      const appState = excalidrawAPI.getAppState();
+      const containerRect = rootContainerRef.current?.getBoundingClientRect();
+      const containerW = containerRect?.width || window.innerWidth;
+      const containerH = containerRect?.height || window.innerHeight;
+
+      const selectedIds = selectedContext
+        .map((c) => c.dslId || c.label || "")
+        .filter(Boolean);
+
+      // Dynamically resolve semantic focus (primary and secondary target objects)
+      const semanticFocus = resolveSemanticFocus(
+        activeT,
+        elements,
+        selectedIds,
       );
 
-      if (!targetEl) {
-        return null;
-      }
+      const highlightTarget = semanticFocus.primaryTargetId;
 
-      const appState = excalidrawAPI.getAppState();
-      const zoom = appState.zoom.value;
+      // Estimate compact dimensions dynamically based on content length
+      const cardDimensions = estimateGlimpseDimensions(
+        derivedGlimpse,
+        containerW,
+      );
 
-      const containerRect = rootContainerRef.current?.getBoundingClientRect();
-      const containerW = containerRect
-        ? containerRect.width
-        : window.innerWidth;
-      const containerH = containerRect
-        ? containerRect.height
-        : window.innerHeight;
-
-      // Check if there are other scene elements directly above targetEl within 130px
-      const hasObstacleAbove = elements.some((other) => {
-        if (other.id === targetEl.id || other.isDeleted) {
-          return false;
-        }
-        const xOverlap = Math.max(
-          0,
-          Math.min(
-            targetEl.x + targetEl.width + 30,
-            other.x + other.width + 30,
-          ) - Math.max(targetEl.x - 30, other.x - 30),
-        );
-        if (xOverlap <= 0) {
-          return false;
-        }
-        const yDistAbove = targetEl.y - (other.y + other.height);
-        return yDistAbove >= -20 && yDistAbove <= 130;
+      const placementResult = computeIntelligentOverlayPosition({
+        containerRect: { width: containerW, height: containerH },
+        cardDimensions,
+        targetElementId: highlightTarget,
+        sceneElements: elements,
+        appState,
+        isInspectorOpen: isContextualPanelOpen,
+        manualOffset: manualOverlayOffset,
+        previousPosition: previousOverlayPositionRef.current,
       });
 
-      const rawScreenY = (targetEl.y + appState.scrollY) * zoom;
-      const nearTopBoundary = rawScreenY < 130;
+      previousOverlayPositionRef.current = {
+        x: placementResult.x,
+        y: placementResult.y,
+      };
 
-      let placement: "above" | "below" | "right" | "left" = "above";
-      let posX = (targetEl.x + targetEl.width / 2 + appState.scrollX) * zoom;
-      let posY = rawScreenY;
-
-      if (hasObstacleAbove || nearTopBoundary) {
-        const hasObstacleBelow = elements.some((other) => {
-          if (other.id === targetEl.id || other.isDeleted) {
-            return false;
-          }
-          const xOverlap = Math.max(
-            0,
-            Math.min(
-              targetEl.x + targetEl.width + 30,
-              other.x + other.width + 30,
-            ) - Math.max(targetEl.x - 30, other.x - 30),
-          );
-          if (xOverlap <= 0) {
-            return false;
-          }
-          const yDistBelow = other.y - (targetEl.y + targetEl.height);
-          return yDistBelow >= -20 && yDistBelow <= 130;
-        });
-        const nearBottomBoundary =
-          (targetEl.y + targetEl.height + appState.scrollY) * zoom >
-          containerH - 180;
-
-        if (!hasObstacleBelow && !nearBottomBoundary) {
-          placement = "below";
-          posY = (targetEl.y + targetEl.height + appState.scrollY) * zoom;
-        } else {
-          const nearRightBoundary =
-            (targetEl.x + targetEl.width + appState.scrollX) * zoom >
-            containerW - 280;
-          if (!nearRightBoundary) {
-            placement = "right";
-            posX = (targetEl.x + targetEl.width + appState.scrollX) * zoom;
-            posY = (targetEl.y + targetEl.height / 2 + appState.scrollY) * zoom;
-          } else {
-            placement = "left";
-            posX = (targetEl.x + appState.scrollX) * zoom;
-            posY = (targetEl.y + targetEl.height / 2 + appState.scrollY) * zoom;
-          }
+      // Calculate secondary target screen bounding boxes for subtle focus anchors
+      const secondaryTargetRects: ScreenRect[] = [];
+      const zoom = appState.zoom.value;
+      for (const sEl of semanticFocus.secondaryElements) {
+        if (sEl) {
+          const sLeft = (sEl.x + appState.scrollX) * zoom;
+          const sTop = (sEl.y + appState.scrollY) * zoom;
+          const sWidth = sEl.width * zoom;
+          const sHeight = sEl.height * zoom;
+          secondaryTargetRects.push({
+            left: sLeft,
+            top: sTop,
+            right: sLeft + sWidth,
+            bottom: sTop + sHeight,
+            width: sWidth,
+            height: sHeight,
+          });
         }
       }
 
+      // Compute dynamic leader line / stem geometry
+      const calloutScreenRect: ScreenRect = {
+        left: placementResult.x,
+        top: placementResult.y,
+        right: placementResult.x + cardDimensions.width,
+        bottom: placementResult.y + cardDimensions.height,
+        width: cardDimensions.width,
+        height: cardDimensions.height,
+      };
+
+      const leaderLine = placementResult.targetRect
+        ? computeLeaderLineGeometry(
+            calloutScreenRect,
+            placementResult.targetRect,
+            placementResult.placement,
+          )
+        : null;
+
       return {
-        x: posX,
-        y: posY,
-        placement,
-        title: ExplanationEngine.scrubMetadata(activeT.title),
-        subtitle: ExplanationEngine.scrubMetadata(
-          activeT.explanation || "Active element",
-        ).slice(0, 90),
+        ...placementResult,
+        title: derivedGlimpse.title,
+        glimpse: derivedGlimpse.glimpse,
+        cardWidth: cardDimensions.width,
+        cardHeight: cardDimensions.height,
+        targetRect: placementResult.targetRect,
+        secondaryTargetRects,
+        leaderLine,
+        isOverridden: manualOverlayOffset !== null,
       };
     } catch {
       return null;
@@ -2102,28 +2344,25 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         onToggleFullscreen={handleToggleFullscreen}
       />
 
-      {/* Dynamic Active Node Callout Pin */}
-      {activeCallout && (
-        <div
-          className={`cognora-node-callout cognora-node-callout--${activeCallout.placement}`}
-          style={{
-            left: `${activeCallout.x}px`,
-            top: `${activeCallout.y}px`,
+      {/* Dynamic Semantic Teaching Callout with Focus Anchors & Leader Line */}
+      {overlayPlacement && (
+        <SemanticTeachingCallout
+          title={overlayPlacement.title}
+          glimpse={overlayPlacement.glimpse}
+          placement={overlayPlacement.placement}
+          x={overlayPlacement.x}
+          y={overlayPlacement.y}
+          cardWidth={overlayPlacement.cardWidth}
+          cardHeight={overlayPlacement.cardHeight}
+          targetRect={overlayPlacement.targetRect}
+          secondaryTargetRects={overlayPlacement.secondaryTargetRects}
+          leaderLine={overlayPlacement.leaderLine}
+          onOpenInspector={() => {
+            setContextualTab("explain");
+            setIsContextualPanelOpen(true);
           }}
-        >
-          <div className="cognora-node-callout__card">
-            <div className="cognora-node-callout__title">
-              {activeCallout.title}
-            </div>
-            <div className="cognora-node-callout__subtitle">
-              {activeCallout.subtitle}
-            </div>
-          </div>
-          <svg className="cognora-node-callout__caret" viewBox="0 0 16 8">
-            <polygon points="0,0 16,0 8,8" />
-          </svg>
-          <div className="cognora-node-callout__pin" />
-        </div>
+          isInspectorOpen={isContextualPanelOpen}
+        />
       )}
 
       {/* Dedicated Floating Bottom Control Region (Layer 4 & Layer 5) */}
@@ -2182,6 +2421,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           showAutocomplete={showAutocomplete}
           autocompleteSuggestions={autocompleteSuggestions}
           selectedSuggestionIndex={selectedSuggestionIndex}
+          commandContext={buildCommandContext()}
           onSelectSuggestion={(sug) => {
             setInputValue(`/${sug.name} `);
             setShowAutocomplete(false);
@@ -2245,6 +2485,19 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               "analyze",
               "practice",
             ]
+          }
+          overlayControls={
+            overlayPlacement
+              ? {
+                  canMove: true,
+                  onMoveUp: handleMoveOverlayUp,
+                  onMoveDown: handleMoveOverlayDown,
+                  onMoveLeft: handleMoveOverlayLeft,
+                  onMoveRight: handleMoveOverlayRight,
+                  onResetAuto: handleResetOverlay,
+                  isOverridden: Boolean(manualOverlayOffset),
+                }
+              : undefined
           }
         />
       )}
