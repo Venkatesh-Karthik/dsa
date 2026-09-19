@@ -586,6 +586,22 @@ export class ConceptualJourneyOptimizer {
       return false;
     }
 
+    // RULE 1C: Never merge discrete mutations or algorithmic transitions across separate steps
+    // (e.g. separate inserts, separate deletes, compare vs swap, pivot vs partition, visit vs relax)
+    const textA = `${milestoneA.title} ${milestoneA.explanation}`.toLowerCase();
+    const textB = `${stepB.title} ${stepB.explanation}`.toLowerCase();
+    const isMutationA =
+      /\b(insert|delete|remove|add|push|pop|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
+        textA,
+      );
+    const isMutationB =
+      /\b(insert|delete|remove|add|push|pop|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
+        textB,
+      );
+    if (isMutationA && isMutationB) {
+      return false;
+    }
+
     // RULE 2: Never merge across Diagnosis / Perturbation boundaries
     // The learner must see: Perturbation (Input) -> Problem Diagnosed -> Mechanism Applied
     if (roleA === "perturbation" && roleB === "diagnosis") {

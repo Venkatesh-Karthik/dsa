@@ -56,13 +56,44 @@ export class SemanticCommandRunner {
       }
     }
 
-    // Inspect activeModel world entities to derive active structure
+    // Inspect activeModel, timeline, or scene elements to derive active structure
     const model = context.activeModel;
-    if (!model || !model.world || model.world.entities.length === 0) {
-      return null;
+    let entities: any[] = [];
+    if (model && model.world && model.world.entities.length > 0) {
+      entities = model.world.entities;
+    } else if (context.timeline && context.timeline.states.length > 0) {
+      const curState =
+        context.timeline.states[context.currentTransformationIndex] ||
+        context.timeline.states[0];
+      if (curState && curState.graph) {
+        entities = Array.from(curState.graph.entities.values()).map((e) => ({
+          id: e.id,
+          type: e.primitiveType,
+          label: e.label,
+          value: e.value ?? e.label,
+          properties: e.properties,
+        }));
+      }
+    } else if (context.sceneElements && context.sceneElements.length > 0) {
+      const activeEl = context.sceneElements.filter((e) => !e.isDeleted);
+      for (const el of activeEl) {
+        const dslId = (el.customData as any)?.dslId || el.id;
+        const concept = (el.customData as any)?.conceptType || "array";
+        const val = (el.customData as any)?.value ?? (el as any).text;
+        if (val !== undefined) {
+          entities.push({
+            id: dslId,
+            type: concept,
+            value: val,
+            properties: { containerId: concept },
+          });
+        }
+      }
     }
 
-    const entities = model.world.entities;
+    if (entities.length === 0) {
+      return null;
+    }
     const containers = new Map<
       string,
       { type: string; elements: (number | string)[] }
@@ -286,6 +317,7 @@ export class SemanticCommandRunner {
 
       const result = await this.executeCreate(parsedSub, context);
       result.commandName = cmd;
+      result.riskLevel = "MODIFY";
       result.historyEntry = `Insert ${val} into ${targetType}`;
       result.message = `Successfully inserted ${val} into ${targetType}.`;
       result.affectedEntities = [`node-${val}`, `cell-${val}`, `val-${val}`];
@@ -294,17 +326,42 @@ export class SemanticCommandRunner {
     }
 
     if (cmd === "delete" || cmd === "remove") {
-      if (val === undefined) {
-        throw new Error(`Invalid /${cmd} command. Expected a value to delete.`);
+      let targetVal: string | number | undefined = val;
+      if (targetVal === undefined) {
+        if (context.selectedEntities && context.selectedEntities.length > 0) {
+          const selected = context.selectedEntities[0];
+          const numMatch = String(selected).match(/(\d+)/);
+          targetVal = numMatch ? Number(numMatch[1]) : selected;
+        } else if (context.focusedEntityId) {
+          const numMatch = String(context.focusedEntityId).match(/(\d+)/);
+          targetVal = numMatch ? Number(numMatch[1]) : context.focusedEntityId;
+        }
       }
 
-      const idx = currentElements.indexOf(val);
-      if (idx === -1) {
-        throw new Error(`Value ${val} not found in current ${targetType}.`);
+      if (targetVal === undefined) {
+        throw new Error(
+          `Invalid /${cmd} command. Expected a value or selected entity to delete.`,
+        );
       }
 
-      currentElements.splice(idx, 1);
-      const topic = `Delete ${val} from ${targetType}`;
+      const idx = currentElements.indexOf(targetVal);
+      const resolvedIdx =
+        idx !== -1
+          ? idx
+          : currentElements.findIndex(
+              (e) =>
+                String(e) === String(targetVal) ||
+                Number(e) === Number(targetVal),
+            );
+
+      if (resolvedIdx === -1) {
+        throw new Error(
+          `Value ${targetVal} not found in current ${targetType}.`,
+        );
+      }
+
+      currentElements.splice(resolvedIdx, 1);
+      const topic = `Delete ${targetVal} from ${targetType}`;
 
       const parsedSub = {
         ...parsed,
@@ -315,8 +372,9 @@ export class SemanticCommandRunner {
 
       const result = await this.executeCreate(parsedSub, context);
       result.commandName = cmd;
-      result.historyEntry = `Delete ${val} from ${targetType}`;
-      result.message = `Successfully removed ${val} from ${targetType}.`;
+      result.riskLevel = "MODIFY";
+      result.historyEntry = `Delete ${targetVal} from ${targetType}`;
+      result.message = `Successfully removed ${targetVal} from ${targetType}.`;
       return result;
     }
 

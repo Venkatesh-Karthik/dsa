@@ -26,6 +26,7 @@ export interface SemanticTeachingCalloutProps {
   cardHeight?: number;
   targetRect?: ScreenRect | null;
   secondaryTargetRects?: ScreenRect[];
+  showSecondaryAnchors?: boolean;
   leaderLine?: LeaderLineGeometry | null;
   onOpenInspector: () => void;
   isInspectorOpen?: boolean;
@@ -41,6 +42,7 @@ export const SemanticTeachingCallout: React.FC<
   y,
   targetRect,
   secondaryTargetRects = [],
+  showSecondaryAnchors = false,
   leaderLine,
   onOpenInspector,
   isInspectorOpen = false,
@@ -69,23 +71,24 @@ export const SemanticTeachingCallout: React.FC<
         />
       )}
 
-      {secondaryTargetRects.map((sRect, idx) => (
-        <div
-          key={`secondary-anchor-${idx}`}
-          className="cognora-focus-anchor cognora-focus-anchor--secondary"
-          style={{
-            position: "absolute",
-            left: `${sRect.left - 3}px`,
-            top: `${sRect.top - 3}px`,
-            width: `${sRect.width + 6}px`,
-            height: `${sRect.height + 6}px`,
-            pointerEvents: "none",
-            borderRadius: "8px",
-            zIndex: 21,
-          }}
-          aria-hidden="true"
-        />
-      ))}
+      {showSecondaryAnchors &&
+        secondaryTargetRects.map((sRect, idx) => (
+          <div
+            key={`secondary-anchor-${idx}`}
+            className="cognora-focus-anchor cognora-focus-anchor--secondary"
+            style={{
+              position: "absolute",
+              left: `${sRect.left - 3}px`,
+              top: `${sRect.top - 3}px`,
+              width: `${sRect.width + 6}px`,
+              height: `${sRect.height + 6}px`,
+              pointerEvents: "none",
+              borderRadius: "8px",
+              zIndex: 21,
+            }}
+            aria-hidden="true"
+          />
+        ))}
 
       {/* 2. Dynamic SVG Leader Line / Stem connecting Callout to Target */}
       {leaderLine && (

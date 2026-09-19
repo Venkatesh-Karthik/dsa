@@ -145,13 +145,59 @@ export function resolveSemanticFocus(
   const secondaryCandidates: string[] = [];
   let focusReason = "fallback";
 
+  // Strategy 0: Explicit SemanticFocus (First-class TeachingMoment abstraction)
+  const explicitFocus = (transformation as any).semanticFocus;
+  if (explicitFocus && typeof explicitFocus === "object") {
+    if (
+      Array.isArray(explicitFocus.entityIds) &&
+      explicitFocus.entityIds.length > 0
+    ) {
+      for (let i = 0; i < explicitFocus.entityIds.length; i++) {
+        const idStr = String(explicitFocus.entityIds[i]);
+        if (i === 0) {
+          primaryCandidates.push(idStr);
+        } else if (!secondaryCandidates.includes(idStr)) {
+          secondaryCandidates.push(idStr);
+        }
+      }
+      if (primaryCandidates.length > 0) {
+        focusReason = "explicit_semantic_focus_entity";
+      }
+    } else if (
+      Array.isArray(explicitFocus.relationshipIds) &&
+      explicitFocus.relationshipIds.length > 0
+    ) {
+      for (let i = 0; i < explicitFocus.relationshipIds.length; i++) {
+        const idStr = String(explicitFocus.relationshipIds[i]);
+        if (i === 0) {
+          primaryCandidates.push(idStr);
+        } else if (!secondaryCandidates.includes(idStr)) {
+          secondaryCandidates.push(idStr);
+        }
+      }
+      if (primaryCandidates.length > 0) {
+        focusReason = "explicit_semantic_focus_relationship";
+      }
+    }
+  }
+
   // Strategy 1: Explicit transformation highlights
-  if (transformation.highlights && transformation.highlights.length > 0) {
-    for (const h of transformation.highlights) {
+  if (
+    primaryCandidates.length === 0 &&
+    transformation.highlights &&
+    transformation.highlights.length > 0
+  ) {
+    for (let i = 0; i < transformation.highlights.length; i++) {
+      const h = transformation.highlights[i];
       const hId =
         typeof h === "string" ? h : (h as any).id || (h as any).target;
-      if (hId && !primaryCandidates.includes(hId)) {
-        primaryCandidates.push(String(hId));
+      if (hId) {
+        const idStr = String(hId);
+        if (i === 0) {
+          primaryCandidates.push(idStr);
+        } else if (!secondaryCandidates.includes(idStr)) {
+          secondaryCandidates.push(idStr);
+        }
       }
     }
     if (primaryCandidates.length > 0) {
@@ -228,21 +274,100 @@ export function resolveSemanticFocus(
     }`;
     const scrubbedCorpus = ExplanationEngine.scrubMetadata(textCorpus);
 
-    // Extract potential values / labels mentioned (numbers, single capital letters, quoted labels)
-    const matches = scrubbedCorpus.match(
-      /(?:(?:node|element|value|pivot|insert|delete|relax)\s+)?\b([A-Z]|\d+)\b/gi,
-    );
-    if (matches && sceneElements && sceneElements.length > 0) {
-      for (const m of matches) {
-        const token = m
-          .replace(/^(?:node|element|value|pivot|insert|delete|relax)\s+/i, "")
-          .trim();
-        const el = resolveElementInScene(token, sceneElements);
-        if (el) {
-          const elId = (el.customData?.dslId as string) || el.id;
-          if (!primaryCandidates.includes(elId)) {
+    if (sceneElements && sceneElements.length > 0) {
+      // 3A: First check for action-bound entity mentions (e.g., "node 10", "pivot 40", "insert 25")
+      const actionMatches = scrubbedCorpus.match(
+        /(?:node|element|value|pivot|insert|delete|relax)\s+\b([A-Z]|\d+)\b/gi,
+      );
+      if (actionMatches) {
+        for (const m of actionMatches) {
+          const token = m
+            .replace(
+              /^(?:node|element|value|pivot|insert|delete|relax)\s+/i,
+              "",
+            )
+            .trim();
+          const el = resolveElementInScene(token, sceneElements);
+          if (el) {
+            const elId = (el.customData?.dslId as string) || el.id;
             primaryCandidates.push(elId);
-            focusReason = "semantic_text_entity";
+            focusReason = "semantic_text_action_entity";
+            break; // Exactly one primary focus target from action mention
+          }
+        }
+      }
+
+      // 3B: If no action-bound match, pick only the first general matching entity token
+      if (primaryCandidates.length === 0) {
+        const generalMatches = scrubbedCorpus.match(/\b([A-Z]|\d+)\b/g);
+        if (generalMatches) {
+          for (const m of generalMatches) {
+            const el = resolveElementInScene(m.trim(), sceneElements);
+            if (el) {
+              const elId = (el.customData?.dslId as string) || el.id;
+              primaryCandidates.push(elId);
+              focusReason = "semantic_text_entity";
+              break; // Stop after first valid matching token
+            }
+          }
+        }
+      }
+
+      // 3C: Secondary entity resolution from relational prose
+      // Exclude bracketed lists (e.g. [10 -> 25 -> 40]) to avoid spurious secondary highlights on whole data structures
+      if (primaryCandidates.length > 0 && secondaryCandidates.length === 0) {
+        const nonListCorpus = scrubbedCorpus
+          .replace(/\[[^\]]*\]/g, "")
+          .replace(/(?:\b[A-Z\d]+\b\s*->\s*)+\b[A-Z\d]+\b/g, "");
+
+        // Look for relational terms first: "child of 25", "parent 30", "swap with 15", "neighbor B"
+        const relMatches = nonListCorpus.match(
+          /(?:child\s+of|parent\s+of|neighbor\s+of|swap\s+with|connected\s+to|after|before)\s+\b([A-Z]|\d+)\b/gi,
+        );
+        if (relMatches) {
+          for (const rm of relMatches) {
+            const token = rm
+              .replace(
+                /^(?:child\s+of|parent\s+of|neighbor\s+of|swap\s+with|connected\s+to|after|before)\s+/i,
+                "",
+              )
+              .trim();
+            const el = resolveElementInScene(token, sceneElements);
+            if (el) {
+              const elId = (el.customData?.dslId as string) || el.id;
+              if (
+                !primaryCandidates.includes(elId) &&
+                !secondaryCandidates.includes(elId)
+              ) {
+                secondaryCandidates.push(elId);
+                break;
+              }
+            }
+          }
+        }
+
+        // Fallback: if prose explanation mentions another distinct entity
+        if (secondaryCandidates.length === 0 && transformation.explanation) {
+          const explClean = ExplanationEngine.scrubMetadata(
+            transformation.explanation,
+          )
+            .replace(/\[[^\]]*\]/g, "")
+            .replace(/(?:\b[A-Z\d]+\b\s*->\s*)+\b[A-Z\d]+\b/g, "");
+          const explTokens = explClean.match(/\b([A-Z]|\d+)\b/g);
+          if (explTokens) {
+            for (const t of explTokens) {
+              const el = resolveElementInScene(t.trim(), sceneElements);
+              if (el) {
+                const elId = (el.customData?.dslId as string) || el.id;
+                if (
+                  !primaryCandidates.includes(elId) &&
+                  !secondaryCandidates.includes(elId)
+                ) {
+                  secondaryCandidates.push(elId);
+                  break;
+                }
+              }
+            }
           }
         }
       }
@@ -264,10 +389,9 @@ export function resolveSemanticFocus(
 
   const primaryTargetId =
     primaryCandidates.length > 0 ? primaryCandidates[0] : null;
-  const secondaryTargetIds = [
-    ...primaryCandidates.slice(1),
-    ...secondaryCandidates,
-  ].filter((id) => id !== primaryTargetId);
+  const secondaryTargetIds = secondaryCandidates.filter(
+    (id) => id !== primaryTargetId,
+  );
 
   // Resolve to actual Excalidraw scene elements
   const primaryElement = primaryTargetId

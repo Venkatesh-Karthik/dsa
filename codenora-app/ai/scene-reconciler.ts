@@ -623,6 +623,7 @@ export function reconcileSceneState(
   for (const el of unmanagedElements) {
     if (
       el.customData?.isAiTeaching ||
+      el.customData?.isDiagnostic ||
       (lessonId && el.customData?.lessonId === lessonId)
     ) {
       if (!el.isDeleted) {
@@ -712,8 +713,38 @@ export function reconcileSceneState(
 
   const finalSynchronized = syncInvalidIndices(deduplicated);
 
+  // Guarantee all rendered Excalidraw elements have strictly finite coordinates and positive dimensions
+  const sanitizedElements = finalSynchronized.map((el) => {
+    let changed = false;
+    let newX = el.x;
+    let newY = el.y;
+    let newW = el.width;
+    let newH = el.height;
+
+    if (!Number.isFinite(el.x)) {
+      newX = 100;
+      changed = true;
+    }
+    if (!Number.isFinite(el.y)) {
+      newY = 100;
+      changed = true;
+    }
+    if (!Number.isFinite(el.width) || el.width < 0) {
+      newW = 60;
+      changed = true;
+    }
+    if (!Number.isFinite(el.height) || el.height < 0) {
+      newH = 60;
+      changed = true;
+    }
+
+    return changed
+      ? newElementWith(el, { x: newX, y: newY, width: newW, height: newH })
+      : el;
+  });
+
   return {
-    elements: finalSynchronized,
+    elements: sanitizedElements,
     entityElementMap,
     primaryElementMap,
   };

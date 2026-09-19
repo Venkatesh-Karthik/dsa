@@ -15,7 +15,13 @@
  * Canvas is the HERO. All timeline steps and code navigation execute 100% locally.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
@@ -70,21 +76,43 @@ import {
   type LearnerSession,
 } from "../ai/learner-model";
 import { UniversalConceptIntelligenceEngine } from "../ai/universal-engine";
-import { type AuthoritativeSemanticModel } from "../ai/authoritative-model";
 import { ExplanationEngine } from "../ai/explanation-engine";
-
-import "./AITeachingAgent.scss";
-
-// Stage Design Components
-import { CognoraHeader } from "./CognoraHeader";
+import { VoiceExplanationEngine } from "../ai/voice/voice-explanation-engine";
+import { detectHandwritingCommand } from "../ai/commands/handwriting-command-detector";
+import { validatePreRenderElements } from "../ai/visual-validation";
+import { CognoraDiagnostics } from "../ai/transformation-diagnostics";
 import {
-  CognoraDrawingToolbar,
-  type DrawingToolType,
-} from "./CognoraDrawingToolbar";
-import { CognoraAIComposer } from "./CognoraAIComposer";
-import { CognoraTimeline } from "./CognoraTimeline";
+  getCommandRiskLevel,
+  getCommandConfirmationPolicy,
+} from "../ai/commands/command-registry";
+import { parseNaturalLanguageToCommand } from "../ai/intent-router";
+import { AudioAnalyzer } from "../ai/voice/audio-analyzer";
+import { SpeechDirector } from "../ai/voice/speech-director";
+import { isVisualDebugEnabled } from "../ai/visual-reasoning/debug-diagnostics";
+
+import { resolveSemanticFocus } from "./semantic-focus-resolver";
+import { computeLeaderLineGeometry } from "./leader-line-geometry";
+import {
+  deriveCompactGlimpse,
+  estimateGlimpseDimensions,
+} from "./glimpse-extractor";
+import { IconAlert, IconInspect, IconChevronRight } from "./CognoraIcons";
+import { CognoraErrorBoundary } from "./CognoraErrorBoundary";
+import { CognoraCommandPreview } from "./CognoraCommandPreview";
+import { SemanticTeachingCallout } from "./SemanticTeachingCallout";
+import {
+  computeIntelligentOverlayPosition,
+  type ScreenRect,
+} from "./CognoraOverlayPlacement";
+import {
+  CognoraConversation,
+  type TeachingRequestState,
+} from "./CognoraConversation";
+import { CognoraZoomControls } from "./CognoraZoomControls";
+import { CognoraToolsPalette } from "./CognoraToolsPalette";
 import {
   CognoraContextualPanel,
+  DEFAULT_PANEL_CAPABILITIES,
   type PanelTabType,
   type AnalyzeModel,
   type ExplainModel,
@@ -93,25 +121,24 @@ import {
   type ContextProperty,
   type ContextAction,
 } from "./CognoraContextualPanel";
-import { CognoraToolsPalette } from "./CognoraToolsPalette";
-import { CognoraZoomControls } from "./CognoraZoomControls";
+import { CognoraTimeline } from "./CognoraTimeline";
+import { CognoraAIComposer } from "./CognoraAIComposer";
 import {
-  CognoraConversation,
-  type TeachingRequestState,
-} from "./CognoraConversation";
-import {
-  computeIntelligentOverlayPosition,
-  type ScreenRect,
-} from "./CognoraOverlayPlacement";
-import { SemanticTeachingCallout } from "./SemanticTeachingCallout";
-import { resolveSemanticFocus } from "./semantic-focus-resolver";
-import { computeLeaderLineGeometry } from "./leader-line-geometry";
-import {
-  deriveCompactGlimpse,
-  estimateGlimpseDimensions,
-} from "./glimpse-extractor";
-import { IconAlert, IconInspect, IconChevronRight } from "./CognoraIcons";
+  CognoraDrawingToolbar,
+  type DrawingToolType,
+} from "./CognoraDrawingToolbar";
+import { CognoraHeader } from "./CognoraHeader";
+import { CognoraVoiceOrb, type VoiceOrbState } from "./CognoraVoiceOrb";
 
+import "./AITeachingAgent.scss";
+
+import type { TeachingMoment } from "../ai/teaching-moment";
+import type { CommandRiskLevel } from "../ai/commands/command-types";
+import type { AuthoritativeSemanticModel } from "../ai/authoritative-model";
+import type {
+  VoiceExplanationContext,
+  VoiceState,
+} from "../ai/voice/voice-contract";
 import type {
   VisualAction,
   TeachingStep,
@@ -179,23 +206,39 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // Zoom & Viewport state (fraction: 1 = 100%)
   const [zoomValue, setZoomValue] = useState(1);
 
+  // Viewport version counter: increments on ANY scroll/zoom change (including during playback).
+  // This is the only mechanism that causes overlayPlacement to recompute after pan/zoom,
+  // since overlayPlacement reads excalidrawAPI.getAppState() live at render time.
+  // Important: prevViewportRef is a ref (not state), so updating it never causes additional renders.
+  const [viewportVersion, setViewportVersion] = useState(0);
+  const prevViewportRef = useRef({ scrollX: 0, scrollY: 0, zoom: 1 });
+
   // Lessons State
   const [transformationLesson, setTransformationLesson] =
     useState<TransformationLesson | null>(null);
+  const transformationLessonRef = useRef<TransformationLesson | null>(
+    transformationLesson,
+  );
+  transformationLessonRef.current = transformationLesson;
   const [authoritativeModel, setAuthoritativeModel] =
     useState<AuthoritativeSemanticModel | null>(null);
   const [isLessonPlaying, setIsLessonPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
+  const panelCapabilities = useMemo(() => {
+    return (
+      (transformationLesson?.lesson.capabilities as PanelTabType[]) ||
+      DEFAULT_PANEL_CAPABILITIES
+    );
+  }, [transformationLesson?.lesson.capabilities]);
+
   // Synchronize active tab with available capabilities
   useEffect(() => {
-    const caps = transformationLesson?.lesson.capabilities as
-      | PanelTabType[]
-      | undefined;
+    const caps = panelCapabilities;
     if (caps && caps.length > 0 && !caps.includes(contextualTab)) {
       setContextualTab(caps[0]);
     }
-  }, [transformationLesson?.lesson.capabilities, contextualTab]);
+  }, [panelCapabilities, contextualTab]);
 
   // AI & Chat request state machine
   const [inputValue, setInputValue] = useState("");
@@ -211,6 +254,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const currentAbortControllerRef = useRef<AbortController | null>(null);
   const currentRequestIdRef = useRef<string | null>(null);
   const lastFailedPromptRef = useRef<string | null>(null);
+  const handleSubmitRef = useRef<
+    (promptText: string, userAction?: string) => Promise<void>
+  >(async () => {});
 
   const isTeachingRequestActive =
     requestState === "sending" ||
@@ -229,6 +275,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const [selectedContext, setSelectedContext] = useState<
     SelectedSemanticElement[]
   >([]);
+  const selectedContextRef = useRef<SelectedSemanticElement[]>(selectedContext);
+  selectedContextRef.current = selectedContext;
   const [inspectedActionExplanation, setInspectedActionExplanation] = useState<{
     title: string;
     content: string;
@@ -245,6 +293,26 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     message?: string;
   } | null>(null);
   const learnerSessionRef = useRef<LearnerSession>(createLearnerSession());
+
+  // Last-Known-Good scene reference to guarantee canvas is never left blank or corrupted
+  const lastKnownGoodElementsRef = useRef<readonly any[]>([]);
+
+  // Liquid Glass Command Preview state (typed confirmation, handwriting preview, ambiguous targets)
+  const [commandPreview, setCommandPreview] = useState<{
+    isOpen: boolean;
+    command: string;
+    riskLevel: CommandRiskLevel;
+    targetDescription?: string;
+    semanticEffect?: string;
+    didYouMean?: string;
+    candidateTargets?: Array<{ id: string; label: string; type: string }>;
+    selectedTargetId?: string;
+    position?: { x: number; y: number };
+    onConfirm: () => void;
+  } | null>(null);
+  const commandPreviewRef = useRef(commandPreview);
+  commandPreviewRef.current = commandPreview;
+  const lastDetectedHandwritingRef = useRef<string | null>(null);
 
   // Manual directional repositioning offset for contextual explanation overlay
   const [manualOverlayOffset, setManualOverlayOffset] = useState<{
@@ -300,6 +368,16 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     setManualOverlayOffset(null);
   }, []);
 
+  const handleTabChange = useCallback((tab: PanelTabType) => {
+    setContextualTab(tab);
+    if (learnerSessionRef.current) {
+      recordInteraction(learnerSessionRef.current, {
+        action: "open_tab",
+        tab,
+      });
+    }
+  }, []);
+
   const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previousSnapshotRef = useRef<Map<string, SemanticElementSnapshot>>(
     new Map(),
@@ -309,6 +387,78 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // Derive ownerDocument & ownerWindow from rootContainerRef per user guidelines
   const getOwnerDoc = useCallback((): Document => {
     return rootContainerRef.current?.ownerDocument || document;
+  }, []);
+
+  const getOwnerWindow = useCallback((): Window => {
+    return (
+      (excalidrawAPI as any)?.app?.ownerWindow ||
+      rootContainerRef.current?.ownerDocument?.defaultView ||
+      window
+    );
+  }, [excalidrawAPI]);
+
+  // Voice Explanation Foundation & Synchronization
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState<boolean>(true);
+  const isVoiceEnabledRef = useRef(isVoiceEnabled);
+  isVoiceEnabledRef.current = isVoiceEnabled;
+  const voiceEngineRef = useRef<VoiceExplanationEngine>(
+    VoiceExplanationEngine.getInstance(),
+  );
+  const playbackControllerRef = useRef<LessonPlaybackController | null>(null);
+
+  const handleToggleVoice = useCallback(() => {
+    setIsVoiceEnabled((prev) => {
+      const next = !prev;
+      playbackControllerRef.current?.setVoiceEnabled(next);
+      return next;
+    });
+  }, []);
+
+  const audioAnalyzerRef = useRef<AudioAnalyzer | null>(null);
+  if (!audioAnalyzerRef.current && typeof window !== "undefined") {
+    audioAnalyzerRef.current = new AudioAnalyzer();
+  }
+
+  useEffect(() => {
+    return () => {
+      audioAnalyzerRef.current?.destroy();
+      audioAnalyzerRef.current = null;
+    };
+  }, []);
+
+  const voiceOrbState: VoiceOrbState = useMemo(() => {
+    if (voiceState === "error") {
+      return "ERROR";
+    }
+    if (voiceState === "speaking") {
+      return "SPEAKING";
+    }
+    if (voiceState === "preparing") {
+      return "THINKING";
+    }
+    const controllerState = playbackControllerRef.current?.getState();
+    if (controllerState?.status === "PAUSED") {
+      return "PAUSED";
+    }
+    if (
+      controllerState &&
+      controllerState.currentIndex >= controllerState.totalSteps - 1 &&
+      controllerState.status !== "PLAYING"
+    ) {
+      return "COMPLETED";
+    }
+    return "IDLE";
+  }, [voiceState, isLessonPlaying]);
+
+  useEffect(() => {
+    const engine = voiceEngineRef.current;
+    const unsubscribe = engine.subscribe((state) => {
+      setVoiceState(state);
+    });
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Autocomplete updates
@@ -331,8 +481,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       setSelectedSuggestionIndex(0);
       setShowAutocomplete(suggestions.length > 0);
     } else {
-      setShowAutocomplete(false);
-      setAutocompleteSuggestions([]);
+      setShowAutocomplete((prev) => (prev ? false : prev));
+      setAutocompleteSuggestions((prev) => (prev.length > 0 ? [] : prev));
     }
   }, [
     inputValue,
@@ -377,9 +527,46 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     }
 
     const unsubscribe = excalidrawAPI.onChange((elements, appState) => {
-      if (appState?.zoom?.value) {
-        setZoomValue(appState.zoom.value);
+      // ── VIEWPORT TRACKING ──────────────────────────────────────────────────────
+      // Must happen BEFORE the playback early-return so that pan/zoom during playback
+      // still triggers a re-render and the semantic focus overlay follows the canvas.
+      if (appState) {
+        const prev = prevViewportRef.current;
+        const newScrollX = appState.scrollX ?? prev.scrollX;
+        const newScrollY = appState.scrollY ?? prev.scrollY;
+        const newZoom = appState.zoom?.value ?? prev.zoom;
+        if (
+          newScrollX !== prev.scrollX ||
+          newScrollY !== prev.scrollY ||
+          newZoom !== prev.zoom
+        ) {
+          prevViewportRef.current = {
+            scrollX: newScrollX,
+            scrollY: newScrollY,
+            zoom: newZoom,
+          };
+          setViewportVersion((v) => v + 1);
+        }
+        // Also keep zoomValue in sync for the zoom controls display
+        if (newZoom !== prev.zoom) {
+          setZoomValue(newZoom);
+        }
       }
+      // ── END VIEWPORT TRACKING ──────────────────────────────────────────────────
+
+      const playbackStatus = playbackControllerRef.current?.getStatus();
+      if (
+        isApplyingVisualsRef.current ||
+        playbackStatus === "TRANSITIONING" ||
+        playbackStatus === "PLAYING"
+      ) {
+        if (elements && elements.length > 0) {
+          previousSnapshotRef.current = createSemanticSnapshot(elements);
+        }
+        return;
+      }
+
+      // Non-playback zoom sync is now handled in the viewport tracking block above
 
       // Sync active tool
       const currentTool = appState?.activeTool?.type;
@@ -397,19 +584,26 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           elements,
           appState.selectedElementIds,
         );
-        setSelectedContext(extracted);
-      } else {
+        const prev = selectedContextRef.current;
+        if (prev.length === 0 && extracted.length === 0) {
+          // Both empty, no change
+        } else if (
+          prev.length === extracted.length &&
+          prev.every(
+            (p, idx) =>
+              p.dslId === extracted[idx].dslId &&
+              p.type === extracted[idx].type &&
+              p.label === extracted[idx].label,
+          )
+        ) {
+          // Identical selection, no change
+        } else {
+          selectedContextRef.current = extracted;
+          setSelectedContext(extracted);
+        }
+      } else if (selectedContextRef.current.length > 0) {
+        selectedContextRef.current = [];
         setSelectedContext([]);
-      }
-
-      const playbackStatus = playbackControllerRef.current?.getStatus();
-      if (
-        isApplyingVisualsRef.current ||
-        playbackStatus === "TRANSITIONING" ||
-        playbackStatus === "PLAYING"
-      ) {
-        previousSnapshotRef.current = createSemanticSnapshot(elements);
-        return;
       }
 
       // Detect user manual canvas edits
@@ -420,8 +614,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         );
         if (deltas.length > 0) {
           // If a lesson is active, ignore deletions and internal connector updates
+          const activeLesson = transformationLessonRef.current;
           const userDeltas = deltas.filter((d) => {
-            if (transformationLesson && d.type === "element_deleted") {
+            if (activeLesson && d.type === "element_deleted") {
               return false;
             }
             if (
@@ -434,10 +629,57 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             return true;
           });
           if (userDeltas.length > 0) {
-            setPendingInteraction(userDeltas[0]);
+            setPendingInteraction((prev) => {
+              if (
+                prev &&
+                prev.type === userDeltas[0].type &&
+                prev.targetDslId === userDeltas[0].targetDslId &&
+                prev.description === userDeltas[0].description
+              ) {
+                return prev;
+              }
+              return userDeltas[0];
+            });
           }
         }
         previousSnapshotRef.current = createSemanticSnapshot(elements);
+
+        // Detect handwriting command on completed text or stroke interaction
+        if (
+          !appState?.editingTextElement &&
+          !commandPreviewRef.current?.isOpen
+        ) {
+          const candidate = detectHandwritingCommand(elements);
+          if (candidate && candidate.confidence !== "LOW") {
+            const key = `${
+              candidate.normalizedCommand
+            }-${candidate.elementIds.join(",")}`;
+            if (lastDetectedHandwritingRef.current !== key) {
+              lastDetectedHandwritingRef.current = key;
+              const riskLevel = getCommandRiskLevel(
+                candidate.normalizedCommand,
+              );
+              setCommandPreview({
+                isOpen: true,
+                command: candidate.normalizedCommand,
+                riskLevel,
+                didYouMean: candidate.didYouMean,
+                targetDescription: `Handwritten command detected on canvas`,
+                position: {
+                  x: candidate.bounds.x + candidate.bounds.width / 2,
+                  y: candidate.bounds.y + candidate.bounds.height + 20,
+                },
+                onConfirm: async () => {
+                  setCommandPreview(null);
+                  await handleSubmitRef.current(
+                    candidate.normalizedCommand,
+                    "handwriting_command",
+                  );
+                },
+              });
+            }
+          }
+        }
       }
     });
 
@@ -451,8 +693,6 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // ============================================================================
   // Lesson Playback & Navigation (Authoritative Controller)
   // ============================================================================
-
-  const playbackControllerRef = useRef<LessonPlaybackController | null>(null);
 
   const stopLessonPlayback = () => {
     playbackControllerRef.current?.pause();
@@ -511,11 +751,15 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         );
       }
 
-      // 2. Tear down any previous playback controller cleanly
+      // 2. Tear down any previous playback controller cleanly without blanking canvas
+      const currentCanvas = excalidrawAPI.getSceneElements();
+      if (currentCanvas && currentCanvas.length > 0) {
+        lastKnownGoodElementsRef.current = currentCanvas;
+      }
       if (playbackControllerRef.current) {
         playbackControllerRef.current.destroy();
         playbackControllerRef.current = null;
-        excalidrawAPI.updateScene({ elements: [] });
+        // Intentionally do NOT wipe canvas here: retain visual continuity
       }
 
       // 3. Create single authoritative LessonPlaybackController
@@ -523,8 +767,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         excalidrawAPI,
         timeline,
         initialIndex,
+        voiceEngineRef.current,
       );
+      controller.setVoiceEnabled(isVoiceEnabledRef.current);
       playbackControllerRef.current = controller;
+
+      // Pre-synthesize and cache speech asynchronously in background immediately upon lesson load
+      voiceEngineRef.current.prepareLessonAudio(timeline);
 
       // 4. Render initial scene state immediately
       controller.renderInitial(true);
@@ -558,11 +807,19 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         );
       }
 
+      if (renderedElements && renderedElements.length > 0) {
+        lastKnownGoodElementsRef.current = renderedElements;
+      }
+
       // 5. Subscribe to state transitions
       controller.subscribe((state) => {
         previousSnapshotRef.current = createSemanticSnapshot(
           excalidrawAPI.getSceneElements(),
         );
+        const liveElements = excalidrawAPI.getSceneElements();
+        if (liveElements && liveElements.length > 0) {
+          lastKnownGoodElementsRef.current = liveElements;
+        }
         setIsLessonPlaying(state.status === "PLAYING");
         setPlaybackSpeed(state.speed);
         setTransformationLesson((prev) => {
@@ -577,6 +834,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               playbackSpeed: state.speed,
             };
           }
+          if (
+            prev.currentTransformationIndex === state.currentIndex &&
+            prev.playbackSpeed === state.speed &&
+            prev.timeline === timeline
+          ) {
+            return prev;
+          }
           return {
             ...prev,
             timeline,
@@ -585,6 +849,28 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           };
         });
       });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      CognoraDiagnostics.error(
+        "RENDER",
+        `Failed to start transformation lesson: ${errMsg}`,
+        undefined,
+        err,
+      );
+      // Fallback: restore last-known-good canvas elements if current canvas was emptied or broken
+      const current = excalidrawAPI.getSceneElements();
+      if (
+        (!current || current.length === 0) &&
+        lastKnownGoodElementsRef.current.length > 0
+      ) {
+        excalidrawAPI.updateScene({
+          elements: lastKnownGoodElementsRef.current as any,
+        });
+      }
+      setErrorMessage(
+        `Visual lesson could not be safely initialized (${errMsg}). Previous scene retained.`,
+      );
+      setErrorCode("RENDER_ERROR");
     } finally {
       isApplyingVisualsRef.current = false;
     }
@@ -859,7 +1145,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // Universal Command Context & AI Prompt Submission (Single Canonical Lifecycle)
   // ============================================================================
 
-  const buildCommandContext = useCallback((): CommandContext => {
+  const commandContext = useMemo((): CommandContext => {
     return {
       excalidrawAPI,
       sceneElements: excalidrawAPI?.getSceneElements?.() || [],
@@ -881,7 +1167,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         });
       },
       invokeTeaching: async (teachPrompt) => {
-        await handleSubmit(teachPrompt, "command_teach");
+        await handleSubmitRef.current(teachPrompt, "command_teach");
       },
       navigatePlayback: (action, step) => {
         if (action === "next") {
@@ -943,6 +1229,11 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     isLessonPlaying,
   ]);
 
+  const buildCommandContext = useCallback(
+    (): CommandContext => commandContext,
+    [commandContext],
+  );
+
   const handleSubmit = async (
     promptText: string,
     userAction: string = "prompt_submit",
@@ -974,61 +1265,100 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     setErrorCode(null);
     setIsConversationMinimized(false);
 
-    // 3. Intercept and execute slash commands via Universal Command System
-    if (trimmed.startsWith("/")) {
-      const cmdContext = buildCommandContext();
+    // 3. Intercept and execute commands (direct slash or deterministic natural language)
+    const resolvedCommand = trimmed.startsWith("/")
+      ? trimmed
+      : parseNaturalLanguageToCommand(trimmed);
 
-      // Support toggling developer mode
-      if (trimmed === "/dev" || trimmed === "/debug") {
-        setIsDeveloperMode((prev) => {
-          const next = !prev;
-          const msg: ChatMessage = {
+    if (resolvedCommand) {
+      const riskLevel = getCommandRiskLevel(resolvedCommand);
+      const confirmPolicy = getCommandConfirmationPolicy(resolvedCommand);
+
+      // Helper to execute the resolved command flow
+      const executeCommandFlow = async (
+        cmdToRun: string,
+        explicitTargetId?: string,
+      ): Promise<"COMPLETED" | "PROCEED_TO_TEACH"> => {
+        const cmdContext = { ...commandContext };
+        if (explicitTargetId) {
+          cmdContext.focusedEntityId = explicitTargetId;
+          cmdContext.selectedEntities = [explicitTargetId];
+        }
+
+        // Support toggling developer mode
+        if (cmdToRun === "/dev" || cmdToRun === "/debug") {
+          setIsDeveloperMode((prev) => {
+            const next = !prev;
+            const msg: ChatMessage = {
+              id: `assistant-${Date.now()}`,
+              role: "assistant",
+              content: `Developer mode ${
+                next ? "enabled" : "disabled"
+              }. Advanced developer commands (/verify, /stress, /diff) are now ${
+                next ? "unlocked" : "hidden"
+              }.`,
+            };
+            setMessages((m) => [...m, msg]);
+            return next;
+          });
+          activeRequestLockRef.current = null;
+          setRequestState("idle");
+          setInputValue("");
+          return "COMPLETED";
+        }
+
+        const cmdResult = await executeUniversalCommand(cmdToRun, cmdContext);
+
+        if (!cmdResult.success || cmdResult.status === "error") {
+          const errorText =
+            cmdResult.error || `Command execution failed for '${cmdToRun}'.`;
+          const userMsg: ChatMessage = {
+            id: `user-${Date.now()}`,
+            role: "user",
+            content: trimmed,
+          };
+          const assistantErrMsg: ChatMessage = {
             id: `assistant-${Date.now()}`,
             role: "assistant",
-            content: `Developer mode ${
-              next ? "enabled" : "disabled"
-            }. Advanced developer commands (/verify, /stress, /diff) are now ${
-              next ? "unlocked" : "hidden"
-            }.`,
+            content: `⚠️ ${errorText}`,
           };
-          setMessages((m) => [...m, msg]);
-          return next;
-        });
-        activeRequestLockRef.current = null;
-        setRequestState("idle");
-        setInputValue("");
-        return;
-      }
+          setMessages((prev) => [...prev, userMsg, assistantErrMsg]);
+          setErrorMessage(errorText);
+          setErrorCode("COMMAND_ERROR");
+          activeRequestLockRef.current = null;
+          setRequestState("idle");
+          setInputValue("");
+          return "COMPLETED";
+        }
 
-      const cmdResult = await executeUniversalCommand(trimmed, cmdContext);
+        // Handle ambiguous target or explicit confirmation requirement
+        if (cmdResult.status === "requires_confirmation" && !explicitTargetId) {
+          setCommandPreview({
+            isOpen: true,
+            command: cmdToRun,
+            riskLevel: cmdResult.riskLevel || "MODIFY",
+            targetDescription: cmdResult.confirmationPrompt,
+            candidateTargets: cmdResult.candidateTargets,
+            selectedTargetId: cmdResult.candidateTargets?.[0]?.id,
+            onConfirm: () => {
+              const chosenTarget =
+                commandPreviewRef.current?.selectedTargetId ||
+                cmdResult.candidateTargets?.[0]?.id;
+              setCommandPreview(null);
+              executeCommandFlow(cmdToRun, chosenTarget);
+            },
+          });
+          activeRequestLockRef.current = null;
+          setRequestState("idle");
+          setInputValue("");
+          return "COMPLETED";
+        }
 
-      if (!cmdResult.success || cmdResult.status === "error") {
-        const errorText =
-          cmdResult.error || `Command execution failed for '${trimmed}'.`;
-        const userMsg: ChatMessage = {
-          id: `user-${Date.now()}`,
-          role: "user",
-          content: trimmed,
-        };
-        const assistantErrMsg: ChatMessage = {
-          id: `assistant-${Date.now()}`,
-          role: "assistant",
-          content: `⚠️ ${errorText}`,
-        };
-        setMessages((prev) => [...prev, userMsg, assistantErrMsg]);
-        setErrorMessage(errorText);
-        setErrorCode("COMMAND_ERROR");
-        activeRequestLockRef.current = null;
-        setRequestState("idle");
-        setInputValue("");
-        return;
-      }
-
-      // If command explicitly requests AI Teaching (e.g. /teach, /why, /explain, /trace)
-      if (cmdResult.executionClass === "TEACHING") {
-        promptText = cmdResult.message || trimmed;
-        // Proceed downstream to AI teaching request below
-      } else {
+        // If command explicitly requests AI Teaching (e.g. /teach, /why, /explain, /trace)
+        if (cmdResult.executionClass === "TEACHING") {
+          promptText = cmdResult.message || trimmed;
+          return "PROCEED_TO_TEACH";
+        }
         // Deterministic Zero-AI Command (LOCAL / SEMANTIC / DEVELOPER)
         if (cmdResult.lesson) {
           await startTransformationLesson(cmdResult.lesson, {
@@ -1083,6 +1413,36 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         activeRequestLockRef.current = null;
         setRequestState("idle");
         setInputValue("");
+        return "COMPLETED";
+      };
+
+      if (confirmPolicy === "ALWAYS" || riskLevel === "DESTRUCTIVE") {
+        setCommandPreview({
+          isOpen: true,
+          command: resolvedCommand,
+          riskLevel,
+          targetDescription: resolvedCommand.startsWith("/clear")
+            ? "Entire Canvas will be cleared"
+            : resolvedCommand.startsWith("/reset")
+            ? "Workspace state and active lesson will be reset"
+            : "Canvas state modification",
+          semanticEffect:
+            riskLevel === "DESTRUCTIVE"
+              ? "Destructive action cannot be undone automatically."
+              : undefined,
+          onConfirm: async () => {
+            setCommandPreview(null);
+            await executeCommandFlow(resolvedCommand);
+          },
+        });
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+
+      const outcome = await executeCommandFlow(resolvedCommand);
+      if (outcome !== "PROCEED_TO_TEACH") {
         return;
       }
     }
@@ -1103,6 +1463,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     setInputValue("");
 
     // 5. Enter visible AI processing ("thinking") state
+    voiceEngineRef.current.stop();
     setRequestState("thinking");
     setErrorMessage(null);
     setErrorCode(null);
@@ -1467,6 +1828,86 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
         rawMsg.includes("can only afford") ||
         rawMsg.includes("quota exceeded");
 
+      // Part 15 Error Taxonomy Classification
+      let taxonomyCategory: string;
+      if (
+        errCode === "NVIDIA_EMPTY_COMPLETION" ||
+        rawMsg.includes("empty completion")
+      ) {
+        taxonomyCategory = "AI_EMPTY_RESPONSE";
+      } else if (
+        errCode === "NVIDIA_INCOMPLETE_STREAM" ||
+        errCode === "NVIDIA_OUTPUT_TRUNCATED" ||
+        rawMsg.includes("stream terminated") ||
+        rawMsg.includes("truncated")
+      ) {
+        taxonomyCategory = "AI_INCOMPLETE_RESPONSE";
+      } else if (
+        errCode === "NVIDIA_INVALID_COMPLETION" ||
+        errCode === "AI_PARSE_ERROR" ||
+        rawMsg.includes("could not be parsed as structured JSON") ||
+        rawMsg.includes("Invalid JSON")
+      ) {
+        taxonomyCategory = "AI_PARSE_ERROR";
+      } else if (
+        errCode === "SCHEMA_ERROR" ||
+        errCode === "AI_SCHEMA_ERROR" ||
+        errCode === "LESSON_SCHEMA_ERROR" ||
+        rawMsg.includes("Visual DSL") ||
+        rawMsg.includes("schema")
+      ) {
+        taxonomyCategory = "LESSON_SCHEMA_ERROR";
+      } else if (
+        rawMsg.includes("missing entity") ||
+        rawMsg.includes("references missing") ||
+        rawMsg.includes("dangling entity")
+      ) {
+        taxonomyCategory = "ENTITY_REFERENCE_ERROR";
+      } else if (
+        rawMsg.includes("relationship") ||
+        rawMsg.includes("references missing entity")
+      ) {
+        taxonomyCategory = "RELATIONSHIP_ERROR";
+      } else if (
+        errCode === "TRANSFORMATION_ERROR" ||
+        rawMsg.includes("transformation") ||
+        rawMsg.includes("operations")
+      ) {
+        taxonomyCategory = "TRANSFORMATION_ERROR";
+      } else if (
+        errCode === "SEMANTIC_VALIDATION_ERROR" ||
+        rawMsg.includes("invariant") ||
+        rawMsg.includes("zero semantic entities")
+      ) {
+        taxonomyCategory = "LESSON_SEMANTIC_ERROR";
+      } else if (
+        errCode === "NORMALIZATION_ERROR" ||
+        rawMsg.includes("normalization")
+      ) {
+        taxonomyCategory = "NORMALIZATION_ERROR";
+      } else if (
+        errCode === "RENDER_ERROR" ||
+        rawMsg.includes("render") ||
+        rawMsg.includes("Render invariant")
+      ) {
+        taxonomyCategory = "RENDER_PRECONDITION_ERROR";
+      } else if (
+        isAuth ||
+        isRateLimit ||
+        isTimeout ||
+        isNetwork ||
+        isProviderUnavailable ||
+        isCreditCapacity
+      ) {
+        taxonomyCategory = "AI_REQUEST_ERROR";
+      } else {
+        taxonomyCategory = "UNKNOWN_ERROR";
+      }
+
+      console.error(
+        `[COGNORA][ERROR_TAXONOMY] category=${taxonomyCategory} code=${errCode} requestId=${requestId} error="${rawMsg}"`,
+      );
+
       let friendlyError: string;
       if (isAuth) {
         errCode = "AUTHENTICATION_ERROR";
@@ -1533,6 +1974,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       }
     }
   };
+  handleSubmitRef.current = handleSubmit;
 
   const handleRetry = () => {
     if (
@@ -1597,6 +2039,11 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   const canPrev = currentStepNum > 1;
   const canNext = currentStepNum < totalStepsCount;
 
+  const currentMoment =
+    transformationLesson?.timeline?.moments?.[
+      transformationLesson.currentTransformationIndex
+    ];
+
   const currentMeta = transformationLesson?.timeline
     ? transformationLesson.timeline.meta[
         transformationLesson.currentTransformationIndex
@@ -1604,26 +2051,26 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     : undefined;
 
   const rawStepTitle =
+    currentMoment?.title ||
     currentMeta?.title ||
-    (transformationLesson &&
-    transformationLesson.currentTransformationIndex >= 0
+    (transformationLesson && transformationLesson.currentTransformationIndex > 0
       ? transformationLesson.lesson.transformations[
-          transformationLesson.currentTransformationIndex
+          transformationLesson.currentTransformationIndex - 1
         ]?.title || ""
-      : "");
+      : transformationLesson?.lesson.title || "Initial State");
 
   const currentStepTitle = ExplanationEngine.scrubMetadata(rawStepTitle);
 
   const rawExplanation =
+    currentMoment?.explanation ||
     currentMeta?.explanation ||
-    (transformationLesson &&
-    transformationLesson.currentTransformationIndex >= 0
+    (transformationLesson && transformationLesson.currentTransformationIndex > 0
       ? transformationLesson.lesson.transformations[
-          transformationLesson.currentTransformationIndex
+          transformationLesson.currentTransformationIndex - 1
         ]?.explanation || ""
       : transformationLesson?.lesson.concept
       ? `${transformationLesson.lesson.concept}: Initial state`
-      : "");
+      : "Initial state of the verified concept.");
 
   const currentExplanation = ExplanationEngine.scrubMetadata(rawExplanation);
 
@@ -1645,6 +2092,110 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           transformationLesson.currentTransformationIndex
         ]?.explanation
       : undefined);
+
+  // Authoritative Voice Explanation Context Builder
+  const buildCurrentVoiceContext =
+    useCallback((): VoiceExplanationContext | null => {
+      const lastAssistantMsg = [...messages]
+        .reverse()
+        .find((m) => m.role === "assistant");
+
+      if (!transformationLesson) {
+        if (lastAssistantMsg) {
+          return {
+            lessonId: "chat-answer",
+            transformationId: "t-0",
+            stepIndex: 0,
+            totalSteps: 1,
+            title: lastAssistantMsg.topic || "Explanation",
+            explanation: lastAssistantMsg.content,
+            answerText: lastAssistantMsg.content,
+            topic: lastAssistantMsg.topic || "Concept",
+            concept: lastAssistantMsg.topic || "Concept",
+          };
+        }
+        return null;
+      }
+
+      const trans = transformationLesson.lesson.transformations || [];
+      const safeIdx = Math.min(
+        Math.max(0, transformationLesson.currentTransformationIndex),
+        Math.max(0, trans.length - 1),
+      );
+      const activeT = trans[safeIdx] || null;
+
+      return {
+        lessonId: transformationLesson.lessonId,
+        transformationId: activeT?.id || `t-${currentStepNum}`,
+        stepIndex: currentStepNum,
+        totalSteps: totalStepsCount,
+        title: currentStepTitle || activeT?.title || `Step ${currentStepNum}`,
+        explanation:
+          currentExplanation ||
+          (safeIdx === 0
+            ? `Here is the initial empty state for ${
+                transformationLesson.topic || currentTopic || "the concept"
+              }.`
+            : ""),
+        calculations: currentCalculations,
+        insight: currentInsight,
+        answerText: lastAssistantMsg?.content,
+        topic: transformationLesson.topic || currentTopic,
+        concept: transformationLesson.topic || currentTopic,
+        semanticFocus: currentTopic,
+      };
+    }, [
+      transformationLesson,
+      messages,
+      currentStepNum,
+      totalStepsCount,
+      currentStepTitle,
+      currentExplanation,
+      currentCalculations,
+      currentInsight,
+      currentTopic,
+    ]);
+
+  const handlePlayVoice = useCallback(() => {
+    const context = buildCurrentVoiceContext();
+    if (!context) {
+      return;
+    }
+    voiceEngineRef.current.play(context);
+  }, [buildCurrentVoiceContext]);
+
+  const handlePauseVoice = useCallback(() => {
+    voiceEngineRef.current.pause();
+  }, []);
+
+  const handleResumeVoice = useCallback(() => {
+    voiceEngineRef.current.resume();
+  }, []);
+
+  const handleStopVoice = useCallback(() => {
+    voiceEngineRef.current.stop();
+  }, []);
+
+  const handleReplayVoice = useCallback(() => {
+    const context = buildCurrentVoiceContext();
+    if (context) {
+      voiceEngineRef.current.replay();
+    }
+  }, [buildCurrentVoiceContext]);
+
+  const buildCurrentVoiceContextRef = useRef(buildCurrentVoiceContext);
+  buildCurrentVoiceContextRef.current = buildCurrentVoiceContext;
+
+  // Synchronize voice with transformation steps: invalidate speech when step changes
+  useEffect(() => {
+    if (transformationLesson) {
+      const context = buildCurrentVoiceContextRef.current();
+      voiceEngineRef.current.onTransformationChange(context);
+    }
+  }, [
+    transformationLesson?.lessonId,
+    transformationLesson?.currentTransformationIndex,
+  ]);
 
   // Stepper steps for AnalyzeModel
   const stepperSteps = transformationLesson?.timeline
@@ -1676,9 +2227,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     0,
     transformationLesson?.currentTransformationIndex ?? 0,
   );
-  const activeT =
-    transformationLesson?.lesson.transformations?.[activeIndex] ||
-    transformationLesson?.lesson.transformations?.[0];
+  const transformations = transformationLesson?.lesson.transformations || [];
+  const safeTransformIndex = Math.min(
+    activeIndex,
+    Math.max(0, transformations.length - 1),
+  );
+  const activeT = transformations[safeTransformIndex] || transformations[0];
 
   const analyzeData: AnalyzeModel | undefined = (() => {
     if (!transformationLesson) {
@@ -2164,12 +2718,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   // Code context for current transformation
   const currentCodeContext: CodeContext | undefined = (() => {
     if (transformationLesson) {
-      const activeT =
-        transformationLesson.currentTransformationIndex >= 0
-          ? transformationLesson.lesson.transformations[
-              transformationLesson.currentTransformationIndex
-            ]
-          : null;
+      const trans = transformationLesson.lesson.transformations || [];
+      const safeIdx = Math.min(
+        Math.max(0, transformationLesson.currentTransformationIndex),
+        Math.max(0, trans.length - 1),
+      );
+      const activeT = trans[safeIdx] || null;
       if (activeT?.codeContext) {
         return activeT.codeContext;
       }
@@ -2190,12 +2744,31 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
   // Contextual Teaching Glimpse Overlay Placement (minimal, placement-aware, avoids covering primary visual content)
   const overlayPlacement = (() => {
+    // Reference viewportVersion so React re-runs this block whenever the viewport changes
+    // (pan scrollX/scrollY or zoom). The actual coordinate reading happens via
+    // excalidrawAPI.getAppState() below — viewportVersion is purely a change signal.
+    void viewportVersion;
+
     if (!transformationLesson || !excalidrawAPI || excalidrawAPI.isDestroyed) {
       return null;
     }
-    const idx = transformationLesson.currentTransformationIndex;
-    const activeT =
-      idx >= 0 ? transformationLesson.lesson.transformations[idx] : null;
+    const currentMoment =
+      transformationLesson?.timeline?.moments?.[
+        transformationLesson.currentTransformationIndex
+      ];
+    const trans = transformationLesson.lesson.transformations || [];
+    const activeT = currentMoment
+      ? ({
+          id: currentMoment.id,
+          title: currentMoment.title,
+          explanation: currentMoment.explanation,
+          semanticFocus: currentMoment.semanticFocus,
+          highlights: currentMoment.semanticFocus?.entityIds,
+          operations: [],
+        } as any)
+      : transformationLesson.currentTransformationIndex > 0
+      ? trans[transformationLesson.currentTransformationIndex - 1] || null
+      : null;
 
     const rawTitle = activeT?.title || currentStepTitle || "";
     const rawExpl = activeT?.explanation || currentExplanation || "";
@@ -2312,58 +2885,175 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   return (
     <div ref={rootContainerRef} className="cognora-workspace-root">
       {/* 1. Header (Sticky Top Bar) */}
-      <CognoraHeader
-        lessonTitle={currentTopic}
-        activeMode={activeMode}
-        onModeSelect={setActiveMode}
-        onAutoAlign={handleAutoAlign}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onToggleMore={() => setIsToolsPaletteOpen((prev) => !prev)}
-        isMoreOpen={isToolsPaletteOpen}
-        onToggleContextualPanel={() =>
-          setIsContextualPanelOpen((prev) => !prev)
-        }
-        isContextualPanelOpen={isContextualPanelOpen}
-        hasActiveLesson={Boolean(transformationLesson)}
-      />
+      <CognoraErrorBoundary componentName="CognoraHeader">
+        <CognoraHeader
+          lessonTitle={currentTopic}
+          activeMode={activeMode}
+          onModeSelect={setActiveMode}
+          onAutoAlign={handleAutoAlign}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onToggleMore={() => setIsToolsPaletteOpen((prev) => !prev)}
+          isMoreOpen={isToolsPaletteOpen}
+          onToggleContextualPanel={() =>
+            setIsContextualPanelOpen((prev) => !prev)
+          }
+          isContextualPanelOpen={isContextualPanelOpen}
+          hasActiveLesson={Boolean(transformationLesson)}
+        />
+      </CognoraErrorBoundary>
 
       {/* 2. Drawing Toolbar (Floating Left) */}
-      <CognoraDrawingToolbar
-        activeTool={activeCanvasTool}
-        onSelectTool={handleSelectTool}
-        onOpenMoreTools={() => setIsToolsPaletteOpen(true)}
-      />
+      <CognoraErrorBoundary componentName="CognoraDrawingToolbar">
+        <CognoraDrawingToolbar
+          activeTool={activeCanvasTool}
+          onSelectTool={handleSelectTool}
+          onOpenMoreTools={() => setIsToolsPaletteOpen(true)}
+        />
+      </CognoraErrorBoundary>
 
       {/* 4. Zoom Controls (Bottom Left) */}
-      <CognoraZoomControls
-        zoomValue={zoomValue}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onResetZoom={handleResetZoom}
-        onToggleFullscreen={handleToggleFullscreen}
-      />
+      <CognoraErrorBoundary componentName="CognoraZoomControls">
+        <CognoraZoomControls
+          zoomValue={zoomValue}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetZoom={handleResetZoom}
+          onToggleFullscreen={handleToggleFullscreen}
+        />
+      </CognoraErrorBoundary>
 
       {/* Dynamic Semantic Teaching Callout with Focus Anchors & Leader Line */}
       {overlayPlacement && (
-        <SemanticTeachingCallout
-          title={overlayPlacement.title}
-          glimpse={overlayPlacement.glimpse}
-          placement={overlayPlacement.placement}
-          x={overlayPlacement.x}
-          y={overlayPlacement.y}
-          cardWidth={overlayPlacement.cardWidth}
-          cardHeight={overlayPlacement.cardHeight}
-          targetRect={overlayPlacement.targetRect}
-          secondaryTargetRects={overlayPlacement.secondaryTargetRects}
-          leaderLine={overlayPlacement.leaderLine}
-          onOpenInspector={() => {
-            setContextualTab("explain");
-            setIsContextualPanelOpen(true);
-          }}
-          isInspectorOpen={isContextualPanelOpen}
-        />
+        <CognoraErrorBoundary componentName="SemanticTeachingCallout">
+          <SemanticTeachingCallout
+            title={overlayPlacement.title}
+            glimpse={overlayPlacement.glimpse}
+            placement={overlayPlacement.placement}
+            x={overlayPlacement.x}
+            y={overlayPlacement.y}
+            cardWidth={overlayPlacement.cardWidth}
+            cardHeight={overlayPlacement.cardHeight}
+            targetRect={overlayPlacement.targetRect}
+            secondaryTargetRects={overlayPlacement.secondaryTargetRects}
+            showSecondaryAnchors={isVisualDebugEnabled()}
+            leaderLine={overlayPlacement.leaderLine}
+            onOpenInspector={() => {
+              setContextualTab("explain");
+              setIsContextualPanelOpen(true);
+            }}
+            isInspectorOpen={isContextualPanelOpen}
+          />
+        </CognoraErrorBoundary>
       )}
+
+      {/* 4. Cognora Procedural 3D Liquid Glass Voice Presence */}
+      <CognoraErrorBoundary componentName="CognoraVoiceOrb">
+        <CognoraVoiceOrb
+          state={!isVoiceEnabled ? "VOICE_OFF" : voiceOrbState}
+          caption={
+            currentMoment?.narration || currentExplanation || currentStepTitle
+          }
+          showCaption={Boolean(
+            transformationLesson &&
+              (isLessonPlaying || voiceOrbState === "SPEAKING"),
+          )}
+          analyzer={audioAnalyzerRef.current}
+          audioElement={voiceEngineRef.current.getAudioElement()}
+          teachingIntensity={
+            currentMoment?.importance === "CRITICAL"
+              ? 1.0
+              : currentMoment?.importance === "HIGH"
+              ? 0.75
+              : currentMoment?.importance === "NORMAL"
+              ? 0.5
+              : transformationLesson
+              ? 0.35
+              : 0.0
+          }
+            semanticFocusLabel={
+              currentMoment?.semanticFocus?.label ||
+              currentMoment?.semanticFocus?.entityIds?.[0]
+            }
+            obstacles={[
+              {
+                id: "navbar",
+                name: "Navbar",
+                bounds: {
+                  left: 0,
+                  top: 0,
+                  right:
+                    typeof window !== "undefined" ? window.innerWidth : 1200,
+                  bottom: 60,
+                },
+                priority: "critical",
+              },
+              ...(isContextualPanelOpen
+                ? [
+                    {
+                      id: "contextual-panel",
+                      name: "Inspector",
+                      bounds: {
+                        left:
+                          (typeof window !== "undefined"
+                            ? window.innerWidth
+                            : 1200) - 400,
+                        top: 60,
+                        right:
+                          typeof window !== "undefined"
+                            ? window.innerWidth
+                            : 1200,
+                        bottom:
+                          typeof window !== "undefined"
+                            ? window.innerHeight
+                            : 800,
+                      },
+                      priority: "high" as const,
+                    },
+                  ]
+                : []),
+              {
+                id: "bottom-controls",
+                name: "Bottom Controls",
+                bounds: {
+                  left:
+                    (typeof window !== "undefined" ? window.innerWidth : 1200) *
+                    0.2,
+                  top:
+                    (typeof window !== "undefined" ? window.innerHeight : 800) -
+                    140,
+                  right:
+                    (typeof window !== "undefined" ? window.innerWidth : 1200) *
+                    0.8,
+                  bottom:
+                    typeof window !== "undefined" ? window.innerHeight : 800,
+                },
+                priority: "critical",
+              },
+              ...(overlayPlacement
+                ? [
+                    {
+                      id: "callout",
+                      name: "Callout",
+                      bounds: {
+                        left: overlayPlacement.x,
+                        top: overlayPlacement.y,
+                        right: overlayPlacement.x + overlayPlacement.cardWidth,
+                        bottom:
+                          overlayPlacement.y + overlayPlacement.cardHeight,
+                      },
+                      priority: "medium" as const,
+                    },
+                  ]
+                : []),
+            ]}
+            isVoiceEnabled={isVoiceEnabled}
+            onVoiceToggle={handleToggleVoice}
+            onPause={() => playbackControllerRef.current?.pause()}
+            onResume={() => playbackControllerRef.current?.resume()}
+            onReplay={() => playbackControllerRef.current?.replay()}
+          />
+        </CognoraErrorBoundary>
 
       {/* Dedicated Floating Bottom Control Region (Layer 4 & Layer 5) */}
       <div
@@ -2376,130 +3066,133 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       >
         {/* 5. Timeline Playback HUD (Positioned independently above Composer) */}
         {transformationLesson && (
-          <CognoraTimeline
-            currentStep={currentStepNum}
-            totalSteps={totalStepsCount}
-            isPlaying={isLessonPlaying}
-            speed={playbackSpeed}
-            canPrev={canPrev}
-            canNext={canNext}
-            onPrev={handlePreviousTransformation}
-            onNext={handleNextTransformation}
-            onTogglePlay={() => {
-              if (isLessonPlaying) {
-                stopLessonPlayback();
-              } else {
-                playTransformationLesson();
-              }
-            }}
-            onReplay={() => {
-              playbackControllerRef.current?.replay();
-            }}
-            onCycleSpeed={handleCycleSpeed}
-            onSeek={(stepIndex) => {
-              handleJumpTransformation(stepIndex);
-            }}
-            onCloseLesson={() => {
-              playbackControllerRef.current?.destroy();
-              playbackControllerRef.current = null;
-              setTransformationLesson(null);
-            }}
-          />
+          <CognoraErrorBoundary componentName="CognoraTimeline">
+            <CognoraTimeline
+              currentStep={currentStepNum}
+              totalSteps={totalStepsCount}
+              isPlaying={isLessonPlaying}
+              speed={playbackSpeed}
+              canPrev={canPrev}
+              canNext={canNext}
+              onPrev={handlePreviousTransformation}
+              onNext={handleNextTransformation}
+              onTogglePlay={() => {
+                if (isLessonPlaying) {
+                  stopLessonPlayback();
+                } else {
+                  playTransformationLesson();
+                }
+              }}
+              onReplay={() => {
+                playbackControllerRef.current?.replay();
+              }}
+              onCycleSpeed={handleCycleSpeed}
+              onSeek={(stepIndex) => {
+                handleJumpTransformation(stepIndex);
+              }}
+              onCloseLesson={() => {
+                playbackControllerRef.current?.destroy();
+                playbackControllerRef.current = null;
+                setTransformationLesson(null);
+                voiceEngineRef.current.stop();
+              }}
+              voiceState={voiceState}
+              voiceEnabled={isVoiceEnabled}
+              onToggleVoice={handleToggleVoice}
+            />
+          </CognoraErrorBoundary>
         )}
 
         {/* 6. AI Composer Dock with Integrated Conversation Thread */}
-        <CognoraAIComposer
-          inputValue={inputValue}
-          onInputChange={setInputValue}
-          onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
-          isLoading={isTeachingRequestActive}
-          isPanelOpen={isContextualPanelOpen}
-          selectedContext={selectedContext}
-          onClearSelectedContext={() => setSelectedContext([])}
-          pendingInteraction={pendingInteraction}
-          onClearPendingInteraction={() => setPendingInteraction(null)}
-          showAutocomplete={showAutocomplete}
-          autocompleteSuggestions={autocompleteSuggestions}
-          selectedSuggestionIndex={selectedSuggestionIndex}
-          commandContext={buildCommandContext()}
-          onSelectSuggestion={(sug) => {
-            setInputValue(`/${sug.name} `);
-            setShowAutocomplete(false);
-          }}
-          onSuggestionHover={setSelectedSuggestionIndex}
-          suggestions={
-            transformationLesson
-              ? [
-                  "Explain this step in detail",
-                  "Why did this transition happen?",
-                  "What changed from previous step?",
-                  "What are the key invariants?",
-                  "Test my understanding with a quiz",
-                ]
-              : [
-                  "Explain Binary Search step by step",
-                  "Explain TCP Three-Way Handshake",
-                  "Explain Database ACID Transactions",
-                  "Explain How a Refrigerator Works",
-                  "Explain Photosynthesis",
-                  "Explain Transformer Self-Attention",
-                ]
-          }
-          onSuggestionClick={(s) => handleSubmit(s, "suggestion_pill_click")}
-        >
-          <CognoraConversation
-            messages={messages}
-            requestState={requestState}
-            errorMessage={errorMessage}
-            errorCode={errorCode}
-            onRetry={handleRetry}
-            isTeachingRequestActive={isTeachingRequestActive}
-            isMinimized={isConversationMinimized}
-            onToggleMinimize={() => setIsConversationMinimized((prev) => !prev)}
-          />
-        </CognoraAIComposer>
+        <CognoraErrorBoundary componentName="CognoraAIComposer">
+          <CognoraAIComposer
+            inputValue={inputValue}
+            onInputChange={setInputValue}
+            onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
+            isLoading={isTeachingRequestActive}
+            isPanelOpen={isContextualPanelOpen}
+            selectedContext={selectedContext}
+            onClearSelectedContext={() => setSelectedContext([])}
+            pendingInteraction={pendingInteraction}
+            onClearPendingInteraction={() => setPendingInteraction(null)}
+            showAutocomplete={showAutocomplete}
+            autocompleteSuggestions={autocompleteSuggestions}
+            selectedSuggestionIndex={selectedSuggestionIndex}
+            commandContext={commandContext}
+            onSelectSuggestion={(sug) => {
+              setInputValue(`/${sug.name} `);
+              setShowAutocomplete(false);
+            }}
+            onSuggestionHover={setSelectedSuggestionIndex}
+            suggestions={
+              transformationLesson
+                ? [
+                    "Explain this step in detail",
+                    "Why did this transition happen?",
+                    "What changed from previous step?",
+                    "What are the key invariants?",
+                    "Test my understanding with a quiz",
+                  ]
+                : [
+                    "Explain Binary Search step by step",
+                    "Explain TCP Three-Way Handshake",
+                    "Explain Database ACID Transactions",
+                    "Explain How a Refrigerator Works",
+                    "Explain Photosynthesis",
+                    "Explain Transformer Self-Attention",
+                  ]
+            }
+            onSuggestionClick={(s) => handleSubmit(s, "suggestion_pill_click")}
+          >
+            <CognoraConversation
+              messages={messages}
+              requestState={requestState}
+              errorMessage={errorMessage}
+              errorCode={errorCode}
+              onRetry={handleRetry}
+              isTeachingRequestActive={isTeachingRequestActive}
+              isMinimized={isConversationMinimized}
+              onToggleMinimize={() =>
+                setIsConversationMinimized((prev) => !prev)
+              }
+              voiceState={voiceState}
+              onPlayVoice={handlePlayVoice}
+              onPauseVoice={handlePauseVoice}
+              onResumeVoice={handleResumeVoice}
+              onStopVoice={handleStopVoice}
+              onReplayVoice={handleReplayVoice}
+            />
+          </CognoraAIComposer>
+        </CognoraErrorBoundary>
       </div>
 
       {/* 7. Right Contextual Panel (Analyze, Explain, Code, Practice) */}
       {isContextualPanelOpen && (
-        <CognoraContextualPanel
-          activeTab={contextualTab}
-          onTabChange={(tab) => {
-            setContextualTab(tab);
-            if (learnerSessionRef.current) {
-              recordInteraction(learnerSessionRef.current, {
-                action: "open_tab",
-                tab,
-              });
+        <CognoraErrorBoundary componentName="CognoraContextualPanel">
+          <CognoraContextualPanel
+            activeTab={contextualTab}
+            onTabChange={handleTabChange}
+            onClose={() => setIsContextualPanelOpen(false)}
+            analyzeData={analyzeData}
+            explainData={explainData}
+            codeContext={currentCodeContext}
+            practiceData={practiceData}
+            capabilities={panelCapabilities}
+            overlayControls={
+              overlayPlacement
+                ? {
+                    canMove: true,
+                    onMoveUp: handleMoveOverlayUp,
+                    onMoveDown: handleMoveOverlayDown,
+                    onMoveLeft: handleMoveOverlayLeft,
+                    onMoveRight: handleMoveOverlayRight,
+                    onResetAuto: handleResetOverlay,
+                    isOverridden: Boolean(manualOverlayOffset),
+                  }
+                : undefined
             }
-          }}
-          onClose={() => setIsContextualPanelOpen(false)}
-          analyzeData={analyzeData}
-          explainData={explainData}
-          codeContext={currentCodeContext}
-          practiceData={practiceData}
-          capabilities={
-            transformationLesson?.lesson.capabilities || [
-              "explain",
-              "code",
-              "analyze",
-              "practice",
-            ]
-          }
-          overlayControls={
-            overlayPlacement
-              ? {
-                  canMove: true,
-                  onMoveUp: handleMoveOverlayUp,
-                  onMoveDown: handleMoveOverlayDown,
-                  onMoveLeft: handleMoveOverlayLeft,
-                  onMoveRight: handleMoveOverlayRight,
-                  onResetAuto: handleResetOverlay,
-                  isOverridden: Boolean(manualOverlayOffset),
-                }
-              : undefined
-          }
-        />
+          />
+        </CognoraErrorBoundary>
       )}
 
       {/* 8. Bottom-Right Tools Button */}
@@ -2542,16 +3235,40 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       </button>
 
       {/* 9. Tools Palette Modal (Discloses All Capabilities) */}
-      <CognoraToolsPalette
-        isOpen={isToolsPaletteOpen}
-        onClose={() => setIsToolsPaletteOpen(false)}
-        onSelectCanvasTool={handlePaletteSelectCanvasTool}
-        onSelectCognoraAction={handlePaletteSelectCognoraAction}
-        onClearCanvas={() => {
-          excalidrawAPI.updateScene({ elements: [] });
-          setTransformationLesson(null);
-        }}
-      />
+      <CognoraErrorBoundary componentName="CognoraToolsPalette">
+        <CognoraToolsPalette
+          isOpen={isToolsPaletteOpen}
+          onClose={() => setIsToolsPaletteOpen(false)}
+          onSelectCanvasTool={handlePaletteSelectCanvasTool}
+          onSelectCognoraAction={handlePaletteSelectCognoraAction}
+          onClearCanvas={() => {
+            excalidrawAPI.updateScene({ elements: [] });
+            setTransformationLesson(null);
+          }}
+        />
+      </CognoraErrorBoundary>
+
+      {/* 10. Liquid Glass Command Confirmation & Handwriting Preview */}
+      {commandPreview?.isOpen && (
+        <CognoraCommandPreview
+          isOpen={commandPreview.isOpen}
+          command={commandPreview.command}
+          riskLevel={commandPreview.riskLevel}
+          targetDescription={commandPreview.targetDescription}
+          semanticEffect={commandPreview.semanticEffect}
+          didYouMean={commandPreview.didYouMean}
+          candidateTargets={commandPreview.candidateTargets}
+          selectedTargetId={commandPreview.selectedTargetId}
+          onSelectTarget={(id) => {
+            setCommandPreview((prev) =>
+              prev ? { ...prev, selectedTargetId: id } : null,
+            );
+          }}
+          position={commandPreview.position}
+          onConfirm={commandPreview.onConfirm}
+          onCancel={() => setCommandPreview(null)}
+        />
+      )}
     </div>
   );
 };

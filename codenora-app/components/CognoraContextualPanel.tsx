@@ -129,9 +129,16 @@ export interface CognoraContextualPanelProps {
     problem_summary?: string;
   };
   practiceData?: PracticeModel;
-  capabilities?: string[];
+  capabilities?: readonly string[] | string[];
   overlayControls?: OverlayDirectionalControls;
 }
+
+export const DEFAULT_PANEL_CAPABILITIES: readonly PanelTabType[] = [
+  "explain",
+  "code",
+  "analyze",
+  "practice",
+] as const;
 
 export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
   activeTab,
@@ -142,7 +149,7 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
   codeContext,
   codeSolution,
   practiceData,
-  capabilities = ["explain", "code", "analyze", "practice"],
+  capabilities = DEFAULT_PANEL_CAPABILITIES,
   overlayControls,
 }) => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("python");
@@ -150,7 +157,11 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
 
   // Auto-fallback if activeTab is not permitted in capabilities
   useEffect(() => {
-    if (capabilities.length > 0 && !capabilities.includes(activeTab)) {
+    if (
+      capabilities.length > 0 &&
+      !capabilities.includes(activeTab) &&
+      capabilities[0] !== activeTab
+    ) {
       onTabChange?.(capabilities[0] as PanelTabType);
     }
   }, [capabilities, activeTab, onTabChange]);

@@ -1570,10 +1570,18 @@ export function validateVisualAction(
     }
 
     case "create_array": {
-      if (!Array.isArray(act.elements) || act.elements.length === 0) {
+      if (!Array.isArray(act.elements)) {
         errors.push(
-          `${prefix}.elements must be a non-empty array of { value, highlight? }.`,
+          `${prefix}.elements must be an array of { value, highlight? }.`,
         );
+      } else {
+        act.elements.forEach((el: unknown, elIdx: number) => {
+          if (!el || typeof el !== "object") {
+            errors.push(`${prefix}.elements[${elIdx}] must be an object.`);
+          } else if ((el as any).value === undefined) {
+            errors.push(`${prefix}.elements[${elIdx}].value must be defined.`);
+          }
+        });
       }
       if (act.label !== undefined && typeof act.label !== "string") {
         errors.push(`${prefix}.label must be a string if provided.`);
@@ -1582,29 +1590,57 @@ export function validateVisualAction(
     }
 
     case "create_linked_list": {
-      if (!Array.isArray(act.elements) || act.elements.length === 0) {
-        errors.push(`${prefix}.elements must be a non-empty array of items.`);
+      if (!Array.isArray(act.elements)) {
+        errors.push(`${prefix}.elements must be an array of items.`);
+      } else {
+        act.elements.forEach((el: unknown, elIdx: number) => {
+          if (!el || typeof el !== "object") {
+            errors.push(`${prefix}.elements[${elIdx}] must be an object.`);
+          } else if ((el as any).value === undefined) {
+            errors.push(`${prefix}.elements[${elIdx}].value must be defined.`);
+          }
+        });
       }
       break;
     }
 
     case "create_stack": {
-      if (!Array.isArray(act.elements) || act.elements.length === 0) {
-        errors.push(`${prefix}.elements must be a non-empty array of items.`);
+      if (!Array.isArray(act.elements)) {
+        errors.push(`${prefix}.elements must be an array of items.`);
+      } else {
+        act.elements.forEach((el: unknown, elIdx: number) => {
+          if (!el || typeof el !== "object") {
+            errors.push(`${prefix}.elements[${elIdx}] must be an object.`);
+          } else if ((el as any).value === undefined) {
+            errors.push(`${prefix}.elements[${elIdx}].value must be defined.`);
+          }
+        });
       }
       break;
     }
 
     case "create_queue": {
-      if (!Array.isArray(act.elements) || act.elements.length === 0) {
-        errors.push(`${prefix}.elements must be a non-empty array of items.`);
+      if (!Array.isArray(act.elements)) {
+        errors.push(`${prefix}.elements must be an array of items.`);
+      } else {
+        act.elements.forEach((el: unknown, elIdx: number) => {
+          if (!el || typeof el !== "object") {
+            errors.push(`${prefix}.elements[${elIdx}] must be an object.`);
+          } else if ((el as any).value === undefined) {
+            errors.push(`${prefix}.elements[${elIdx}].value must be defined.`);
+          }
+        });
       }
       break;
     }
 
     case "create_tree": {
-      if (!Array.isArray(act.nodes) || act.nodes.length === 0) {
-        errors.push(`${prefix}.nodes must be a non-empty array of nodes.`);
+      if (!Array.isArray(act.nodes)) {
+        errors.push(`${prefix}.nodes must be an array of nodes.`);
+      } else if (act.nodes.length === 0) {
+        if (act.root !== undefined && typeof act.root !== "string") {
+          errors.push(`${prefix}.root, if provided, must be a string.`);
+        }
       } else if (typeof act.root !== "string") {
         errors.push(`${prefix}.root must be a string.`);
       } else {
@@ -1640,8 +1676,8 @@ export function validateVisualAction(
     }
 
     case "create_graph": {
-      if (!Array.isArray(act.nodes) || act.nodes.length === 0) {
-        errors.push(`${prefix}.nodes must be a non-empty array of nodes.`);
+      if (!Array.isArray(act.nodes)) {
+        errors.push(`${prefix}.nodes must be an array of nodes.`);
       }
       if (!Array.isArray(act.edges)) {
         errors.push(`${prefix}.edges must be an array.`);

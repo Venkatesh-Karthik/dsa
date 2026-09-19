@@ -120,11 +120,22 @@ export interface CommandUIAction {
   payload?: any;
 }
 
+export type CommandRiskLevel = "SAFE" | "MODIFY" | "DESTRUCTIVE";
+export type CommandConfirmationPolicy =
+  | "NEVER"
+  | "IF_AMBIGUOUS"
+  | "ALWAYS"
+  | "HANDWRITTEN_ALWAYS";
+
 export interface CommandResult {
-  status: "success" | "error" | "info";
+  status: "success" | "error" | "info" | "requires_confirmation";
   message: string;
   executionClass: CommandExecutionClass;
   commandName: string;
+  riskLevel?: CommandRiskLevel;
+  confirmationRequired?: boolean;
+  confirmationPrompt?: string;
+  candidateTargets?: Array<{ id: string; label: string; type: string }>;
   semanticChanges?: boolean;
   historyEntry?: string;
   affectedEntities?: string[];
@@ -151,6 +162,11 @@ export interface CommandDefinition {
   description: string;
   syntax: string;
   examples: string[];
+  riskLevel?: CommandRiskLevel;
+  confirmationPolicy?: CommandConfirmationPolicy;
+  argumentSchema?: Record<string, unknown>;
+  targetPolicy?: "SELECTED_OR_ACTIVE" | "EXPLICIT_ONLY" | "NONE";
+  semanticEffect?: string;
   isDeveloperOnly?: boolean;
   availability?: (context: CommandContext) => boolean;
   validate?: (args: ParsedCommand) => { valid: boolean; error?: string };

@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from "react";
 
 import { IconAlert, IconReplay, IconSparkles } from "./CognoraIcons";
+import { CognoraVoiceButton } from "./CognoraVoiceButton";
 
+import type { VoiceState } from "../ai/voice/voice-contract";
 import type { ChatMessage } from "./AITeachingAgent";
 
 export type TeachingRequestState =
@@ -20,6 +22,12 @@ export interface CognoraConversationProps {
   isTeachingRequestActive: boolean;
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
+  voiceState?: VoiceState;
+  onPlayVoice?: () => void;
+  onPauseVoice?: () => void;
+  onResumeVoice?: () => void;
+  onStopVoice?: () => void;
+  onReplayVoice?: () => void;
 }
 
 export const CognoraConversation: React.FC<CognoraConversationProps> = ({
@@ -31,6 +39,12 @@ export const CognoraConversation: React.FC<CognoraConversationProps> = ({
   isTeachingRequestActive,
   isMinimized = false,
   onToggleMinimize,
+  voiceState = "idle",
+  onPlayVoice,
+  onPauseVoice,
+  onResumeVoice,
+  onStopVoice,
+  onReplayVoice,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -147,6 +161,25 @@ export const CognoraConversation: React.FC<CognoraConversationProps> = ({
                   <div className="cognora-conversation__canvas-ready">
                     <span className="cognora-conversation__canvas-ready-dot" />
                     <span>Visual lesson ready on canvas</span>
+                  </div>
+                )}
+                {onPlayVoice && (
+                  <div
+                    className="cognora-conversation__voice-action"
+                    style={{
+                      marginTop: "10px",
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                  >
+                    <CognoraVoiceButton
+                      state={voiceState}
+                      onPlay={onPlayVoice}
+                      onPause={onPauseVoice || (() => {})}
+                      onResume={onResumeVoice || (() => {})}
+                      onStop={onStopVoice || (() => {})}
+                      onReplay={onReplayVoice || (() => {})}
+                    />
                   </div>
                 )}
               </div>

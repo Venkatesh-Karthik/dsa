@@ -21,6 +21,15 @@ export type UserIntent =
   | "follow_up"
   | "general_question";
 
+export type CognoraIntentClass =
+  | "COMMAND"
+  | "QUESTION"
+  | "TEACHING_REQUEST"
+  | "PLAYBACK_CONTROL"
+  | "VIEW_CONTROL"
+  | "OBSERVATION"
+  | "ORDINARY_TEXT";
+
 export type ProgrammingLanguage =
   | "cpp"
   | "java"
@@ -30,6 +39,8 @@ export type ProgrammingLanguage =
 
 export interface IntentClassification {
   intent: UserIntent;
+  intentClass?: CognoraIntentClass;
+  resolvedCommand?: string;
   confidence: number;
   reason: string;
   recommendedReasoningEffort: "low" | "medium" | "high";
@@ -148,6 +159,152 @@ export function detectProgrammingLanguage(
 }
 
 /**
+ * Deterministically parses natural language instructions into canonical slash commands
+ * with zero AI/LLM requests.
+ *
+ * Strict Disambiguation:
+ * - Direct commands ("Create an array with 10 elements", "Insert 40 into the heap") -> returns command string
+ * - Questions ("How do I create an array?", "What happens if I insert 40?") -> returns null
+ * - Commentary ("The command /array(10) creates an array") -> returns null
+ */
+export function parseNaturalLanguageToCommand(prompt: string): string | null {
+  const raw = prompt.trim();
+  if (raw.startsWith("/")) {
+    return raw;
+  }
+
+  const lower = raw
+    .toLowerCase()
+    .replace(/[.!?;]+$/, "")
+    .trim();
+
+  // Guard: Questions or hypothetical inquiries must NEVER be converted to commands
+  if (
+    /^(how do i|how to|how can i|what is|what are|what happens|if i|why|can you explain|tell me about|could you explain)/i.test(
+      lower,
+    ) ||
+    /^(the command|a command|using \/|type \/)/i.test(lower) ||
+    raw.includes("?")
+  ) {
+    return null;
+  }
+
+  // 1. Array creation: "create an array with 10 elements", "create array of 10"
+  const arrCountMatch = lower.match(
+    /^(?:create|make|build|generate|initialize)\s+(?:an?\s+)?array\s+(?:with|of)\s+(\d+)(?:\s+elements?)?$/i,
+  );
+  if (arrCountMatch) {
+    return `/array ${arrCountMatch[1]}`;
+  }
+
+  const arrLiteralMatch = lower.match(
+    /^(?:create|make|build|generate|initialize)\s+(?:an?\s+)?array(?:\s+(?:with|of))?\s+(\[[^\]]+\])$/i,
+  );
+  if (arrLiteralMatch) {
+    return `/array ${arrLiteralMatch[1]}`;
+  }
+
+  // 2. Heap creation: "create a max heap with [40, 35, 25]", "create heap [10, 20]"
+  const heapLiteralMatch = lower.match(
+    /^(?:create|make|build)\s+(?:a\s+)?(max|min)\s+heap(?:\s+(?:with|of))?\s+(\[[^\]]+\])$/i,
+  );
+  if (heapLiteralMatch) {
+    return `/heap ${heapLiteralMatch[1]} ${heapLiteralMatch[2]}`;
+  }
+  const heapGenericMatch = lower.match(
+    /^(?:create|make|build)\s+(?:a\s+)?heap(?:\s+(?:with|of))?\s+(\[[^\]]+\])$/i,
+  );
+  if (heapGenericMatch) {
+    return `/heap max ${heapGenericMatch[1]}`;
+  }
+
+  // 3. Linked list creation: "create a linked list with [10, 20, 30]"
+  const llMatch = lower.match(
+    /^(?:create|make|build)\s+(?:a\s+)?linked\s*list(?:\s+(?:with|of))?\s+(\[[^\]]+\])$/i,
+  );
+  if (llMatch) {
+    return `/linked-list ${llMatch[1]}`;
+  }
+
+  // 4. Insert commands: "insert 40 into the heap", "insert 40 into array", "insert 40"
+  const insertMatch = lower.match(
+    /^(?:insert|add)\s+(\d+|[a-zA-Z0-9_-]+)(?:\s+into\s+(?:the\s+)?(?:[a-zA-Z0-9_-]+))?$/i,
+  );
+  if (insertMatch) {
+    return `/insert ${insertMatch[1]}`;
+  }
+
+  // 5. Delete commands: "delete 25 from heap", "delete 25", "remove 25"
+  const deleteMatch = lower.match(
+    /^(?:delete|remove)\s+(\d+|[a-zA-Z0-9_-]+)(?:\s+from\s+(?:the\s+)?(?:[a-zA-Z0-9_-]+))?$/i,
+  );
+  if (deleteMatch) {
+    return `/delete ${deleteMatch[1]}`;
+  }
+
+  if (/^(?:delete|remove)\s+(?:selected|selection|this|that)$/i.test(lower)) {
+    return `/delete`;
+  }
+
+  // 6. Stack / Queue operations
+  const pushMatch = lower.match(
+    /^push\s+(\d+|[a-zA-Z0-9_-]+)(?:\s+(?:onto|to|in)\s+(?:the\s+)?stack)?$/i,
+  );
+  if (pushMatch) {
+    return `/push ${pushMatch[1]}`;
+  }
+  if (/^pop(?:\s+from\s+(?:the\s+)?stack)?$/i.test(lower)) {
+    return `/pop`;
+  }
+
+  // 7. View / Playback Controls
+  if (/^(?:zoom\s+in)$/i.test(lower)) {
+    return `/zoom in`;
+  }
+  if (/^(?:zoom\s+out)$/i.test(lower)) {
+    return `/zoom out`;
+  }
+  if (
+    /^(?:fit\s+to\s+screen|fit\s+viewport|fit\s+view|fit\s+canvas)$/i.test(
+      lower,
+    )
+  ) {
+    return `/fit`;
+  }
+  if (/^(?:next\s+step|go\s+to\s+next\s+step|next)$/i.test(lower)) {
+    return `/next`;
+  }
+  if (
+    /^(?:previous\s+step|go\s+to\s+previous\s+step|previous|back)$/i.test(lower)
+  ) {
+    return `/previous`;
+  }
+  if (/^(?:pause\s+lesson|pause)$/i.test(lower)) {
+    return `/pause`;
+  }
+  if (/^(?:play\s+lesson|play|resume)$/i.test(lower)) {
+    return `/play`;
+  }
+  if (/^(?:replay\s+lesson|replay|restart\s+lesson)$/i.test(lower)) {
+    return `/replay`;
+  }
+
+  // 8. Session Destructive
+  if (
+    /^(?:clear\s+canvas|clear\s+workspace|clear\s+screen|clear\s+all)$/i.test(
+      lower,
+    )
+  ) {
+    return `/clear`;
+  }
+  if (/^(?:reset\s+canvas|reset\s+workspace|reset\s+lesson)$/i.test(lower)) {
+    return `/reset`;
+  }
+
+  return null;
+}
+
+/**
  * Classifies learner prompt and context into a user intent.
  */
 export function detectUserIntent(
@@ -161,8 +318,41 @@ export function detectUserIntent(
   if (raw.startsWith("/")) {
     return {
       intent: "command",
+      intentClass: "COMMAND",
+      resolvedCommand: raw,
       confidence: 1.0,
       reason: "Prompt starts with slash command operator '/'",
+      recommendedReasoningEffort: "low",
+    };
+  }
+
+  // 1.5. Deterministic Natural Language Command Translation (Zero AI Calls)
+  const nlCommand = parseNaturalLanguageToCommand(raw);
+  if (nlCommand) {
+    let intentClass: CognoraIntentClass = "COMMAND";
+    if (
+      nlCommand.startsWith("/next") ||
+      nlCommand.startsWith("/previous") ||
+      nlCommand.startsWith("/play") ||
+      nlCommand.startsWith("/pause") ||
+      nlCommand.startsWith("/replay")
+    ) {
+      intentClass = "PLAYBACK_CONTROL";
+    } else if (
+      nlCommand.startsWith("/zoom") ||
+      nlCommand.startsWith("/fit") ||
+      nlCommand.startsWith("/focus") ||
+      nlCommand.startsWith("/see")
+    ) {
+      intentClass = "VIEW_CONTROL";
+    }
+
+    return {
+      intent: "command",
+      intentClass,
+      resolvedCommand: nlCommand,
+      confidence: 0.95,
+      reason: `Deterministic natural language instruction mapped to '${nlCommand}'`,
       recommendedReasoningEffort: "low",
     };
   }
@@ -194,6 +384,7 @@ export function detectUserIntent(
     const lang = detectProgrammingLanguage(lower) ?? "cpp";
     return {
       intent: "coding_problem",
+      intentClass: "QUESTION",
       confidence: 0.95,
       reason: hasPlatformMention
         ? "Explicit competitive programming platform referenced"
@@ -228,6 +419,7 @@ export function detectUserIntent(
   ) {
     return {
       intent: "follow_up",
+      intentClass: "QUESTION",
       confidence: 0.88,
       reason:
         "Follow-up query referencing active canvas selection or lesson step",
@@ -246,6 +438,7 @@ export function detectUserIntent(
   if (isGeneralQuestion && !hasExplicitVisualRequest) {
     return {
       intent: "general_question",
+      intentClass: "QUESTION",
       confidence: 0.82,
       reason:
         "Factual/definitional query without explicit visualization request",
@@ -256,8 +449,30 @@ export function detectUserIntent(
   // 5. Visual Teaching (Default for Cognora)
   return {
     intent: "visual_teaching",
+    intentClass: "TEACHING_REQUEST",
     confidence: 0.9,
     reason: "Standard conceptual visual lesson request",
     recommendedReasoningEffort: "low",
+  };
+}
+
+/**
+ * Convenient facade for classifying intent into Cognora's canonical intent classes.
+ */
+export function classifyCognoraIntent(
+  prompt: string,
+  context?: Partial<TeachingRequestContext>,
+): {
+  intentClass: CognoraIntentClass;
+  resolvedCommand?: string;
+  confidence: number;
+  reason: string;
+} {
+  const result = detectUserIntent(prompt, context);
+  return {
+    intentClass: result.intentClass || "TEACHING_REQUEST",
+    resolvedCommand: result.resolvedCommand,
+    confidence: result.confidence,
+    reason: result.reason,
   };
 }

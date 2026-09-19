@@ -7,6 +7,8 @@
 
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 
+import { CognoraDiagnostics } from "../transformation-diagnostics";
+
 import { parseCommand, parseUniversalCommand } from "./command-parser";
 import { findCommand, getHelpText } from "./command-registry";
 
@@ -218,6 +220,7 @@ export async function executeUniversalCommand(
     });
     return finalResult;
   } catch (err: unknown) {
+    CognoraDiagnostics.error("COMMAND", "Execution failed", undefined, err);
     const errorMessage = err instanceof Error ? err.message : String(err);
     const failRes: CommandResult = {
       status: "error",

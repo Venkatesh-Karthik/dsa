@@ -258,6 +258,28 @@ export function animateSceneTransition(
         }
       }
 
+      if (targetEl.isDeleted) {
+        if (matchedCurrent && !matchedCurrent.isDeleted) {
+          matchedCurrentIds.add(matchedCurrent.id);
+          animatedItems.push({
+            targetElement: targetEl,
+            startX: matchedCurrent.x,
+            startY: matchedCurrent.y,
+            targetX: matchedCurrent.x,
+            targetY: matchedCurrent.y,
+            startWidth: matchedCurrent.width,
+            startHeight: matchedCurrent.height,
+            targetWidth: matchedCurrent.width,
+            targetHeight: matchedCurrent.height,
+            startOpacity: matchedCurrent.opacity ?? 100,
+            targetOpacity: 0,
+            isNew: false,
+            isExiting: true,
+          });
+        }
+        continue;
+      }
+
       if (matchedCurrent && !matchedCurrent.isDeleted) {
         matchedCurrentIds.add(matchedCurrent.id);
         const item: AnimatedItem = {
@@ -393,6 +415,9 @@ export function animateSceneTransition(
         const frameElements: ExcalidrawElement[] = [];
 
         for (const item of animatedItems) {
+          if (item.targetElement.isDeleted && !item.isExiting) {
+            continue;
+          }
           const isText = item.targetElement.type === "text";
           const currentX = lerp(item.startX, item.targetX, easedT);
           const currentY = lerp(item.startY, item.targetY, easedT);
@@ -413,7 +438,9 @@ export function animateSceneTransition(
             width: Math.round(currentW),
             height: Math.round(currentH),
             opacity: currentOpacity,
-            isDeleted: false,
+            isDeleted: item.isExiting
+              ? false
+              : Boolean(item.targetElement.isDeleted),
           });
 
           // Interpolate arrow points if available

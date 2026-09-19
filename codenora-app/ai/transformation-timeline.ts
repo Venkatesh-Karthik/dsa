@@ -64,6 +64,8 @@ import {
   type VisualReasoningPlan,
 } from "./visual-reasoning";
 
+import { TeachingMomentCompiler, type TeachingMoment } from "./teaching-moment";
+
 import type { AuthoritativeSemanticModel } from "./authoritative-model";
 import type {
   VisualLesson,
@@ -94,6 +96,7 @@ export interface CompiledTimeline {
   topic?: string;
   states: SceneState[]; // Index 0 = initialScene, Index 1 = after T1, etc.
   meta: TransformationMeta[];
+  moments?: TeachingMoment[];
   currentIndex: number;
   milestones?: any[];
   visualPlan?: VisualReasoningPlan;
@@ -210,6 +213,8 @@ export function compileAuthoritativeTimeline(
     previousGraph = graph;
   }
 
+  const moments = TeachingMomentCompiler.compile(model, states);
+
   return {
     lessonId,
     topic:
@@ -218,6 +223,7 @@ export function compileAuthoritativeTimeline(
       options?.prompt,
     states,
     meta,
+    moments,
     currentIndex: 0,
     milestones: options?.milestones || model.transformations,
     visualPlan,
@@ -324,11 +330,40 @@ export function compileVisualLesson(lesson: VisualLesson): CompiledTimeline {
     previousLayoutPositions = nextLayout.positions;
   }
 
+  const moments: TeachingMoment[] = states.map((st, i) => ({
+    id: meta[i]?.id || `moment-${i}`,
+    transformationId: meta[i]?.id || `t-${i}`,
+    stepIndex: i,
+    totalSteps: states.length,
+    beforeState: i > 0 ? states[i - 1] : st,
+    afterState: st,
+    semanticChanges: {
+      addedEntities: [],
+      removedEntities: [],
+      updatedEntities: [],
+      addedRelationships: [],
+      removedRelationships: [],
+    },
+    visualState: st,
+    affectedEntities: Array.from(st.graph.entities.keys()),
+    affectedRelationships: Array.from(st.graph.relationships.keys()),
+    title: meta[i]?.title || (i === 0 ? "Initial State" : `Step ${i}`),
+    explanation: meta[i]?.explanation || "",
+    narration: meta[i]?.explanation || "",
+    semanticFocus: {
+      type: "region",
+      entityIds: Array.from(st.graph.entities.keys()),
+    },
+    durationHint: 3000,
+    importance: "NORMAL",
+  }));
+
   return {
     lessonId,
     topic: lesson.topic || lesson.title,
     states,
     meta,
+    moments,
     currentIndex: 0,
   };
 }

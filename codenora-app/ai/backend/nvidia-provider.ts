@@ -248,6 +248,7 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
     messages.push({ role: "user", content: formattedPrompt });
 
     const reqId = request.requestId || "unknown";
+    const genId = request.generationId || reqId;
 
     // 1. Initial Attempt
     const tBeforeFetch = Date.now();
@@ -259,13 +260,16 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
     const providerResponseMs = Date.now() - tBeforeFetch;
 
     // 2. Structured JSON Parsing
+    console.info(
+      `[COGNORA][LESSON][PARSE][START] generationId=${genId} requestId=${reqId} contentLength=${rawContent.length}`,
+    );
     const tBeforeParse = Date.now();
     const parsedData = extractJsonFromText(rawContent);
     const parsingMs = Date.now() - tBeforeParse;
 
     if (!parsedData) {
       console.error(
-        `[${this.name}] Raw completion could not be parsed as structured JSON.`,
+        `[COGNORA][LESSON][PARSE][ERROR] generationId=${genId} requestId=${reqId} stage=JSON reason=model_output_not_json`,
       );
       throw new NvidiaInvalidCompletionError(
         `${this.name} completion could not be parsed as structured JSON.`,
@@ -276,6 +280,9 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       );
     }
 
+    console.info(
+      `[COGNORA][LESSON][PARSE][SUCCESS] generationId=${genId} requestId=${reqId} durationMs=${parsingMs}`,
+    );
     console.info(
       `[COGNORA][AI][NVIDIA][EXTRACTED] requestId=${reqId} isObject=${Boolean(
         parsedData && typeof parsedData === "object",
@@ -297,6 +304,9 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
     const normalizationMs = Date.now() - tBeforeNorm;
 
     // 4. Schema Validation
+    console.info(
+      `[COGNORA][LESSON][VALIDATION][START] generationId=${genId} requestId=${reqId}`,
+    );
     const tBeforeVal = Date.now();
     const validation = validateTeachingResponse(normalizedData);
     const validationMs = Date.now() - tBeforeVal;
@@ -309,6 +319,15 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       const transformationCount = Array.isArray(vLesson?.transformations)
         ? (vLesson.transformations as unknown[]).length
         : validation.data.steps?.length ?? 0;
+      const entityCount = Array.isArray(vLesson?.initialScene)
+        ? (vLesson.initialScene as unknown[]).length
+        : validation.data.visual_actions?.length ?? 0;
+
+      console.info(
+        `[COGNORA][LESSON][VALIDATION][SUCCESS] generationId=${genId} requestId=${reqId} lessonId=${
+          vLesson?.id || "unknown"
+        } transformations=${transformationCount} entities=${entityCount} durationMs=${validationMs}`,
+      );
       console.info(
         `[COGNORA][AI][NVIDIA][SUCCESS] requestId=${reqId} transformations=${transformationCount} durationMs=${totalMs}`,
       );
@@ -320,10 +339,24 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
     }
 
     // 6. Schema Failure: Fail fast without second request (no hidden retries)
+    const firstErr = validation.errors[0] || "schema_validation_failed";
+    const tfIndexMatch = firstErr.match(/(?:transformations|steps)\[(\d+)\]/);
+    const tfIndexStr = tfIndexMatch
+      ? ` transformationIndex=${tfIndexMatch[1]}`
+      : "";
+    const entIdMatch = firstErr.match(
+      /(?:entity|id|node)[\s"':]+([a-zA-Z0-9_-]+)/i,
+    );
+    const entIdStr = entIdMatch ? ` entityId=${entIdMatch[1]}` : "";
+    const relIdMatch = firstErr.match(
+      /(?:relationship|rel|edge)[\s"':]+([a-zA-Z0-9_-]+)/i,
+    );
+    const relIdStr = relIdMatch ? ` relationshipId=${relIdMatch[1]}` : "";
+
     console.error(
-      `[${this.name}] Response failed validation (${validation.errors.join(
+      `[COGNORA][LESSON][VALIDATION][ERROR] generationId=${genId} requestId=${reqId} failureStage=LESSON_SCHEMA reason=schema_validation_failed field="${firstErr}"${tfIndexStr}${entIdStr}${relIdStr} expected="valid_visual_dsl" received="invalid_dsl" errors="${validation.errors.join(
         "; ",
-      )}). Failing fast without hidden retries.`,
+      )}"`,
     );
     throw new ProviderSchemaError(
       `${this.name} generated invalid Visual DSL: ${validation.errors.join(
@@ -426,7 +459,7 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
 
     const durationMs = Date.now() - tStart;
     console.info(
-      `[COGNORA][AI][NVIDIA][RESPONSE] requestId=${requestId} status=${rawResponse.status} durationMs=${durationMs}`,
+      `[COGNORA][AI][NVIDIA][CONNECTED] requestId=${requestId} status=${rawResponse.status} durationMs=${durationMs}`,
     );
 
     if (!rawResponse.ok) {
@@ -503,6 +536,11 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
 
     let content: string | null = null;
     let finishReason: string | null = null;
+    let usage: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    } | null = null;
     let accumulatedReasoning = "";
     let accumulatedContent = "";
     let eventCount = 0;
@@ -563,6 +601,10 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
               if (chunk.error) {
                 streamError = chunk.error;
                 break;
+              }
+
+              if (chunk.usage) {
+                usage = chunk.usage;
               }
 
               const choice = chunk.choices?.[0];
@@ -701,6 +743,12 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
       if (!content && choice?.delta?.content) {
         content = choice.delta.content;
       }
+      if ((typedCompletion as any)?.usage) {
+        usage = (typedCompletion as any).usage;
+      }
+      if (choice?.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
     }
 
     if (!content || content.trim().length === 0) {
@@ -709,6 +757,21 @@ export class NvidiaNemotronProvider implements AIProvider, TeachingProvider {
         this.name,
       );
     }
+
+    const usageStr = usage
+      ? ` usagePrompt=${usage.prompt_tokens ?? 0} usageCompletion=${
+          usage.completion_tokens ?? 0
+        } usageTotal=${usage.total_tokens ?? 0}`
+      : "";
+    console.info(
+      `[COGNORA][AI][NVIDIA][RESPONSE] requestId=${requestId} model=${
+        this.model
+      } status=${rawResponse.status} finishReason=${
+        finishReason || "stop"
+      } contentLength=${content.length} reasoningContentLength=${
+        accumulatedReasoning.length
+      }${usageStr} durationMs=${Date.now() - tStart}`,
+    );
 
     return content;
   }

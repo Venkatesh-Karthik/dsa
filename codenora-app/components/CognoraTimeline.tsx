@@ -1,5 +1,9 @@
 import React from "react";
 
+import { CognoraVoiceButton } from "./CognoraVoiceButton";
+
+import type { VoiceState } from "../ai/voice/voice-contract";
+
 export interface CognoraTimelineProps {
   currentStep: number;
   totalSteps: number;
@@ -16,6 +20,14 @@ export interface CognoraTimelineProps {
   onTogglePresentation?: () => void;
   isPresentationMode?: boolean;
   onCloseLesson?: () => void;
+  voiceState?: VoiceState;
+  voiceEnabled?: boolean;
+  onToggleVoice?: () => void;
+  onPlayVoice?: () => void;
+  onPauseVoice?: () => void;
+  onResumeVoice?: () => void;
+  onStopVoice?: () => void;
+  onReplayVoice?: () => void;
 }
 
 export const CognoraTimeline: React.FC<CognoraTimelineProps> = ({
@@ -34,6 +46,14 @@ export const CognoraTimeline: React.FC<CognoraTimelineProps> = ({
   onTogglePresentation,
   isPresentationMode = false,
   onCloseLesson,
+  voiceState = "idle",
+  voiceEnabled = true,
+  onToggleVoice,
+  onPlayVoice,
+  onPauseVoice,
+  onResumeVoice,
+  onStopVoice,
+  onReplayVoice,
 }) => {
   const progressPercent =
     totalSteps > 0 ? Math.round((currentStep / totalSteps) * 100) : 0;
@@ -156,6 +176,87 @@ export const CognoraTimeline: React.FC<CognoraTimelineProps> = ({
           </svg>
         </button>
       )}
+
+      {/* Voice Mute / Unmute Toggle Button */}
+      {onToggleVoice ? (
+        <button
+          type="button"
+          className={`cognora-timeline-bar__icon-btn ${
+            voiceEnabled
+              ? "cognora-timeline-bar__icon-btn--voice-on"
+              : "cognora-timeline-bar__icon-btn--voice-off"
+          }`}
+          onClick={onToggleVoice}
+          title={
+            voiceEnabled
+              ? "Mute Voice Explanation (Voice On)"
+              : "Unmute Voice Explanation (Voice Off)"
+          }
+          aria-label={
+            voiceEnabled ? "Mute Voice Explanation" : "Unmute Voice Explanation"
+          }
+          style={{
+            color: voiceEnabled
+              ? "var(--color-primary, #3b82f6)"
+              : "var(--color-text-secondary, #94a3b8)",
+            transition: "all 0.2s ease",
+          }}
+        >
+          {voiceEnabled ? (
+            <svg
+              style={{ width: "16px", height: "16px" }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+              />
+            </svg>
+          ) : (
+            <svg
+              style={{ width: "16px", height: "16px" }}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M17 14l4-4m0 0l-4-4m4 4H17"
+              />
+            </svg>
+          )}
+        </button>
+      ) : onPlayVoice ? (
+        <div
+          style={{
+            marginLeft: "4px",
+            display: "inline-flex",
+            alignItems: "center",
+          }}
+        >
+          <CognoraVoiceButton
+            state={voiceState}
+            onPlay={onPlayVoice}
+            onPause={onPauseVoice || (() => {})}
+            onResume={onResumeVoice || (() => {})}
+            onStop={onStopVoice || (() => {})}
+            onReplay={onReplayVoice || (() => {})}
+            compact
+          />
+        </div>
+      ) : null}
 
       <div className="cognora-timeline-bar__divider" />
 

@@ -371,4 +371,55 @@ describe("LessonPlaybackController", () => {
 
     controller.destroy();
   });
+
+  it("coordinates visual animation and voice playback event-driven", () => {
+    let audioEndedCb: any = null;
+    const mockVoiceEngine: any = {
+      play: vi.fn().mockResolvedValue(undefined),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      stop: vi.fn(),
+      addOnAudioEndedListener: vi.fn((cb) => {
+        audioEndedCb = cb;
+        return () => {
+          audioEndedCb = null;
+        };
+      }),
+    };
+
+    const timeline = compileVisualLesson(mockLesson);
+    const controller = new LessonPlaybackController(
+      mockApi,
+      timeline,
+      0,
+      mockVoiceEngine,
+    );
+    controller.renderInitial(false);
+
+    // Start playback
+    controller.play();
+    expect(controller.getState().status).toBe("PLAYING");
+    expect(mockVoiceEngine.play).toHaveBeenCalledTimes(1);
+    expect(mockVoiceEngine.play).toHaveBeenCalledWith(
+      expect.objectContaining({ stepIndex: 0 }),
+    );
+
+    // Min visual duration (1200ms)
+    vi.advanceTimersByTime(1200);
+
+    // Trigger voice audio finished event
+    audioEndedCb?.(1);
+
+    // Advance pedagogical pause (400ms)
+    vi.advanceTimersByTime(400);
+
+    // Step 0 -> Step 1 has been initiated
+    expect(controller.getPendingIndex()).toBe(1);
+
+    // Pause pauses both
+    controller.pause();
+    expect(mockVoiceEngine.pause).toHaveBeenCalledTimes(1);
+
+    controller.destroy();
+  });
 });

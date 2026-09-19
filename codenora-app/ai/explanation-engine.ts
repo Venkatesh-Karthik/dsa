@@ -54,7 +54,7 @@ export class ExplanationEngine {
     // 1. Derive "What Changed?"
     const changeDetails: string[] = [];
 
-    if (fromState && toState) {
+    if (fromState?.entities && toState?.entities) {
       // Entities added or removed
       for (const [id, ent] of toState.entities.entries()) {
         if (!fromState.entities.has(id)) {
@@ -77,8 +77,8 @@ export class ExplanationEngine {
             );
           }
           if (
-            entA.properties.highlight !== entB.properties.highlight &&
-            entB.properties.highlight
+            entA.properties?.highlight !== entB.properties?.highlight &&
+            entB.properties?.highlight
           ) {
             changeDetails.push(
               `'${entB.label}' highlighted as ${entB.properties.highlight}`,
@@ -91,17 +91,19 @@ export class ExplanationEngine {
           }
         }
       }
+    }
 
-      // Relationship mutations
+    // Relationship mutations
+    if (fromState?.relationships && toState?.relationships) {
       for (const [id, relB] of toState.relationships.entries()) {
         if (!fromState.relationships.has(id)) {
           const srcLabel =
-            toState.entities.get(relB.source)?.label ||
-            fromState.entities.get(relB.source)?.label ||
+            toState.entities?.get(relB.source)?.label ||
+            fromState.entities?.get(relB.source)?.label ||
             relB.source;
           const tgtLabel =
-            toState.entities.get(relB.target)?.label ||
-            fromState.entities.get(relB.target)?.label ||
+            toState.entities?.get(relB.target)?.label ||
+            fromState.entities?.get(relB.target)?.label ||
             relB.target;
           changeDetails.push(
             `Connected '${srcLabel}' -> '${tgtLabel}' (${relB.type})`,
@@ -111,14 +113,16 @@ export class ExplanationEngine {
       for (const [id, relA] of fromState.relationships.entries()) {
         if (!toState.relationships.has(id)) {
           const srcLabel =
-            toState.entities.get(relA.source)?.label ||
-            fromState.entities.get(relA.source)?.label ||
+            toState.entities?.get(relA.source)?.label ||
+            fromState.entities?.get(relA.source)?.label ||
             relA.source;
           const tgtLabel =
-            toState.entities.get(relA.target)?.label ||
-            fromState.entities.get(relA.target)?.label ||
+            toState.entities?.get(relA.target)?.label ||
+            fromState.entities?.get(relA.target)?.label ||
             relA.target;
-          changeDetails.push(`Disconnected '${srcLabel}' -x-> '${tgtLabel}'`);
+          changeDetails.push(
+            `Disconnected '${srcLabel}' -x- '${tgtLabel}' (${relA.type})`,
+          );
         }
       }
     }
@@ -232,6 +236,10 @@ export class ExplanationEngine {
       .replace(/\bactiveComponents\b/gi, "active components")
       .replace(/\bActive Components\b/gi, "Components")
       .replace(/\bFocus Component\b/gi, "Focus Item")
+      .replace(/\bcreate_arrow\b/gi, "connection")
+      .replace(/\brel[-_][a-zA-Z0-9_-]+\b/gi, "relationship")
+      .replace(/\bconn[-_][a-zA-Z0-9_-]+\b/gi, "connection")
+      .replace(/\bop[-_]\d+\b/gi, "operation")
       .replace(/\b(?:Component|Node)\s+(\w+)/gi, "$1")
       .replace(/\barrow\d+[-_]\d+\b/gi, "connection")
       .replace(/\bent[-_][a-zA-Z0-9_-]+\b/gi, "element")

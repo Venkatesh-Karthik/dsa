@@ -1,0 +1,219 @@
+/**
+ * Cognora Voice ORB — Procedural 3D Liquid Glass Stylesheet
+ *
+ * Tier 1 + Tier 2 + Tier 3 Design Integration:
+ * - Direct inheritance from Cognora Stage tokens
+ * - Isolated viewport overlay positioning via hardware-accelerated translate3d
+ * - Liquid Glass Micro-Context Menu
+ * - Tactile Tap Ripple & Floating Caption Pill
+ */
+
+.cognora-orb-presence-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 38;
+  pointer-events: none;
+  user-select: none;
+  touch-action: none;
+  will-change: transform;
+  background: transparent !important;
+  background-image: none !important;
+}
+
+.cognora-orb-canvas-container {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  margin-left: -55px; /* Center alignment around coordinate */
+  margin-top: -55px;
+  border-radius: 50%;
+  backdrop-filter: blur(1.5px) saturate(130%);
+  -webkit-backdrop-filter: blur(1.5px) saturate(130%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: grab;
+  outline: none;
+  background: transparent !important;
+  background-image: none !important;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &:focus-visible {
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.45);
+  }
+}
+
+.cognora-orb-gl-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  background: transparent !important;
+  background-image: none !important;
+}
+
+
+/* Liquid Glass Micro-Context Menu */
+.cognora-orb-micro-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 155px;
+  background: var(--cognora-glass-surface, rgba(255, 255, 255, 0.85));
+  backdrop-filter: blur(var(--cognora-glass-blur, 14px)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--cognora-glass-blur, 14px)) saturate(160%);
+  border: 1px solid var(--cognora-glass-border, rgba(255, 255, 255, 0.75));
+  box-shadow: var(
+    --cognora-glass-shadow-md,
+    0 10px 24px -4px rgba(15, 23, 42, 0.08)
+  );
+  border-radius: var(--cognora-radius-md, 16px);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: auto;
+  z-index: 45;
+  animation: orbMenuEnter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+
+  .micro-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: var(--cognora-radius-sm, 10px);
+    border: none;
+    background: transparent;
+    color: #0f172a;
+    font-family: var(--cognora-font-sans, sans-serif);
+    font-size: var(--cognora-text-sm, 11.5px);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    text-align: left;
+    width: 100%;
+
+    svg {
+      width: 15px;
+      height: 15px;
+      color: var(--cognora-accent, #2563eb);
+    }
+
+    &:hover {
+      background: var(--cognora-accent-light, rgba(239, 246, 255, 0.75));
+      color: var(--cognora-accent-hover, #1d4ed8);
+    }
+
+    &.item-danger:hover {
+      background: rgba(254, 242, 242, 0.85);
+      color: #ef4444;
+
+      svg {
+        color: #ef4444;
+      }
+    }
+  }
+
+  .micro-menu-divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.2);
+    margin: 3px 0;
+  }
+}
+
+@keyframes orbMenuEnter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+/* Floating Liquid Glass Speech Caption Pill */
+.cognora-orb-caption-pill {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 280px;
+  background: var(--cognora-glass-surface, rgba(255, 255, 255, 0.85));
+  backdrop-filter: blur(var(--cognora-glass-blur, 14px)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--cognora-glass-blur, 14px)) saturate(160%);
+  border: 1px solid var(--cognora-glass-border, rgba(255, 255, 255, 0.75));
+  box-shadow: var(
+    --cognora-glass-shadow-sm,
+    0 4px 12px -2px rgba(15, 23, 42, 0.06)
+  );
+  border-radius: var(--cognora-radius-full, 9999px);
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+  animation: orbCaptionEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+
+  .caption-pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cognora-accent, #2563eb);
+    flex-shrink: 0;
+
+    &.speaking {
+      animation: captionDotPulse 1.2s infinite ease-in-out;
+    }
+  }
+
+  .caption-text-content {
+    font-family: var(--cognora-font-sans, sans-serif);
+    font-size: var(--cognora-text-sm, 11.5px);
+    color: #1e293b;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@keyframes orbCaptionEnter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes captionDotPulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(37, 99, 235, 0.6);
+  }
+}
+
+/* Prefers-reduced-motion overrides */
+@media (prefers-reduced-motion: reduce) {
+  .cognora-orb-presence-root * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -405,3 +405,259 @@ export function handleProviderInfoRequest(
   const info = getTeachingProviderInfo(options?.provider);
   sendJson(res, 200, info);
 }
+
+const PYTHON_VOICE_SERVICE_URL =
+  (typeof process !== "undefined" && process.env?.COGNORA_VOICE_SERVICE_URL) ||
+  "http://127.0.0.1:5005";
+
+/** Voice error taxonomy codes — surfaced to the browser for structured error handling. */
+export type VoiceErrorCode =
+  | "CHATTERBOX_SERVICE_UNAVAILABLE"
+  | "CHATTERBOX_MODEL_LOADING"
+  | "CHATTERBOX_MODEL_ERROR"
+  | "CHATTERBOX_HTTP_ERROR"
+  | "CHATTERBOX_EMPTY_AUDIO"
+  | "CHATTERBOX_TIMEOUT"
+  | "VOICE_BAD_REQUEST"
+  | "VOICE_INTERNAL_ERROR";
+
+/** Classifies a caught fetch error into the voice error taxonomy. */
+function classifyVoiceFetchError(err: unknown): {
+  code: VoiceErrorCode;
+  message: string;
+} {
+  if (err instanceof Error) {
+    const name = err.name;
+    const msg = err.message;
+    if (name === "AbortError" || msg.includes("timed out")) {
+      return {
+        code: "CHATTERBOX_TIMEOUT",
+        message: "Voice service request timed out.",
+      };
+    }
+    if (
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("fetch failed") ||
+      msg.includes("Failed to fetch") ||
+      msg.includes("network") ||
+      msg.includes("ENOTFOUND")
+    ) {
+      return {
+        code: "CHATTERBOX_SERVICE_UNAVAILABLE",
+        message: `Chatterbox service is not reachable at ${PYTHON_VOICE_SERVICE_URL}. Start it with: .\\cognora-voice\\start_voice_service.ps1`,
+      };
+    }
+  }
+  return {
+    code: "VOICE_INTERNAL_ERROR",
+    message:
+      err instanceof Error ? err.message : "Unknown voice service error.",
+  };
+}
+
+function readRequestBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      resolve(body);
+    });
+    req.on("error", (err) => {
+      reject(err);
+    });
+  });
+}
+
+let _voiceReqCounter = 0;
+
+export async function handleVoiceSynthesisRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed. Use POST." });
+    return;
+  }
+
+  const voiceRequestId = `VR-${Date.now()}-${(++_voiceReqCounter).toString(
+    36,
+  )}`;
+  const targetUrl = `${PYTHON_VOICE_SERVICE_URL}/synthesize`;
+  const t0 = Date.now();
+
+  try {
+    const rawBody = await readRequestBody(req);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawBody) as Record<string, unknown>;
+    } catch {
+      sendJson(res, 400, {
+        error: "Malformed JSON in request body.",
+        code: "VOICE_BAD_REQUEST",
+      });
+      return;
+    }
+
+    if (!payload.text || typeof payload.text !== "string") {
+      sendJson(res, 400, {
+        error: "Missing or invalid 'text' in request body.",
+        code: "VOICE_BAD_REQUEST",
+      });
+      return;
+    }
+
+    const textLength = (payload.text as string).length;
+
+    // --- FETCH_START ---
+    console.info(
+      `[COGNORA][VOICE][BACKEND][FETCH_START] voiceRequestId=${voiceRequestId} url=${targetUrl} method=POST textLength=${textLength}`,
+    );
+
+    // 60-second timeout — allows full GPU/CPU neural TTS generation without premature abortion
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 60_000);
+
+    let response: Response;
+    try {
+      response = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+      const durationMs = Date.now() - t0;
+      let errMsg = `Chatterbox service returned HTTP ${response.status}`;
+      let errCode: VoiceErrorCode = "CHATTERBOX_HTTP_ERROR";
+
+      try {
+        const errData = (await response.json()) as {
+          detail?: string;
+          error?: string;
+        };
+        const detail = errData?.detail || errData?.error;
+        if (detail) {
+          errMsg = detail;
+        }
+        if (response.status === 503 && detail?.includes("loading")) {
+          errCode = "CHATTERBOX_MODEL_LOADING";
+        } else if (response.status === 503) {
+          errCode = "CHATTERBOX_SERVICE_UNAVAILABLE";
+        }
+      } catch {
+        // Fallback to HTTP status description
+      }
+
+      console.warn(
+        `[COGNORA][VOICE][BACKEND][FETCH_ERROR] voiceRequestId=${voiceRequestId} url=${targetUrl} httpStatus=${response.status} code=${errCode} message="${errMsg}" durationMs=${durationMs}`,
+      );
+
+      sendJson(res, response.status >= 500 ? 503 : response.status, {
+        error: errMsg,
+        code: errCode,
+        voiceRequestId,
+      });
+      return;
+    }
+
+    const audioBuffer = await response.arrayBuffer();
+    const durationMs = Date.now() - t0;
+    const contentType = response.headers.get("content-type") || "audio/wav";
+
+    // Guard: reject empty audio payloads
+    if (!audioBuffer || audioBuffer.byteLength === 0) {
+      console.warn(
+        `[COGNORA][VOICE][BACKEND][FETCH_ERROR] voiceRequestId=${voiceRequestId} url=${targetUrl} code=CHATTERBOX_EMPTY_AUDIO durationMs=${durationMs}`,
+      );
+      sendJson(res, 502, {
+        error: "Chatterbox returned an empty audio payload.",
+        code: "CHATTERBOX_EMPTY_AUDIO" as VoiceErrorCode,
+        voiceRequestId,
+      });
+      return;
+    }
+
+    console.info(
+      `[COGNORA][VOICE][BACKEND][FETCH_SUCCESS] voiceRequestId=${voiceRequestId} durationMs=${durationMs} contentType=${contentType} audioBytes=${audioBuffer.byteLength}`,
+    );
+
+    res.statusCode = 200;
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", audioBuffer.byteLength);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("X-Voice-Request-Id", voiceRequestId);
+    res.end(Buffer.from(audioBuffer));
+  } catch (err: unknown) {
+    const durationMs = Date.now() - t0;
+    const classified = classifyVoiceFetchError(err);
+    const errorName = err instanceof Error ? err.name : "UnknownError";
+    const errorMessage = err instanceof Error ? err.message : String(err);
+
+    console.warn(
+      `[COGNORA][VOICE][BACKEND][FETCH_ERROR] voiceRequestId=${voiceRequestId} url=${targetUrl} errorName=${errorName} errorMessage="${errorMessage}" code=${classified.code} durationMs=${durationMs}`,
+    );
+
+    sendJson(res, 503, {
+      error: classified.message,
+      code: classified.code,
+      voiceRequestId,
+    });
+  }
+}
+
+export async function handleVoiceHealthRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const targetUrl = `${PYTHON_VOICE_SERVICE_URL}/health`;
+  try {
+    console.info(`[COGNORA][VOICE][BACKEND][HEALTH_CHECK] url=${targetUrl}`);
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 5_000);
+    let response: Response;
+    try {
+      response = await fetch(targetUrl, {
+        method: "GET",
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    if (!response.ok) {
+      console.warn(
+        `[COGNORA][VOICE][BACKEND][HEALTH_CHECK] url=${targetUrl} httpStatus=${response.status} → unavailable`,
+      );
+      sendJson(res, 503, {
+        status: "unavailable",
+        modelReady: false,
+        modelState: "ERROR",
+        code: "CHATTERBOX_SERVICE_UNAVAILABLE" as VoiceErrorCode,
+      });
+      return;
+    }
+    const data = (await response.json()) as Record<string, unknown>;
+    console.info(
+      `[COGNORA][VOICE][BACKEND][HEALTH_CHECK] modelState=${
+        data.modelState ?? "unknown"
+      } modelReady=${data.modelReady ?? false}`,
+    );
+    sendJson(res, 200, data);
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[COGNORA][VOICE][BACKEND][HEALTH_CHECK] url=${targetUrl} error="${errorMessage}" → service unreachable`,
+    );
+    sendJson(res, 200, {
+      status: "unavailable",
+      modelReady: false,
+      modelState: "ERROR",
+      code: "CHATTERBOX_SERVICE_UNAVAILABLE" as VoiceErrorCode,
+    });
+  }
+}

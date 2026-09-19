@@ -368,3 +368,183 @@ export function validateLayoutDeterminism(
     differences,
   };
 }
+
+export interface PreRenderValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  sanitizedElements: any[];
+}
+
+/**
+ * 13-Rule Pre-Render Visual Validation Gate
+ * Validates elements before they are submitted to Excalidraw's canvas renderer.
+ */
+export function validatePreRenderElements(
+  elements: readonly any[],
+  graph?: SceneGraph,
+  options?: { maxElements?: number },
+): PreRenderValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const maxElements = options?.maxElements ?? 500;
+
+  // Rule 13: Unbounded element growth
+  if (elements.length > maxElements) {
+    errors.push(
+      `Rule 13 (Unbounded Element Growth): Element count (${elements.length}) exceeds maximum safe threshold (${maxElements}).`,
+    );
+  }
+
+  const activeElements = elements.filter((e) => !e.isDeleted);
+  const elementIdMap = new Map<string, any>();
+  const seenSemanticIds = new Set<string>();
+
+  for (const el of activeElements) {
+    // Rule 12: Valid Excalidraw element structure
+    if (!el || typeof el.id !== "string" || typeof el.type !== "string") {
+      errors.push(
+        `Rule 12 (Invalid Element): Found malformed element without valid id or type.`,
+      );
+      continue;
+    }
+
+    // Rule 5 & 6: Duplicate IDs
+    if (elementIdMap.has(el.id)) {
+      errors.push(
+        `Rule 5/6 (Duplicate Visual Representation): Duplicate element ID "${el.id}" detected.`,
+      );
+    }
+    elementIdMap.set(el.id, el);
+
+    const dslId = el.customData?.dslId;
+    if (dslId) {
+      if (seenSemanticIds.has(dslId)) {
+        warnings.push(
+          `Rule 6 (Multiple Elements for Semantic ID): Semantic ID "${dslId}" is attached to multiple visual elements.`,
+        );
+      }
+      seenSemanticIds.add(dslId);
+    }
+
+    // Rule 8: Internal operational tokens must not be rendered
+    const checkId = (dslId || el.id).toLowerCase();
+    if (
+      /^t\d+[-_]op\d+/i.test(checkId) ||
+      /^op-\d+/i.test(checkId) ||
+      /^step-\d+/i.test(checkId) ||
+      checkId === "focuscomponent" ||
+      checkId === "activecomponents" ||
+      checkId === "create_arrow"
+    ) {
+      errors.push(
+        `Rule 8 (Operational Token Leakage): Operational token "${checkId}" leaked as a visual element.`,
+      );
+    }
+
+    // Rule 9: Finite coordinates
+    if (!Number.isFinite(el.x) || !Number.isFinite(el.y)) {
+      errors.push(
+        `Rule 9 (Non-Finite Coordinates): Element "${el.id}" has non-finite coordinates (${el.x}, ${el.y}).`,
+      );
+    }
+
+    // Rule 10: Finite and non-negative dimensions
+    if (
+      !Number.isFinite(el.width) ||
+      el.width < 0 ||
+      !Number.isFinite(el.height) ||
+      el.height < 0
+    ) {
+      errors.push(
+        `Rule 10 (Invalid Dimensions): Element "${el.id}" has invalid dimensions (${el.width}x${el.height}).`,
+      );
+    }
+
+    // Rule 11: Valid Bindings
+    if (el.startBinding && el.startBinding.elementId) {
+      if (
+        !elementIdMap.has(el.startBinding.elementId) &&
+        !elements.some(
+          (e) => e.id === el.startBinding.elementId && !e.isDeleted,
+        )
+      ) {
+        warnings.push(
+          `Rule 11 (Broken Start Binding): Element "${el.id}" references deleted or missing startBinding "${el.startBinding.elementId}".`,
+        );
+      }
+    }
+    if (el.endBinding && el.endBinding.elementId) {
+      if (
+        !elementIdMap.has(el.endBinding.elementId) &&
+        !elements.some((e) => e.id === el.endBinding.elementId && !e.isDeleted)
+      ) {
+        warnings.push(
+          `Rule 11 (Broken End Binding): Element "${el.id}" references deleted or missing endBinding "${el.endBinding.elementId}".`,
+        );
+      }
+    }
+  }
+
+  // Graph Semantic Checks (Rules 1-4)
+  if (graph) {
+    // Rule 2: Required semantic entities have visual representations
+    for (const [entId, ent] of graph.entities.entries()) {
+      if (
+        ent.primitiveType !== "Annotation" &&
+        ent.primitiveType !== "Callout"
+      ) {
+        const hasVisual = Array.from(elementIdMap.values()).some(
+          (el) => el.id === entId || el.customData?.dslId === entId,
+        );
+        if (!hasVisual) {
+          warnings.push(
+            `Rule 2 (Missing Visual Entity): Semantic entity "${entId}" has no active visual representation.`,
+          );
+        }
+      }
+    }
+
+    // Rule 3: Relationships reference valid entities
+    for (const [relId, rel] of graph.relationships.entries()) {
+      if (!graph.entities.has(rel.sourceEntityId)) {
+        errors.push(
+          `Rule 3 (Invalid Relationship Source): Relationship "${relId}" references non-existent source "${rel.sourceEntityId}".`,
+        );
+      }
+      if (!graph.entities.has(rel.targetEntityId)) {
+        errors.push(
+          `Rule 3 (Invalid Relationship Target): Relationship "${relId}" references non-existent target "${rel.targetEntityId}".`,
+        );
+      }
+    }
+  }
+
+  // Sanitize elements for safe rendering
+  const sanitizedElements = elements.map((el) => {
+    if (!el || el.isDeleted) {
+      return el;
+    }
+    const safeX = Number.isFinite(el.x) ? el.x : 100;
+    const safeY = Number.isFinite(el.y) ? el.y : 100;
+    const safeW = Number.isFinite(el.width) && el.width >= 0 ? el.width : 60;
+    const safeH = Number.isFinite(el.height) && el.height >= 0 ? el.height : 60;
+
+    if (
+      safeX !== el.x ||
+      safeY !== el.y ||
+      safeW !== el.width ||
+      safeH !== el.height
+    ) {
+      return { ...el, x: safeX, y: safeY, width: safeW, height: safeH };
+    }
+    return el;
+  });
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    sanitizedElements,
+  };
+}

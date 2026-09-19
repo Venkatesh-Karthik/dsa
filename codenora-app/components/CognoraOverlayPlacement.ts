@@ -53,6 +53,8 @@ export interface OverlayPlacementInput {
     scrollX: number;
     scrollY: number;
     zoom: { value: number };
+    offsetLeft?: number;
+    offsetTop?: number;
   };
   isInspectorOpen?: boolean;
   manualOffset?: { x: number; y: number } | null;
@@ -147,6 +149,8 @@ export function extractProtectedSceneElements(
   const zoom = appState.zoom.value;
   const scrollX = appState.scrollX;
   const scrollY = appState.scrollY;
+  const offsetLeft = appState.offsetLeft ?? 0;
+  const offsetTop = appState.offsetTop ?? 0;
 
   const protectedElements: ProtectedSceneElement[] = [];
 
@@ -161,8 +165,8 @@ export function extractProtectedSceneElements(
       continue;
     }
 
-    const screenX = (el.x + scrollX) * zoom;
-    const screenY = (el.y + scrollY) * zoom;
+    const screenX = (el.x + scrollX) * zoom + offsetLeft;
+    const screenY = (el.y + scrollY) * zoom + offsetTop;
     const screenW = el.width * zoom;
     const screenH = el.height * zoom;
 
@@ -481,8 +485,8 @@ export function computeIntelligentOverlayPosition(
 
     // C. Check collision with Protected Primary Visual Elements
     for (const prot of protectedElements) {
-      // Add a safety buffer around nodes and connectors
-      const buffer = prot.type === "node" || prot.type === "target" ? 14 : 8;
+      // Add a generous safety buffer around nodes and connectors
+      const buffer = prot.type === "node" || prot.type === "target" ? 24 : 12;
       const bufferedRect: ScreenRect = {
         left: prot.rect.left - buffer,
         top: prot.rect.top - buffer,
@@ -496,18 +500,18 @@ export function computeIntelligentOverlayPosition(
       if (overlap > 0) {
         if (prot.type === "target") {
           // Zero tolerance: NEVER obscure the target element!
-          score += overlap * 600 + 300000;
+          score += overlap * 1000 + 500000;
         } else if (prot.type === "node") {
-          // Do not obscure nodes / array cells
-          score += overlap * 400 + 150000;
+          // Do not obscure nodes / tree nodes / array cells
+          score += overlap * 800 + 300000;
         } else if (prot.type === "connector") {
           // Do not obscure connectors / arrows
-          score += overlap * 250 + 80000;
+          score += overlap * 400 + 100000;
         } else if (prot.type === "label") {
           // Do not obscure labels
-          score += overlap * 150 + 40000;
+          score += overlap * 300 + 80000;
         } else {
-          score += overlap * 80 + 10000;
+          score += overlap * 100 + 20000;
         }
       }
     }

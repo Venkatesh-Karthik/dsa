@@ -339,6 +339,24 @@ export function createSceneGraphFromActions(
       case "create_circle": {
         const box = action as CreateBoxAction | CreateCircleAction;
         const entityId = box.id;
+        if (
+          /^t\d+[-_]op\d+/i.test(entityId) ||
+          /^op-\d+/i.test(entityId) ||
+          /^step-\d+/i.test(entityId) ||
+          /^conn-/i.test(entityId) ||
+          /^trans-/i.test(entityId) ||
+          /^arrow/i.test(entityId) ||
+          /^edge/i.test(entityId) ||
+          /^rel-/i.test(entityId) ||
+          /^ptr-/i.test(entityId) ||
+          /^callout/i.test(entityId) ||
+          entityId.toLowerCase() === "focuscomponent" ||
+          entityId.toLowerCase() === "activecomponents" ||
+          entityId.toLowerCase() === "create_arrow" ||
+          entityId.toLowerCase() === "root"
+        ) {
+          break;
+        }
         const isCircle = action.type === "create_circle";
         addEntity(graph, {
           id: entityId,

@@ -18,6 +18,8 @@ import {
   normalizeArrayElementHighlight,
   normalizeVisualAction,
   normalizeTeachingResponse,
+  MAX_VISUAL_ACTIONS,
+  MAX_EXPLANATION_STEPS,
 } from "../ai/backend/dsl-validator";
 
 describe("DSL Validator", () => {
@@ -272,28 +274,38 @@ describe("DSL Validator", () => {
     });
 
     it("rejects response when visual_actions exceeds safety limit", () => {
-      const actions = Array.from({ length: 36 }, (_, i) => ({
-        type: "create_box",
-        id: `box-${i}`,
-        label: `Box ${i}`,
-      }));
+      const actions = Array.from(
+        { length: MAX_VISUAL_ACTIONS + 1 },
+        (_, i) => ({
+          type: "create_box",
+          id: `box-${i}`,
+          label: `Box ${i}`,
+        }),
+      );
       const res = validateTeachingResponse({
         message: "Too many actions",
         visual_actions: actions,
       });
       expect(res.valid).toBe(false);
-      expect(res.errors[0]).toContain("exceeds safety limit of 35 actions");
+      expect(res.errors[0]).toContain(
+        `exceeds safety limit of ${MAX_VISUAL_ACTIONS} actions`,
+      );
     });
 
     it("rejects response when explanation_steps exceeds safety limit", () => {
-      const steps = Array.from({ length: 11 }, (_, i) => `Step ${i}`);
+      const steps = Array.from(
+        { length: MAX_EXPLANATION_STEPS + 1 },
+        (_, i) => `Step ${i}`,
+      );
       const res = validateTeachingResponse({
         message: "Too many steps",
         visual_actions: [],
         explanation_steps: steps,
       });
       expect(res.valid).toBe(false);
-      expect(res.errors[0]).toContain("exceeds safety limit of 10 steps");
+      expect(res.errors[0]).toContain(
+        `exceeds safety limit of ${MAX_EXPLANATION_STEPS} steps`,
+      );
     });
 
     it("rejects response without message", () => {

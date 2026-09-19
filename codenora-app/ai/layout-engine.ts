@@ -216,6 +216,21 @@ export function computeTreeLayout(
           rightNode.width + TREE_LAYOUT.SUBTREE_GAP + TREE_LAYOUT.NODE_DIAMETER,
         );
       }
+    } else if (node.children && node.children.length === 1) {
+      // Single child in binary tree / heap: assign as left child by default
+      const singleChild = buildTree(node.children[0], depth + 1);
+      if (singleChild) {
+        if (!singleChild.isRight) {
+          singleChild.isLeft = true;
+        }
+        children.push(singleChild);
+        width = Math.max(
+          TREE_LAYOUT.NODE_DIAMETER,
+          singleChild.width +
+            TREE_LAYOUT.SUBTREE_GAP +
+            TREE_LAYOUT.NODE_DIAMETER,
+        );
+      }
     } else if (node.children && node.children.length > 0) {
       // General tree handling
       for (const childId of node.children) {
@@ -274,8 +289,11 @@ export function computeTreeLayout(
         right.width / 2 -
         TREE_LAYOUT.NODE_DIAMETER / 2;
       positionTree(right, rightX, y + TREE_LAYOUT.LEVEL_GAP);
-    } else if (node.children.length === 1 && node.children[0].isLeft) {
-      // Single left child in binary tree: position strictly to the left of parent
+    } else if (
+      node.children.length === 1 &&
+      (node.children[0].isLeft || !node.children[0].isRight)
+    ) {
+      // Single left child in binary tree/heap: position strictly to the left of parent
       const left = node.children[0];
       const offset = Math.max(
         TREE_LAYOUT.NODE_DIAMETER,
@@ -1190,15 +1208,43 @@ export function computeSceneGraphLayout(
       for (const rel of graph.relationships.values()) {
         if (rel.sourceEntityId === entity.id) {
           childSet.add(rel.targetEntityId);
-          if (rel.type === "leftOf" || rel.type === "left") {
+          const rawType = (
+            (rel.properties?.originalType as string) ||
+            rel.type ||
+            ""
+          ).toLowerCase();
+          const branch = (
+            (rel.properties?.branch as string) ||
+            (rel.label === "L" ? "left" : rel.label === "R" ? "right" : "")
+          ).toLowerCase();
+
+          if (rawType === "leftof" || rawType === "left" || branch === "left") {
             left = rel.targetEntityId;
-          } else if (rel.type === "rightOf" || rel.type === "right") {
+          } else if (
+            rawType === "rightof" ||
+            rawType === "right" ||
+            branch === "right"
+          ) {
             right = rel.targetEntityId;
-          } else if (rel.type === "parentOf") {
+          } else if (
+            rawType === "parentof" ||
+            rawType === "parent_child" ||
+            rawType === "child"
+          ) {
             children = children
               ? [...children, rel.targetEntityId]
               : [rel.targetEntityId];
           }
+        }
+      }
+
+      // If binary branching was not explicitly designated as left/right, assign children to left/right
+      if (!left && !right && children && children.length > 0) {
+        if (children.length === 2) {
+          left = children[0];
+          right = children[1];
+        } else if (children.length === 1) {
+          left = children[0];
         }
       }
 
@@ -1233,11 +1279,58 @@ export function computeSceneGraphLayout(
       positions.set(id, pos);
     }
 
+    // 1b. If there are other tree nodes not reached from primary rootId, layout each remaining subtree cleanly
+    let nextSubtreeX = rawLayout.bounds.x + rawLayout.bounds.width + 100;
+    for (const n of treeNodes) {
+      if (!positions.has(n.id) && !childSet.has(n.id)) {
+        const subLayout = computeTreeLayout(treeInputs, n.id, {
+          x: nextSubtreeX,
+          y: treeOrigin.y,
+        });
+        for (const [sId, sPos] of subLayout.positions) {
+          positions.set(sId, sPos);
+        }
+        nextSubtreeX += subLayout.bounds.width + 80;
+      }
+    }
+
+    // Also layout any remaining orphan nodes that might form cycles or isolated chains
+    for (const n of treeNodes) {
+      if (!positions.has(n.id)) {
+        const orphanLayout = computeTreeLayout(treeInputs, n.id, {
+          x: nextSubtreeX,
+          y: treeOrigin.y,
+        });
+        for (const [oId, oPos] of orphanLayout.positions) {
+          positions.set(oId, oPos);
+        }
+        nextSubtreeX += orphanLayout.bounds.width + 80;
+      }
+    }
+
+    const allTreePositions: LayoutPoint[] = Array.from(positions.values());
+    const minTreeX = allTreePositions.reduce(
+      (min, p) => Math.min(min, p.x),
+      rawLayout.bounds.x,
+    );
+    const maxTreeX = allTreePositions.reduce(
+      (max, p) => Math.max(max, p.x + TREE_LAYOUT.NODE_DIAMETER),
+      rawLayout.bounds.x + rawLayout.bounds.width,
+    );
+    const minTreeY = allTreePositions.reduce(
+      (min, p) => Math.min(min, p.y),
+      rawLayout.bounds.y,
+    );
+    const maxTreeY = allTreePositions.reduce(
+      (max, p) => Math.max(max, p.y + TREE_LAYOUT.NODE_DIAMETER),
+      rawLayout.bounds.y + rawLayout.bounds.height,
+    );
+
     const bounds: LayoutBounds = {
-      x: rawLayout.bounds.x,
-      y: rawLayout.bounds.y,
-      width: rawLayout.bounds.width,
-      height: rawLayout.bounds.height,
+      x: minTreeX,
+      y: minTreeY,
+      width: Math.max(0, maxTreeX - minTreeX),
+      height: Math.max(0, maxTreeY - minTreeY),
     };
 
     const annotations = entityList.filter(
@@ -1527,10 +1620,15 @@ export function computeSceneGraphLayout(
     }
 
     // Trace linked list sequence strictly from semantic relationships (next / points_to)
+    const rawNodeIds = new Set(rawNodes.map((n) => n.id));
     const nextRelMap = new Map<string, string>();
     const hasIncomingNext = new Set<string>();
     for (const rel of graph.relationships.values()) {
-      if (rel.type === "next" || rel.type === "points_to") {
+      if (
+        (rel.type === "next" || rel.type === "points_to") &&
+        rawNodeIds.has(rel.sourceEntityId) &&
+        rawNodeIds.has(rel.targetEntityId)
+      ) {
         nextRelMap.set(rel.sourceEntityId, rel.targetEntityId);
         hasIncomingNext.add(rel.targetEntityId);
       }
@@ -2392,11 +2490,34 @@ export function computeSceneGraphLayout(
     }
   }
 
+  // Sanitize positions and bounds to guarantee all coordinates are finite
+  for (const [id, pos] of positions.entries()) {
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) {
+      positions.set(id, {
+        x: Number.isFinite(pos.x) ? pos.x : origin.x,
+        y: Number.isFinite(pos.y) ? pos.y : origin.y,
+      });
+    }
+  }
+
   const totalBounds = computeSceneBounds(allFinalBounds);
+
+  const safeBounds: LayoutBounds = {
+    x: Number.isFinite(totalBounds.x) ? totalBounds.x : origin.x,
+    y: Number.isFinite(totalBounds.y) ? totalBounds.y : origin.y,
+    width:
+      Number.isFinite(totalBounds.width) && totalBounds.width >= 0
+        ? totalBounds.width
+        : 0,
+    height:
+      Number.isFinite(totalBounds.height) && totalBounds.height >= 0
+        ? totalBounds.height
+        : 0,
+  };
 
   return {
     positions,
-    bounds: totalBounds,
+    bounds: safeBounds,
   };
 }
 

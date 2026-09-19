@@ -94,6 +94,7 @@ export function generateDiagnosticsElements(
       roughness: 0,
       customData: {
         isDiagnostic: true,
+        isAiTeaching: true,
         debugTargetId: box.id,
       },
     });
@@ -115,6 +116,7 @@ export function generateDiagnosticsElements(
       strokeColor,
       customData: {
         isDiagnostic: true,
+        isAiTeaching: true,
         debugTargetId: box.id,
       },
     });

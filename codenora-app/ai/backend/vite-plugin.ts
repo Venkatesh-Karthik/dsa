@@ -8,6 +8,8 @@
 import {
   handleTeachingRequest,
   handleProviderInfoRequest,
+  handleVoiceSynthesisRequest,
+  handleVoiceHealthRequest,
   logStartupConfiguration,
 } from "./server-handler";
 
@@ -51,6 +53,32 @@ export function aiTeachingBackendPlugin(
 
     if (url === "/api/ai/provider-info") {
       handleProviderInfoRequest(req, res, { provider: options?.provider });
+      return;
+    }
+
+    if (url === "/api/voice/synthesize" || url === "/api/ai/voice/synthesize") {
+      handleVoiceSynthesisRequest(req, res).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("[ai-teaching-backend] Voice synthesis error:", err);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: "Internal server error." }));
+        }
+      });
+      return;
+    }
+
+    if (url === "/api/voice/health" || url === "/api/ai/voice/health") {
+      handleVoiceHealthRequest(req, res).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("[ai-teaching-backend] Voice health error:", err);
+        if (!res.headersSent) {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ status: "unavailable", modelReady: false }));
+        }
+      });
       return;
     }
 

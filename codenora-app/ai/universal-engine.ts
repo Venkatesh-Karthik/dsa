@@ -236,10 +236,20 @@ export class UniversalConceptIntelligenceEngine {
 
           if (
             NON_NODE_ACTION_TYPES.has(actType) ||
-            /^t\d+-op\d+$/i.test(actId) ||
+            /^t\d+[-_]op\d+/i.test(actId) ||
+            /^op-\d+/i.test(actId) ||
+            /^step-\d+/i.test(actId) ||
+            /^conn-/i.test(actId) ||
+            /^trans-/i.test(actId) ||
             /^arrow/i.test(actId) ||
             /^edge/i.test(actId) ||
-            /^rel-/i.test(actId)
+            /^rel-/i.test(actId) ||
+            /^ptr-/i.test(actId) ||
+            /^callout/i.test(actId) ||
+            actId.toLowerCase() === "focuscomponent" ||
+            actId.toLowerCase() === "activecomponents" ||
+            actId.toLowerCase() === "create_arrow" ||
+            actId.toLowerCase() === "root"
           ) {
             continue;
           }
@@ -1060,6 +1070,49 @@ export class UniversalConceptIntelligenceEngine {
               }
             }
 
+            // Collect all new canonical node IDs for this tree
+            const currentTreeCanonicalIds = new Set<string>();
+            const currentTreeRawIds = new Set<string>();
+            for (const node of tree.nodes) {
+              const canonicalId = node.id.startsWith(`${treeId}-`)
+                ? node.id
+                : `${treeId}-${node.id}`;
+              currentTreeCanonicalIds.add(canonicalId);
+              currentTreeRawIds.add(node.id);
+            }
+
+            // Purge any stale tree nodes from nextEntities that belong to this tree but are absent from the new snapshot
+            const staleNodeIds: string[] = [];
+            for (const [eId, ent] of nextEntities.entries()) {
+              const entTreeId = ent.properties?.treeId as string | undefined;
+              const rawId =
+                (ent.properties?.rawId as string | undefined) || eId;
+              const isTreeEntity =
+                ent.type === "TreeNode" ||
+                ent.semanticRole === "root" ||
+                ent.semanticRole === "tree-node" ||
+                entTreeId === treeId;
+              if (isTreeEntity) {
+                if (
+                  !currentTreeCanonicalIds.has(eId) &&
+                  !currentTreeRawIds.has(rawId) &&
+                  !currentTreeRawIds.has(eId)
+                ) {
+                  staleNodeIds.push(eId);
+                } else if (
+                  !currentTreeCanonicalIds.has(eId) &&
+                  (currentTreeRawIds.has(rawId) || currentTreeRawIds.has(eId))
+                ) {
+                  // Duplicate un-namespaced alias: purge to preserve single canonical identity
+                  staleNodeIds.push(eId);
+                }
+              }
+            }
+            for (const sId of staleNodeIds) {
+              nextEntities.delete(sId);
+              affectedEntities.push(sId);
+            }
+
             for (const node of tree.nodes) {
               const nodeId = node.id.startsWith(`${treeId}-`)
                 ? node.id
@@ -1103,7 +1156,11 @@ export class UniversalConceptIntelligenceEngine {
                   type: "leftOf",
                   direction: "forward",
                   label: "L",
-                  properties: { directed: true },
+                  properties: {
+                    directed: true,
+                    branch: "left",
+                    originalType: "leftOf",
+                  },
                 });
               }
 
@@ -1119,7 +1176,11 @@ export class UniversalConceptIntelligenceEngine {
                   type: "rightOf",
                   direction: "forward",
                   label: "R",
-                  properties: { directed: true },
+                  properties: {
+                    directed: true,
+                    branch: "right",
+                    originalType: "rightOf",
+                  },
                 });
               }
 
@@ -1135,7 +1196,10 @@ export class UniversalConceptIntelligenceEngine {
                     target: childId,
                     type: "parentOf",
                     direction: "forward",
-                    properties: { directed: true },
+                    properties: {
+                      directed: true,
+                      originalType: "parentOf",
+                    },
                   });
                 }
               }

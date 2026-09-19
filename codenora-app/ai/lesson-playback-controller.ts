@@ -26,6 +26,9 @@ import type {
   TransformationMeta,
 } from "./transformation-timeline";
 import type { SceneState } from "./scene-state";
+import type { TeachingMoment } from "./teaching-moment";
+import type { VoiceExplanationEngine } from "./voice/voice-explanation-engine";
+import type { VoiceExplanationContext } from "./voice/voice-contract";
 
 export type PlaybackStatus = "IDLE" | "TRANSITIONING" | "PLAYING" | "PAUSED";
 
@@ -38,6 +41,8 @@ export interface LessonPlaybackState {
   status: PlaybackStatus;
   speed: number;
   currentMeta?: TransformationMeta;
+  currentMoment?: TeachingMoment;
+  voiceEnabled?: boolean;
 }
 
 export type PlaybackStateListener = (state: LessonPlaybackState) => void;
@@ -52,12 +57,20 @@ export class LessonPlaybackController {
   private status: PlaybackStatus = "IDLE";
   private speed: number = 1;
   private playbackTimer: ReturnType<typeof setInterval> | null = null;
+  private stepAdvanceTimer: ReturnType<typeof setTimeout> | null = null;
+  private visualTimer: ReturnType<typeof setTimeout> | null = null;
+  private safetyTimer: ReturnType<typeof setTimeout> | null = null;
+  private voiceEndedUnsubscribe: (() => void) | null = null;
+  private playbackSessionId: number = 0;
+  private voiceEngine: VoiceExplanationEngine | null = null;
+  private voiceEnabled: boolean = true;
   private listeners = new Set<PlaybackStateListener>();
 
   constructor(
     excalidrawAPI: ExcalidrawImperativeAPI,
     timeline: CompiledTimeline,
     initialIndex: number = 0,
+    voiceEngine?: VoiceExplanationEngine | null,
   ) {
     this.excalidrawAPI = excalidrawAPI;
     this.timeline = timeline;
@@ -68,6 +81,7 @@ export class LessonPlaybackController {
     this.pendingTargetIndex = this.currentIndex;
     this.authoritativeState = this.timeline.states[this.currentIndex];
     this.timeline.currentIndex = this.currentIndex;
+    this.voiceEngine = voiceEngine ?? null;
   }
 
   // ============================================================================
@@ -89,7 +103,7 @@ export class LessonPlaybackController {
         ? this.pendingTargetIndex
         : this.currentIndex;
     return {
-      currentIndex: this.currentIndex,
+      currentIndex: effectiveIdx,
       pendingIndex: this.pendingTargetIndex,
       totalSteps: total,
       canPrev: effectiveIdx > 0,
@@ -97,7 +111,40 @@ export class LessonPlaybackController {
       status: this.status,
       speed: this.speed,
       currentMeta: this.timeline.meta[effectiveIdx],
+      currentMoment: this.timeline.moments?.[effectiveIdx],
+      voiceEnabled: this.voiceEnabled,
     };
+  }
+
+  public getCurrentMoment(): TeachingMoment | undefined {
+    const effectiveIdx =
+      this.status === "TRANSITIONING"
+        ? this.pendingTargetIndex
+        : this.currentIndex;
+    return this.timeline.moments?.[effectiveIdx];
+  }
+
+  public setVoiceEngine(voiceEngine: VoiceExplanationEngine | null): void {
+    this.voiceEngine = voiceEngine;
+  }
+
+  public isVoiceEnabled(): boolean {
+    return this.voiceEnabled;
+  }
+
+  public setVoiceEnabled(enabled: boolean): void {
+    if (this.voiceEnabled === enabled) {
+      return;
+    }
+    this.voiceEnabled = enabled;
+    if (!enabled && this.voiceEngine) {
+      this.voiceEngine.stop();
+    }
+    if (this.status === "PLAYING") {
+      this.clearPlaybackTimers();
+      this.coordinateCurrentPlaybackStep();
+    }
+    this.emitStateChange();
   }
 
   public getCurrentSceneState(): SceneState {
@@ -140,7 +187,9 @@ export class LessonPlaybackController {
     }
 
     cancelActiveSceneAnimation();
-    const targetState = this.timeline.states[this.currentIndex];
+    const targetMoment = this.timeline.moments?.[this.currentIndex];
+    const targetState =
+      targetMoment?.visualState ?? this.timeline.states[this.currentIndex];
     const currentElements =
       this.excalidrawAPI.getSceneElementsIncludingDeleted();
 
@@ -243,49 +292,72 @@ export class LessonPlaybackController {
     // 2. Safely cancel active animation without triggering false completion callbacks
     cancelActiveSceneAnimation();
 
-    this.status = "TRANSITIONING";
-    this.emitStateChange();
+    // Invalidate/stop active voice playback when manually navigating or starting transition
+    if (this.voiceEngine) {
+      this.voiceEngine.stop();
+    }
 
     // 3. Fetch authoritative target SceneState (NEVER inferred from canvas coordinates)
     const targetState = this.timeline.states[targetIndex];
-    const currentElements =
-      this.excalidrawAPI.getSceneElementsIncludingDeleted();
+    if (!targetState) {
+      console.warn(
+        `[COGNORA][TRANSITION] Target state at index ${targetIndex} not found; dropping transition.`,
+      );
+      this.status = this.isPlaybackActive() ? "PLAYING" : "IDLE";
+      this.emitStateChange();
+      return;
+    }
 
-    // 4. Reconcile complete target SceneState against current elements
-    const reconcileRes = reconcileSceneState(
-      targetState,
-      currentElements,
-      this.timeline.lessonId,
-    );
+    this.status = "TRANSITIONING";
+    this.emitStateChange();
 
-    if (animate) {
-      const baseDuration = 380;
-      const duration = Math.max(120, Math.round(baseDuration / this.speed));
+    try {
+      const currentElements =
+        this.excalidrawAPI.getSceneElementsIncludingDeleted();
 
-      animateSceneTransition(this.excalidrawAPI, reconcileRes.elements, {
-        duration,
-        transitionId: currentTxId,
-        isTransitionActive: (id) => id === this.transitionId,
-        onComplete: () => {
-          if (this.transitionId === currentTxId) {
-            this.commitTransition(targetIndex, targetState);
-          } else {
+      // 4. Reconcile complete target SceneState against current elements
+      const reconcileRes = reconcileSceneState(
+        targetState,
+        currentElements,
+        this.timeline.lessonId,
+      );
+
+      if (animate) {
+        const baseDuration = 380;
+        const duration = Math.max(120, Math.round(baseDuration / this.speed));
+
+        animateSceneTransition(this.excalidrawAPI, reconcileRes.elements, {
+          duration,
+          transitionId: currentTxId,
+          isTransitionActive: (id) => id === this.transitionId,
+          onComplete: () => {
+            if (this.transitionId === currentTxId) {
+              this.commitTransition(targetIndex, targetState);
+            } else {
+              console.log(
+                `[COGNORA][ANIMATION] superseded transitionId=${currentTxId} (active=${this.transitionId}) discarded cleanly.`,
+              );
+            }
+          },
+          onCancel: () => {
             console.log(
-              `[COGNORA][ANIMATION] superseded transitionId=${currentTxId} (active=${this.transitionId}) discarded cleanly.`,
+              `[COGNORA][ANIMATION] cancelled transitionId=${currentTxId}`,
             );
-          }
-        },
-        onCancel: () => {
-          console.log(
-            `[COGNORA][ANIMATION] cancelled transitionId=${currentTxId}`,
-          );
-        },
-      });
-    } else {
-      this.excalidrawAPI.updateScene({
-        elements: reconcileRes.elements,
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-      });
+          },
+        });
+      } else {
+        this.excalidrawAPI.updateScene({
+          elements: reconcileRes.elements,
+          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        });
+        this.commitTransition(targetIndex, targetState);
+      }
+    } catch (err) {
+      console.error(
+        `[COGNORA][TRANSITION] Exception during transition to index ${targetIndex}:`,
+        err,
+      );
+      // Fallback: atomically commit target state without throwing unhandled exceptions
       this.commitTransition(targetIndex, targetState);
     }
   }
@@ -294,11 +366,14 @@ export class LessonPlaybackController {
    * Commits the settled target state atomically.
    */
   private commitTransition(targetIndex: number, targetState: SceneState): void {
+    const isPlaying = this.status === "PLAYING" || Boolean(this.playbackTimer);
+    const nextStatus = isPlaying ? "PLAYING" : "IDLE";
+
     this.currentIndex = targetIndex;
     this.pendingTargetIndex = targetIndex;
     this.authoritativeState = targetState;
     this.timeline.currentIndex = targetIndex;
-    this.status = this.playbackTimer ? "PLAYING" : "IDLE";
+    this.status = nextStatus;
 
     // Viewport camera is NEVER moved on transitions; scenes transform strictly in place
     this.emitStateChange();
@@ -306,6 +381,16 @@ export class LessonPlaybackController {
     console.log(
       `[COGNORA][STATE] committed index=${targetIndex} total=${this.timeline.states.length}`,
     );
+
+    // If lesson playback is active and voice is enabled, coordinate voice + visual for the newly committed step
+    if (nextStatus === "PLAYING" && this.voiceEngine && this.voiceEnabled) {
+      this.clearPlaybackTimers();
+      this.coordinateCurrentPlaybackStep();
+    }
+  }
+
+  private isPlaybackActive(): boolean {
+    return this.status === "PLAYING" || Boolean(this.playbackTimer);
   }
 
   // ============================================================================
@@ -325,28 +410,193 @@ export class LessonPlaybackController {
     this.status = "PLAYING";
     this.emitStateChange();
 
-    const baseInterval = 2400;
-    const interval = Math.max(600, Math.round(baseInterval / this.speed));
-
-    this.playbackTimer = setInterval(() => {
-      const hasNext = this.next(true);
-      if (!hasNext) {
-        this.pause();
-      }
-    }, interval);
+    this.clearPlaybackTimers();
+    this.coordinateCurrentPlaybackStep();
   }
 
-  public pause(): void {
+  private coordinateCurrentPlaybackStep(): void {
+    if (this.status !== "PLAYING") {
+      return;
+    }
+
+    const currentSession = ++this.playbackSessionId;
+    const currentStep = this.currentIndex;
+
+    // Fallback: If voiceEngine is absent or voice is muted, run with comfortable interval timer
+    if (!this.voiceEngine || !this.voiceEnabled) {
+      const baseInterval = 2400;
+      const interval = Math.max(600, Math.round(baseInterval / this.speed));
+
+      this.playbackTimer = setInterval(() => {
+        try {
+          const hasNext = this.next(true);
+          if (!hasNext) {
+            this.pause();
+          }
+        } catch (err) {
+          console.error("[COGNORA][PLAYBACK] Play loop caught error:", err);
+          this.pause();
+        }
+      }, interval);
+      return;
+    }
+
+    // Coordinated Visual + Voice playback
+    let visualReady = false;
+    let voiceReady = false;
+    let stepAdvanceScheduled = false;
+
+    const attemptAdvance = () => {
+      if (
+        this.status !== "PLAYING" ||
+        this.playbackSessionId !== currentSession ||
+        this.currentIndex !== currentStep
+      ) {
+        return;
+      }
+
+      if (visualReady && voiceReady && !stepAdvanceScheduled) {
+        stepAdvanceScheduled = true;
+        const pauseDuration = Math.max(150, Math.round(400 / this.speed));
+        this.stepAdvanceTimer = setTimeout(() => {
+          if (
+            this.status !== "PLAYING" ||
+            this.playbackSessionId !== currentSession ||
+            this.currentIndex !== currentStep
+          ) {
+            return;
+          }
+
+          if (this.currentIndex >= this.timeline.states.length - 1) {
+            this.pause();
+            return;
+          }
+
+          const hasNext = this.next(true);
+          if (!hasNext) {
+            this.pause();
+          }
+        }, pauseDuration);
+      }
+    };
+
+    // Minimum visual duration before advancing (~1200ms)
+    const minVisualDuration = Math.max(600, Math.round(1200 / this.speed));
+    this.visualTimer = setTimeout(() => {
+      visualReady = true;
+      attemptAdvance();
+    }, minVisualDuration);
+
+    const meta = this.timeline.meta[currentStep];
+    const moment = this.timeline.moments?.[currentStep];
+    const voiceContext: VoiceExplanationContext = {
+      lessonId: this.timeline.lessonId,
+      transformationId:
+        moment?.transformationId || meta?.id || `t-${currentStep}`,
+      stepIndex: currentStep,
+      totalSteps: this.timeline.meta.length,
+      title: moment?.title || meta?.title || `Step ${currentStep + 1}`,
+      explanation: moment?.explanation || meta?.explanation || "",
+      calculations: meta?.calculations,
+      insight: meta?.insight,
+      topic: this.timeline.topic,
+      concept: this.timeline.topic,
+      semanticFocus: moment?.semanticFocus?.entityIds?.[0] || meta?.title,
+    };
+
+    // Listen for voice audio completion
+    this.voiceEndedUnsubscribe = this.voiceEngine.addOnAudioEndedListener(
+      () => {
+        if (
+          this.status === "PLAYING" &&
+          this.playbackSessionId === currentSession
+        ) {
+          voiceReady = true;
+          attemptAdvance();
+        }
+      },
+    );
+
+    // Safety timeout in case speech hangs or TTS fails
+    this.safetyTimer = setTimeout(() => {
+      if (
+        this.status === "PLAYING" &&
+        this.playbackSessionId === currentSession
+      ) {
+        voiceReady = true;
+        attemptAdvance();
+      }
+    }, 15000);
+
+    // Speak (plays from cache immediately if prepared)
+    this.voiceEngine.play(voiceContext).catch((err) => {
+      console.warn(
+        "[COGNORA][PLAYBACK] Voice play encountered error, continuing visually:",
+        err,
+      );
+      voiceReady = true;
+      attemptAdvance();
+    });
+  }
+
+  private clearPlaybackTimers(): void {
     if (this.playbackTimer) {
       clearInterval(this.playbackTimer);
       this.playbackTimer = null;
+    }
+    if (this.stepAdvanceTimer) {
+      clearTimeout(this.stepAdvanceTimer);
+      this.stepAdvanceTimer = null;
+    }
+    if (this.visualTimer) {
+      clearTimeout(this.visualTimer);
+      this.visualTimer = null;
+    }
+    if (this.safetyTimer) {
+      clearTimeout(this.safetyTimer);
+      this.safetyTimer = null;
+    }
+    if (this.voiceEndedUnsubscribe) {
+      this.voiceEndedUnsubscribe();
+      this.voiceEndedUnsubscribe = null;
+    }
+  }
+
+  public pause(): void {
+    this.playbackSessionId++;
+    this.clearPlaybackTimers();
+    if (this.voiceEngine) {
+      this.voiceEngine.pause();
     }
     this.status = "PAUSED";
     this.emitStateChange();
   }
 
+  public resume(): void {
+    if (this.status !== "PAUSED") {
+      return;
+    }
+    this.status = "PLAYING";
+    this.emitStateChange();
+    if (this.voiceEngine && this.voiceEnabled) {
+      this.voiceEngine.resume();
+    }
+    this.clearPlaybackTimers();
+    this.coordinateCurrentPlaybackStep();
+  }
+
+  public stop(): void {
+    this.playbackSessionId++;
+    this.clearPlaybackTimers();
+    if (this.voiceEngine) {
+      this.voiceEngine.stop();
+    }
+    this.status = "IDLE";
+    this.emitStateChange();
+  }
+
   public replay(): void {
-    this.pause();
+    this.stop();
     this.seek(0, false);
     this.play();
   }
@@ -429,10 +679,7 @@ export class LessonPlaybackController {
    * Cleans up timers and active listeners on unmount.
    */
   public destroy(): void {
-    if (this.playbackTimer) {
-      clearInterval(this.playbackTimer);
-      this.playbackTimer = null;
-    }
+    this.stop();
     cancelActiveSceneAnimation();
     this.listeners.clear();
   }

@@ -28,3 +28,9 @@ html
 meta*.json
 .claude
 scratch/
+test-artifacts/
+__pycache__/
+*.pyc
+.venv/
+venv/
+cognora-voice/smoke_test_output.wav

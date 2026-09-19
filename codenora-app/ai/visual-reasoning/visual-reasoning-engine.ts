@@ -312,11 +312,16 @@ export class VisualReasoningEngine {
         relHighlight = "active";
       }
 
+      const effectiveType =
+        (plannedRel.properties?.originalType as string) ||
+        semRel.type ||
+        plannedRel.category;
+
       graph.relationships.set(id, {
         id,
         sourceEntityId: plannedRel.source,
         targetEntityId: plannedRel.target,
-        type: plannedRel.category,
+        type: effectiveType,
         label: plannedRel.label,
         properties: {
           directed: plannedRel.direction !== "none",
@@ -325,6 +330,8 @@ export class VisualReasoningEngine {
           visualWeight: plannedRel.visualWeight,
           highlight: relHighlight,
           color: (semRel.properties?.color as string | undefined) || undefined,
+          originalType: effectiveType,
+          branch: plannedRel.properties?.branch,
           ...(semRel.properties || {}),
         },
       });

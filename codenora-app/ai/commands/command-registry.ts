@@ -24,6 +24,8 @@ import type {
   CommandResult,
   ParsedCommand,
   CommandCategory,
+  CommandRiskLevel,
+  CommandConfirmationPolicy,
 } from "./command-types";
 
 // ============================================================================
@@ -833,6 +835,10 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
     aliases: ["clear"],
     category: "SESSION",
     executionClass: "LOCAL",
+    riskLevel: "DESTRUCTIVE",
+    confirmationPolicy: "ALWAYS",
+    semanticEffect:
+      "Clears all canvas elements and resets active lesson session",
     description: "Resets the canvas and teaching workspace",
     syntax: "/reset or /clear",
     examples: ["/reset", "/clear"],
@@ -844,6 +850,7 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
       return {
         status: "success",
         success: true,
+        riskLevel: "DESTRUCTIVE",
         message: "Workspace cleared.",
         executionClass: "LOCAL",
         commandName: "clear",
@@ -1040,7 +1047,11 @@ export function findCommand(
   if (!nameOrAlias) {
     return undefined;
   }
-  const norm = nameOrAlias.toLowerCase().trim();
+  const norm = nameOrAlias
+    .toLowerCase()
+    .replace(/^\//, "")
+    .trim()
+    .split(/\s+/)[0];
   return BUILTIN_COMMANDS.find(
     (cmd) => cmd.name === norm || cmd.aliases.includes(norm),
   );
@@ -1274,4 +1285,76 @@ export function getHelpText(cmdName?: string): string {
   ];
 
   return lines.join("\n");
+}
+
+/**
+ * Resolves the risk level for a command name or alias.
+ */
+export function getCommandRiskLevel(commandName: string): CommandRiskLevel {
+  const name = commandName
+    .toLowerCase()
+    .replace(/^\//, "")
+    .trim()
+    .split(/\s+/)[0];
+  const def = findCommand(name);
+  if (def?.riskLevel) {
+    return def.riskLevel;
+  }
+  if (name === "clear" || name === "reset") {
+    return "DESTRUCTIVE";
+  }
+  if (
+    [
+      "insert",
+      "add",
+      "delete",
+      "remove",
+      "swap",
+      "connect",
+      "disconnect",
+      "update",
+      "reverse",
+      "rotate",
+      "push",
+      "pop",
+      "enqueue",
+      "dequeue",
+      "array",
+      "linked-list",
+      "stack",
+      "queue",
+      "tree",
+      "heap",
+      "graph",
+      "matrix",
+    ].includes(name)
+  ) {
+    return "MODIFY";
+  }
+  return "SAFE";
+}
+
+/**
+ * Resolves the confirmation policy for a command name or alias.
+ */
+export function getCommandConfirmationPolicy(
+  commandName: string,
+): CommandConfirmationPolicy {
+  const name = commandName
+    .toLowerCase()
+    .replace(/^\//, "")
+    .trim()
+    .split(/\s+/)[0];
+  const def = findCommand(name);
+  if (def?.confirmationPolicy) {
+    return def.confirmationPolicy;
+  }
+  const risk = getCommandRiskLevel(name);
+  if (risk === "DESTRUCTIVE") {
+    return "ALWAYS";
+  }
+  if (risk === "MODIFY") {
+    return "IF_AMBIGUOUS";
+  }
+  return "NEVER";
 }

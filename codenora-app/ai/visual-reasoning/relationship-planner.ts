@@ -111,6 +111,29 @@ export class RelationshipPlanner {
       // Human-readable label
       const label = RelationshipPlanner.formatLabel(rel);
 
+      const rawType = (rel.type || "").toLowerCase();
+      let branch: "left" | "right" | undefined = rel.properties?.branch as
+        | "left"
+        | "right"
+        | undefined;
+      if (!branch) {
+        if (
+          rawType === "leftof" ||
+          rawType === "left" ||
+          rel.label === "L" ||
+          rel.id.includes("-left-")
+        ) {
+          branch = "left";
+        } else if (
+          rawType === "rightof" ||
+          rawType === "right" ||
+          rel.label === "R" ||
+          rel.id.includes("-right-")
+        ) {
+          branch = "right";
+        }
+      }
+
       const plannedRel: PlannedRelationship = {
         id: rel.id,
         source: rel.source,
@@ -126,6 +149,8 @@ export class RelationshipPlanner {
         causalMeaning: rel.causalMeaning,
         properties: {
           ...(rel.properties || {}),
+          originalType: rel.type,
+          branch,
           directed: direction !== "none",
         },
       };

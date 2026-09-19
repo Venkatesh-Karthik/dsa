@@ -126,11 +126,15 @@
     background-color: #f8fafc !important;
   }
 
-  // Radial dot grid pattern from Stitch
+  // Radial dot grid pattern from Stitch for Excalidraw workspace background
   .canvas-bg,
-  canvas {
-    background-image: radial-gradient(#cbd5e1 1.25px, transparent 1.25px);
-    background-size: 24px 24px;
+  canvas.interactive {
+    background-image: radial-gradient(#cbd5e1 1.25px, transparent 1.25px) !important;
+    background-size: 24px 24px !important;
+  }
+
+  canvas.static {
+    background-image: none !important;
   }
 }
 
@@ -169,6 +173,10 @@
   outline: none !important;
   box-shadow: none !important;
   color: #0f172a !important;
+  white-space: pre-wrap !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  min-width: 0 !important;
 }
 
 // Keep canvas fully interactive under floating overlays
@@ -772,6 +780,8 @@
 
   &__input {
     flex: 1;
+    min-width: 0 !important;
+    width: 100% !important;
     background: transparent !important;
     border: none !important;
     padding: 6px 6px;
@@ -785,9 +795,13 @@
     resize: none;
     min-height: 26px;
     max-height: 160px;
+    white-space: pre-wrap !important;
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
+    overflow-x: hidden !important;
     overflow-y: hidden;
     display: block;
-    box-sizing: border-box;
+    box-sizing: border-box !important;
 
     &::-webkit-scrollbar {
       width: 4px;

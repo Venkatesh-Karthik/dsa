@@ -122,6 +122,7 @@ import DebugCanvas, {
 import { useSimulatedCollaborators } from "./debugCollaborators";
 import { AIComponents } from "./components/AI";
 import { AITeachingAgent } from "./components/AITeachingAgent";
+import { CognoraErrorBoundary } from "./components/CognoraErrorBoundary";
 
 import "./index.scss";
 
@@ -950,7 +951,11 @@ const ExcalidrawWrapper = () => {
         </OverwriteConfirmDialog>
         <AppFooter onChange={() => excalidrawAPI?.refresh()} />
         {excalidrawAPI && <AIComponents excalidrawAPI={excalidrawAPI} />}
-        {excalidrawAPI && <AITeachingAgent excalidrawAPI={excalidrawAPI} />}
+        {excalidrawAPI && (
+          <CognoraErrorBoundary componentName="CognoraAITeachingAgent">
+            <AITeachingAgent excalidrawAPI={excalidrawAPI} />
+          </CognoraErrorBoundary>
+        )}
 
         <TTDDialogTrigger />
         {isCollaborating && isOffline && (

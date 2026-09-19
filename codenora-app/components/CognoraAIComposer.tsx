@@ -381,6 +381,14 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
             ref={textareaRef}
             rows={1}
             className="cognora-ai-composer__input"
+            style={{
+              whiteSpace: "pre-wrap",
+              overflowWrap: "break-word",
+              wordBreak: "break-word",
+              minWidth: 0,
+              width: "100%",
+              boxSizing: "border-box",
+            }}
             placeholder={
               selectedContext.length > 0
                 ? `Ask about selected ${formatSelectedElementChip(
