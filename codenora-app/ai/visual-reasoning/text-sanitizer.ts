@@ -41,6 +41,16 @@ export function sanitizeVisualText(raw: unknown): string {
   );
   str = str.replace(/^temp_[a-zA-Z0-9_\-]+(?:\s*:\s*)/i, "");
 
+  // 2b. Sanitize internal compiler/semantic IDs to clean student-facing names
+  str = str.replace(/\b(?:dijkstra[-_]graph|graph[-_]main)[-_]([A-Za-z0-9]+)\b/gi, "Node $1");
+  str = str.replace(/\bdist[-_]table[-_](?:before|after)\b/gi, "Distance Table");
+  str = str.replace(/\bdist[-_]table\b/gi, "Distance Table");
+  str = str.replace(/\bpq[-_](?:before|after)\b/gi, "Priority Queue");
+  str = str.replace(/\bpq\b/gi, "Priority Queue");
+  str = str.replace(/\binvariant[-_]text\b/gi, "Algorithm Invariant");
+  str = str.replace(/\bptr[-_]([A-Za-z0-9_-]+)\b/gi, "Pointer $1");
+  str = str.replace(/\bpointer\b/gi, "Pointer");
+
   // 3. Remove raw serialization tags like "[object Object]"
   if (str.includes("[object Object]")) {
     str = str.replace(/\[object Object\]/g, "").trim();

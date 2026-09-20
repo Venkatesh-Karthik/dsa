@@ -41,6 +41,25 @@ export class SpeechPreprocessor {
     // 2. Remove markdown code blocks and backticks
     text = this.cleanMarkdown(text);
 
+    // 2b. Translate internal compiler / domain IDs to spoken English
+    text = text.replace(
+      /\b(?:dijkstra[-_]graph|graph[-_]main)[-_]([A-Za-z0-9]+)\b/gi,
+      "Node $1",
+    );
+    text = text.replace(
+      /\bdist[-_]table(?:[-_](?:before|after))?\b/gi,
+      "the distance table",
+    );
+    text = text.replace(
+      /\bpq(?:[-_](?:before|after))?\b/gi,
+      "the priority queue",
+    );
+    text = text.replace(/\binvariant[-_]text\b/gi, "the invariant");
+    text = text.replace(
+      /\b(?:Introducing\s+)?pointer,\s*(Node\s+[A-Za-z0-9]+)/gi,
+      "Current $1",
+    );
+
     // 3. Remove internal IDs and debug tokens
     for (const pattern of this.INTERNAL_ID_PATTERNS) {
       text = text.replace(pattern, (match) => {

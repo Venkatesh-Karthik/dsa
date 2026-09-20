@@ -17,6 +17,7 @@ import { SpeechPreprocessor } from "./voice/speech-preprocessor";
 
 import type { SceneState } from "./scene-state";
 import type { AuthoritativeSemanticModel } from "./authoritative-model";
+import type { VoiceState } from "./voice/voice-contract";
 
 export type SemanticFocusType =
   | "entity"
@@ -36,7 +37,12 @@ export interface SemanticFocusTarget {
 
 export interface TeachingMoment {
   id: string;
+  lessonId?: string;
+  generationId?: string;
   transformationId: string;
+  stepId?: string;
+  worldVersion?: number;
+  branchId?: string;
   stepIndex: number;
   totalSteps: number;
 
@@ -62,11 +68,33 @@ export interface TeachingMoment {
 
   title: string;
   explanation: string;
+  whatChanged?: string;
+  whyItChanged?: string;
   why?: string;
   consequence?: string;
 
   /** Spoken script for Chatterbox-Turbo TTS */
   narration: string;
+  voiceState?: VoiceState;
+
+  visualStrategy?: string;
+  callout?: {
+    text: string;
+    placementPreference?: "above" | "below" | "left" | "right" | "floating";
+  };
+  inspectorContent?: {
+    why: string;
+    calculations?: string;
+    insight?: string;
+    codeContext?: {
+      code: string;
+      language?: string;
+    };
+  };
+  playbackMetadata?: {
+    durationHint?: number;
+    importance?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
+  };
 
   durationHint?: number;
   importance?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
@@ -86,6 +114,12 @@ export class TeachingMomentCompiler {
   public static compile(
     model: AuthoritativeSemanticModel,
     states: SceneState[],
+    options?: {
+      lessonId?: string;
+      generationId?: string;
+      worldVersion?: number;
+      branchId?: string;
+    },
   ): TeachingMoment[] {
     if (!states || states.length === 0) {
       return [];
@@ -93,6 +127,10 @@ export class TeachingMomentCompiler {
 
     const totalSteps = states.length;
     const moments: TeachingMoment[] = [];
+    const lessonId = options?.lessonId || model.id || "lesson-active";
+    const generationId = options?.generationId || (model as any).generationId || "GEN-1";
+    const worldVersion = options?.worldVersion ?? (model as any).worldVersion ?? 1;
+    const branchId = options?.branchId || "MAIN";
 
     for (let sIdx = 0; sIdx < totalSteps; sIdx++) {
       const visualState = states[sIdx];
@@ -199,7 +237,15 @@ export class TeachingMomentCompiler {
 
       moments.push({
         id: trans?.id || (sIdx === 0 ? "moment-initial" : `moment-${sIdx}`),
+        lessonId,
+        generationId,
         transformationId: trans?.id || (sIdx === 0 ? "initial" : `t-${sIdx}`),
+        stepId: trans?.id || `step-${sIdx}`,
+        worldVersion:
+          options?.worldVersion !== undefined
+            ? options.worldVersion + sIdx
+            : sIdx + 1,
+        branchId,
         stepIndex: sIdx,
         totalSteps,
         beforeState,
@@ -217,9 +263,36 @@ export class TeachingMomentCompiler {
         semanticFocus,
         title: stepTitle,
         explanation: stepExplanation,
+        whatChanged: stepExplanation || stepTitle,
+        whyItChanged: why,
         why,
         consequence,
         narration,
+        voiceState: "IDLE",
+        visualStrategy:
+          typeof (visualState.graph?.metadata as any)?.layoutStrategy === "string"
+            ? (visualState.graph?.metadata as any).layoutStrategy
+            : "DYNAMIC",
+        callout: {
+          text: stepExplanation || stepTitle,
+          placementPreference: "above",
+        },
+        inspectorContent: {
+          why,
+          calculations: trans?.calculations,
+          insight: trans?.insight,
+          codeContext,
+        },
+        playbackMetadata: {
+          durationHint: trans ? 2400 : 1800,
+          importance:
+            sIdx === 0 || sIdx === totalSteps - 1
+              ? "HIGH"
+              : trans?.title?.toLowerCase().includes("rotate") ||
+                trans?.title?.toLowerCase().includes("rebalance")
+              ? "CRITICAL"
+              : "NORMAL",
+        },
         durationHint: trans ? 2400 : 1800,
         importance:
           sIdx === 0 || sIdx === totalSteps - 1

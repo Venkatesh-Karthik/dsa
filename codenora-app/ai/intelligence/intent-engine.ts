@@ -50,10 +50,10 @@ export class IntentEngine {
       });
     }
 
-    // 2. What-If Branch Exit triggers
+    // 2. What-If Branch or Detour Exit triggers
     if (
-      worldState?.activeBranch &&
-      /^(?:go\s+back|back|return|return\s+to\s+lesson|exit\s+branch|back\s+to\s+main|cancel\s+what\s*if)$/i.test(
+      (worldState?.activeBranch || worldState?.activeDetour) &&
+      /\b(?:go\s+back|back|return|return\s+to\s+lesson|exit\s+branch|exit\s+detour|back\s+to\s+main|cancel\s+what\s*if)\b/i.test(
         lower,
       )
     ) {
@@ -63,15 +63,19 @@ export class IntentEngine {
         intentType: "BRANCH_EXIT",
         confidence: 1.0,
         riskLevel: "SAFE",
-        parameters: { branchId: worldState.activeBranch.branchId },
+        parameters: {
+          branchId: worldState.activeBranch?.branchId,
+          detourId: worldState.activeDetour?.detourId,
+        },
       });
     }
 
     // 3. Pacing Controls
     if (
-      /^(?:slow\s+down|go\s+slower|slower|too\s+fast|reduce\s+speed)$/i.test(
+      /\b(?:slow\s+down|go\s+slower|reduce\s+speed|too\s+fast)\b/i.test(
         lower,
-      )
+      ) ||
+      /^(?:slower)$/i.test(lower)
     ) {
       return createInputIntent({
         source,
@@ -83,9 +87,10 @@ export class IntentEngine {
       });
     }
     if (
-      /^(?:speed\s+up|go\s+faster|faster|too\s+slow|increase\s+speed)$/i.test(
+      /\b(?:speed\s+up|go\s+faster|increase\s+speed|too\s+slow)\b/i.test(
         lower,
-      )
+      ) ||
+      /^(?:faster)$/i.test(lower)
     ) {
       return createInputIntent({
         source,
@@ -143,9 +148,25 @@ export class IntentEngine {
       });
     }
 
-    // 5. Adaptive Strategy Requests ("I don't understand", "Simplify")
+    // 5. Comparison & Old vs New State
     if (
-      /^(?:i\s+don'?t\s+understand|i'?m\s+confused|explain\s+simpler|simplify|make\s+it\s+simpler|explain\s+like\s+i'?m\s+(?:5|new|a\s+beginner)|too\s+complicated|too\s+complex)$/i.test(
+      /\b(?:compare|comparison|old\s+state\s+and\s+new\s+state|before\s+and\s+after|show\s+(?:the\s+)?(?:old|previous)\s+state)\b/i.test(
+        lower,
+      )
+    ) {
+      return createInputIntent({
+        source,
+        rawInput: trimmed,
+        intentType: "QUESTION_SIMPLIFY",
+        confidence: 1.0,
+        riskLevel: "SAFE",
+        parameters: { strategy: "COMPARE" },
+      });
+    }
+
+    // 6. Adaptive Strategy Requests ("I don't understand", "Simplify")
+    if (
+      /\b(?:i\s+don'?t\s+understand|i\s+still\s+don'?t\s+understand|i'?m\s+confused|explain\s+simpler|simplify|make\s+it\s+simpler|explain\s+like\s+i'?m\s+(?:5|new|a\s+beginner)|too\s+complicated|too\s+complex|not\s+clear)\b/i.test(
         lower,
       )
     ) {
@@ -227,7 +248,7 @@ export class IntentEngine {
 
     // 8. "Why" Causal Questions
     if (
-      /^why(?:\s+did|\s+is|\s+are|\s+does|\s+do)?\b/i.test(lower) ||
+      /\bwhy\b/i.test(lower) ||
       lower === "why?"
     ) {
       return createInputIntent({

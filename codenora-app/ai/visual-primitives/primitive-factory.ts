@@ -51,7 +51,7 @@ export function sanitizeDisplayLabel(
     // If it's a clean semantic label that isn't an internal machine ID
     const isMachineId = (str: string) =>
       str.startsWith("Component ") ||
-      /^(?:(?:avl[-_]tree|binary[-_]tree|tree|graph|array|arr|list|stack|queue|dll|sll|tcp|server|client|ent|elem|item|node)[-_]|t\d+[-_]op\d+|n\d+)/i.test(
+      /^(?:(?:dijkstra|avl[-_]tree|binary[-_]tree|tree|graph|array|arr|list|stack|queue|dll|sll|tcp|server|client|ent|elem|item|node|dist[-_]table|pq|invariant|ptr)[-_]|t\d+[-_]op\d+|n\d+|pointer)/i.test(
         str,
       );
 
@@ -68,7 +68,7 @@ export function sanitizeDisplayLabel(
     }
     const isMachineId = (str: string) =>
       str.startsWith("Component ") ||
-      /^(?:(?:avl[-_]tree|binary[-_]tree|tree|graph|array|arr|list|stack|queue|dll|sll|tcp|server|client|ent|elem|item|node)[-_]|t\d+[-_]op\d+|n\d+)/i.test(
+      /^(?:(?:dijkstra|avl[-_]tree|binary[-_]tree|tree|graph|array|arr|list|stack|queue|dll|sll|tcp|server|client|ent|elem|item|node|dist[-_]table|pq|invariant|ptr)[-_]|t\d+[-_]op\d+|n\d+|pointer)/i.test(
         str,
       );
 
@@ -80,6 +80,26 @@ export function sanitizeDisplayLabel(
   const candidate = (fallbackLabel || rawId || "").trim();
   if (!candidate) {
     return "";
+  }
+
+  // Sanitization for known domain artifacts
+  if (/^dist[-_]table/i.test(candidate)) {
+    return "Distance Table";
+  }
+  if (/^pq(?:[-_](?:before|after))?$/i.test(candidate)) {
+    return "Priority Queue";
+  }
+  if (/^invariant[-_]text$/i.test(candidate)) {
+    return "Algorithm Invariant";
+  }
+  if (/^pointer$/i.test(candidate)) {
+    return "Pointer";
+  }
+  const graphNodeMatch = candidate.match(
+    /^(?:dijkstra[-_]graph|graph[-_]main)[-_]([A-Za-z0-9]+)$/i,
+  );
+  if (graphNodeMatch) {
+    return graphNodeMatch[1];
   }
 
   // Check for common machine patterns:
@@ -357,17 +377,57 @@ export function createVisualPrimitive(
     }
 
     case "QueueItem": {
-      const width = (entity.properties?.width as number | undefined) ?? 60;
-      const height = (entity.properties?.height as number | undefined) ?? 40;
+      const width = (entity.properties?.width as number | undefined) ?? 70;
+      const height = (entity.properties?.height as number | undefined) ?? 38;
+
+      const qState = (
+        (entity.properties?.queueState as string) ||
+        entity.state ||
+        ""
+      ).toUpperCase();
+
+      const isStale = qState === "STALE" || entity.properties?.isStale === true;
+      const isNew = qState === "NEW";
+      const isProcessed = qState === "PROCESSED" || qState === "DONE";
+
+      let queueLabel = sanitizeDisplayLabel(entity.value, entity.label, rawId);
+      let strokeColor: string | undefined;
+      let backgroundColor: string | undefined;
+      let qHighlight = highlight;
+
+      if (isStale) {
+        queueLabel = `${queueLabel} (stale)`;
+        strokeColor = "rgba(140, 140, 150, 0.45)";
+        backgroundColor = "rgba(30, 30, 38, 0.35)";
+        qHighlight = "muted";
+      } else if (isNew) {
+        queueLabel = `${queueLabel} (new)`;
+        strokeColor = "#38bdf8";
+        backgroundColor = "rgba(56, 189, 248, 0.15)";
+        qHighlight = "accent";
+      } else if (isProcessed) {
+        queueLabel = `${queueLabel} ✓`;
+        strokeColor = "rgba(100, 116, 139, 0.6)";
+        backgroundColor = "rgba(30, 41, 59, 0.4)";
+        qHighlight = "subdued";
+      } else {
+        // ACTIVE
+        strokeColor = "#3b82f6";
+        backgroundColor = "rgba(59, 130, 246, 0.2)";
+        qHighlight = "primary";
+      }
+
       primitive = createGenericEntity({
         id: rawId,
         x: pos.x,
         y: pos.y,
         width,
         height,
-        label: sanitizeDisplayLabel(entity.value, entity.label, rawId),
+        label: queueLabel,
         shape: "rectangle",
-        highlight,
+        highlight: qHighlight,
+        strokeColor,
+        backgroundColor,
         role: "queue-element",
       });
       break;

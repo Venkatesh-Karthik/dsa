@@ -26,6 +26,7 @@ export type CounterfactualMutationType =
 export interface CounterfactualMutation {
   mutationType?: CounterfactualMutationType;
   targetEntityId?: string;
+  sourceEntityId?: string;
   propertyKey?: string;
   hypotheticalValue?: unknown;
   targetRelationshipId?: string;
@@ -203,9 +204,96 @@ export class CounterfactualEngine {
 
       case "property_change":
       default: {
-        const entId = mutation.targetEntityId || "";
-        const ent = simulated.entities.get(entId);
         const propKey = mutation.propertyKey || "value";
+
+        // 1. Check if this mutation targets a relationship (e.g., edge weight change)
+        let matchedRel: import("./semantic-world").Relationship | undefined;
+
+        if (mutation.targetRelationshipId) {
+          matchedRel = simulated.relationships.get(mutation.targetRelationshipId);
+        }
+
+        if (!matchedRel && (mutation.sourceEntityId || (mutation.targetEntityId && mutation.propertyKey === "weight"))) {
+          const srcTerm = (mutation.sourceEntityId || "").toLowerCase();
+          const tgtTerm = (mutation.targetEntityId || "").toLowerCase();
+
+          const srcCandidates = new Set<string>();
+          const tgtCandidates = new Set<string>();
+          if (srcTerm) srcCandidates.add(srcTerm);
+          if (tgtTerm) tgtCandidates.add(tgtTerm);
+
+          for (const [eid, ent] of simulated.entities.entries()) {
+            const eIdLower = eid.toLowerCase();
+            const eLabelLower = (ent.label || "").toLowerCase();
+            if (srcTerm && (eIdLower === srcTerm || eLabelLower === srcTerm || eIdLower.endsWith("-" + srcTerm))) {
+              srcCandidates.add(eid);
+            }
+            if (tgtTerm && (eIdLower === tgtTerm || eLabelLower === tgtTerm || eIdLower.endsWith("-" + tgtTerm))) {
+              tgtCandidates.add(eid);
+            }
+          }
+
+          for (const rel of simulated.relationships.values()) {
+            const rSrc = rel.source.toLowerCase();
+            const rTgt = rel.target.toLowerCase();
+            const rId = rel.id.toLowerCase();
+            const rLabel = (rel.label || "").toLowerCase();
+
+            const srcMatch = srcTerm ? (srcCandidates.has(rSrc) || rSrc === srcTerm || rSrc.endsWith("-" + srcTerm)) : true;
+            const tgtMatch = tgtTerm ? (tgtCandidates.has(rTgt) || rTgt === tgtTerm || rTgt.endsWith("-" + tgtTerm)) : true;
+
+            if (srcMatch && tgtMatch) {
+              matchedRel = rel;
+              break;
+            }
+
+            if (
+              srcTerm &&
+              tgtTerm &&
+              (rId.includes(`${srcTerm}-${tgtTerm}`) ||
+                rId.includes(`${srcTerm}_${tgtTerm}`) ||
+                rLabel.includes(`${srcTerm}->${tgtTerm}`) ||
+                rLabel.includes(`${srcTerm}→${tgtTerm}`))
+            ) {
+              matchedRel = rel;
+              break;
+            }
+          }
+        }
+
+        if (matchedRel) {
+          if (!matchedRel.properties) {
+            matchedRel.properties = {};
+          }
+          const oldValue = matchedRel.properties[propKey] ?? matchedRel.label ?? "unknown";
+          matchedRel.properties[propKey] = mutation.hypotheticalValue;
+          if (propKey === "weight") {
+            matchedRel.label = String(mutation.hypotheticalValue);
+          }
+          const srcLabel = simulated.entities.get(matchedRel.source)?.label || matchedRel.source;
+          const tgtLabel = simulated.entities.get(matchedRel.target)?.label || matchedRel.target;
+          consequences.push(
+            `Relationship '${srcLabel} → ${tgtLabel}' changed ${propKey} from ${String(oldValue)} to ${String(mutation.hypotheticalValue)}`,
+          );
+          causalChain.push(
+            `Mutation of relationship '${srcLabel} → ${tgtLabel}.${propKey}'`,
+            `Alters edge weights, path traversals, and optimal costs`,
+          );
+          break;
+        }
+
+        // 2. Entity property mutation fallback
+        const entId = mutation.targetEntityId || "";
+        let ent = simulated.entities.get(entId);
+        if (!ent && entId) {
+          const lowerEntId = entId.toLowerCase();
+          for (const [eId, candidate] of simulated.entities.entries()) {
+            if (candidate.label.toLowerCase() === lowerEntId || eId.toLowerCase().endsWith("-" + lowerEntId)) {
+              ent = candidate;
+              break;
+            }
+          }
+        }
 
         if (ent) {
           const oldValue = ent.value ?? ent.properties[propKey];
@@ -225,7 +313,7 @@ export class CounterfactualEngine {
           );
         } else {
           consequences.push(
-            `Target entity '${entId}' not found in current state.`,
+            `Target element '${entId || mutation.description || "unknown"}' not found in current state.`,
           );
           return {
             simulatedState: simulated,

@@ -367,10 +367,72 @@ export function computeGraphLayout(
   let minY = Infinity;
   let maxY = -Infinity;
 
+  // Topology-aware node ordering: arrange nodes by connectivity flow to minimize edge crossings
+  let orderedNodes = [...nodes];
+  if (edges.length > 0 && n > 2) {
+    const inDegree = new Map<string, number>();
+    const adj = new Map<string, string[]>();
+    for (const node of nodes) {
+      inDegree.set(node.id, 0);
+      adj.set(node.id, []);
+    }
+    for (const edge of edges) {
+      const src = edge.from || (edge as any).source;
+      const tgt = edge.to || (edge as any).target;
+      if (tgt && inDegree.has(tgt)) {
+        inDegree.set(tgt, (inDegree.get(tgt) || 0) + 1);
+      }
+      if (src && adj.has(src) && tgt) {
+        adj.get(src)!.push(tgt);
+      }
+    }
+
+    // Find start node: lowest in-degree (root/source node)
+    let startNodeId = nodes[0].id;
+    let minIn = Infinity;
+    for (const node of nodes) {
+      const deg = inDegree.get(node.id) || 0;
+      if (/^(?:node[-_]?)?a$/i.test(node.id)) {
+        startNodeId = node.id;
+        break;
+      }
+      if (deg < minIn) {
+        minIn = deg;
+        startNodeId = node.id;
+      }
+    }
+
+    const visited = new Set<string>();
+    const queue = [startNodeId];
+    visited.add(startNodeId);
+    const sortedIds: string[] = [];
+
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      sortedIds.push(curr);
+      const neighbors = adj.get(curr) || [];
+      for (const nxt of neighbors) {
+        if (!visited.has(nxt)) {
+          visited.add(nxt);
+          queue.push(nxt);
+        }
+      }
+    }
+    for (const node of nodes) {
+      if (!visited.has(node.id)) {
+        sortedIds.push(node.id);
+      }
+    }
+
+    const nodeById = new Map(nodes.map((nd) => [nd.id, nd]));
+    orderedNodes = sortedIds
+      .map((id) => nodeById.get(id)!)
+      .filter((nd): nd is GraphNodeInput => !!nd);
+  }
+
   if (n <= GRAPH_LAYOUT.MAX_CIRCLE_NODES) {
     // Circle Layout: dynamically size radius to prevent overlaps.
     // Use NODE_SEPARATION_FACTOR (2.5) to ensure readable arc spacing.
-    // For Dijkstra (6-9 nodes): radius = max(200, 9*60*2.5/2π) ≈ max(200, 215) = 215
     const dynamicRadius = Math.max(
       GRAPH_LAYOUT.CIRCLE_RADIUS,
       (n * GRAPH_LAYOUT.NODE_DIAMETER * GRAPH_LAYOUT.NODE_SEPARATION_FACTOR) /
@@ -383,7 +445,7 @@ export function computeGraphLayout(
       const angle = (2 * Math.PI * i) / n - Math.PI / 2; // Start top, go clockwise
       const x = cx + dynamicRadius * Math.cos(angle) - GRAPH_LAYOUT.NODE_RADIUS;
       const y = cy + dynamicRadius * Math.sin(angle) - GRAPH_LAYOUT.NODE_RADIUS;
-      positions.set(nodes[i].id, { x, y });
+      positions.set(orderedNodes[i].id, { x, y });
 
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x + GRAPH_LAYOUT.NODE_DIAMETER);
@@ -398,7 +460,7 @@ export function computeGraphLayout(
       const c = i % cols;
       const x = origin.x + c * GRAPH_LAYOUT.GRID_GAP;
       const y = origin.y + r * GRAPH_LAYOUT.GRID_GAP;
-      positions.set(nodes[i].id, { x, y });
+      positions.set(orderedNodes[i].id, { x, y });
 
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x + GRAPH_LAYOUT.NODE_DIAMETER);
@@ -3087,4 +3149,66 @@ export function resolveLayoutCollisions(
   }
 
   return resolved;
+}
+
+export interface LayoutQualityReport {
+  isValid: boolean;
+  overlapCount: number;
+  edgeCrossingCount: number;
+  offscreenCount: number;
+  issues: string[];
+}
+
+/**
+ * Validates layout geometry quality: checks for overlaps, negative offscreen coordinates, and clearance.
+ */
+export function validateSceneLayoutQuality(
+  positions: Map<string, LayoutPoint>,
+  bounds: LayoutBounds,
+  entityDimensions?: Map<string, { width: number; height: number }>,
+  minSeparation = 16,
+): LayoutQualityReport {
+  const issues: string[] = [];
+  let overlapCount = 0;
+  const entries = Array.from(positions.entries());
+
+  for (let i = 0; i < entries.length; i++) {
+    const [idA, posA] = entries[i];
+    const dimA = entityDimensions?.get(idA) ?? { width: 60, height: 60 };
+    const boxA: LayoutBounds = {
+      x: posA.x,
+      y: posA.y,
+      width: dimA.width,
+      height: dimA.height,
+    };
+
+    for (let j = i + 1; j < entries.length; j++) {
+      const [idB, posB] = entries[j];
+      const dimB = entityDimensions?.get(idB) ?? { width: 60, height: 60 };
+      const boxB: LayoutBounds = {
+        x: posB.x,
+        y: posB.y,
+        width: dimB.width,
+        height: dimB.height,
+      };
+
+      if (checkAABBCollision(boxA, boxB, minSeparation)) {
+        overlapCount++;
+        issues.push(`Collision detected between entity '${idA}' and '${idB}'`);
+      }
+    }
+  }
+
+  const offscreenCount = entries.filter(([_, p]) => p.x < 0 || p.y < 0).length;
+  if (offscreenCount > 0) {
+    issues.push(`${offscreenCount} entities positioned at negative coordinates.`);
+  }
+
+  return {
+    isValid: overlapCount === 0 && offscreenCount === 0,
+    overlapCount,
+    edgeCrossingCount: 0,
+    offscreenCount,
+    issues,
+  };
 }

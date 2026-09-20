@@ -193,10 +193,12 @@ export class LessonPlaybackController {
     const currentElements =
       this.excalidrawAPI.getSceneElementsIncludingDeleted();
 
+    const isFinalStep = this.currentIndex === this.timeline.states.length - 1;
     const reconcileRes = reconcileSceneState(
       targetState,
       currentElements,
       this.timeline.lessonId,
+      isFinalStep,
     );
 
     this.excalidrawAPI.updateScene({
@@ -292,9 +294,20 @@ export class LessonPlaybackController {
     // 2. Safely cancel active animation without triggering false completion callbacks
     cancelActiveSceneAnimation();
 
-    // Invalidate/stop active voice playback when manually navigating or starting transition
-    if (this.voiceEngine) {
-      this.voiceEngine.stop();
+    // Invalidate/stop active voice playback and synchronize transformation change
+    if (this.voiceEngine && typeof this.voiceEngine.onTransformationChange === "function") {
+      const targetMoment = this.timeline.moments?.[targetIndex];
+      const targetMeta = this.timeline.meta[targetIndex];
+      this.voiceEngine.onTransformationChange({
+        lessonId: this.timeline.lessonId,
+        generationId: targetMoment?.generationId || (this.timeline as any).generationId,
+        transformationId:
+          targetMoment?.transformationId || targetMeta?.id || `t-${targetIndex}`,
+        stepIndex: targetIndex,
+        totalSteps: this.timeline.meta.length,
+        title: targetMoment?.title || targetMeta?.title || `Step ${targetIndex + 1}`,
+        explanation: targetMoment?.explanation || targetMeta?.explanation || "",
+      });
     }
 
     // 3. Fetch authoritative target SceneState (NEVER inferred from canvas coordinates)
@@ -316,10 +329,12 @@ export class LessonPlaybackController {
         this.excalidrawAPI.getSceneElementsIncludingDeleted();
 
       // 4. Reconcile complete target SceneState against current elements
+      const isFinalStep = targetIndex === this.timeline.states.length - 1;
       const reconcileRes = reconcileSceneState(
         targetState,
         currentElements,
         this.timeline.lessonId,
+        isFinalStep,
       );
 
       if (animate) {
@@ -491,6 +506,9 @@ export class LessonPlaybackController {
     const moment = this.timeline.moments?.[currentStep];
     const voiceContext: VoiceExplanationContext = {
       lessonId: this.timeline.lessonId,
+      generationId: moment?.generationId || (this.timeline as any).generationId || "GEN-1",
+      worldVersion: moment?.worldVersion || (this.timeline as any).worldVersion || 1,
+      branchId: moment?.branchId || (this.timeline as any).branchId || "MAIN",
       transformationId:
         moment?.transformationId || meta?.id || `t-${currentStep}`,
       stepIndex: currentStep,
@@ -503,6 +521,11 @@ export class LessonPlaybackController {
       concept: this.timeline.topic,
       semanticFocus: moment?.semanticFocus?.entityIds?.[0] || meta?.title,
     };
+
+    // Check if audio is already cached and available immediately
+    const isAudioCached = this.voiceEngine.isAudioReady
+      ? this.voiceEngine.isAudioReady(voiceContext)
+      : false;
 
     // Listen for voice audio completion
     this.voiceEndedUnsubscribe = this.voiceEngine.addOnAudioEndedListener(
@@ -517,7 +540,12 @@ export class LessonPlaybackController {
       },
     );
 
-    // Safety timeout in case speech hangs or TTS fails
+    // Dynamic bounded timeout: if audio is not cached yet, allow comfortable visual reading time (2.5s-4s)
+    // and do NOT block playback for 15+ seconds if Chatterbox is slow!
+    const fallbackAdvanceMs = isAudioCached
+      ? Math.max(4000, Math.round(((moment?.narration?.length ?? 60) * 80) / this.speed))
+      : Math.max(2200, Math.min(4500, Math.round(((moment?.narration?.length ?? 60) * 35) / this.speed)));
+
     this.safetyTimer = setTimeout(() => {
       if (
         this.status === "PLAYING" &&
@@ -526,9 +554,19 @@ export class LessonPlaybackController {
         voiceReady = true;
         attemptAdvance();
       }
-    }, 15000);
+    }, fallbackAdvanceMs);
 
-    // Speak (plays from cache immediately if prepared)
+    // Trigger non-blocking prefetch for next step
+    if (this.voiceEngine.prepareLessonAudio && currentStep < this.timeline.meta.length - 1) {
+      this.voiceEngine.prepareLessonAudio({
+        lessonId: this.timeline.lessonId,
+        topic: this.timeline.topic,
+        currentIndex: currentStep,
+        meta: this.timeline.meta,
+      }).catch(() => {});
+    }
+
+    // Speak asynchronously (plays immediately from cache if prepared, attaches smoothly when ready)
     this.voiceEngine.play(voiceContext).catch((err) => {
       console.warn(
         "[COGNORA][PLAYBACK] Voice play encountered error, continuing visually:",

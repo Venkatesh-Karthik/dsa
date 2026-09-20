@@ -136,6 +136,7 @@ import {
 import { IntentEngine } from "../ai/intelligence/intent-engine";
 import { ContextEngine } from "../ai/intelligence/context-engine";
 import { TeacherBrain } from "../ai/intelligence/teacher-brain";
+import { TeacherBrainOrchestrator } from "../ai/intelligence/teacher-brain-orchestrator";
 import { BranchManager } from "../ai/intelligence/branch-manager";
 import { VoiceListener } from "../ai/voice/voice-listener";
 
@@ -418,6 +419,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
   // Cognora World Model (Authoritative Runtime Truth)
   const worldModelRef = useRef<CognoraWorldModel>(new CognoraWorldModel());
+  const orchestratorRef = useRef<TeacherBrainOrchestrator>(
+    new TeacherBrainOrchestrator(worldModelRef.current),
+  );
   const [worldState, setWorldState] = useState<CognoraWorldState>(() =>
     worldModelRef.current.getState(),
   );
@@ -520,13 +524,24 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     if (worldState.orbState === "INTERRUPTED") {
       return "INTERRUPTED";
     }
-    if (voiceState === "error") {
-      return "ERROR";
+    if (
+      voiceState === "error" ||
+      voiceState === "FAILED" ||
+      voiceState === "TIMEOUT" ||
+      voiceState === "DEGRADED" ||
+      voiceState === "UNAVAILABLE"
+    ) {
+      // Calm degraded state: voice latency/failure does NOT trigger red alarm state on the ORB
+      return "IDLE";
     }
-    if (voiceState === "speaking") {
+    if (voiceState === "speaking" || voiceState === "PLAYING") {
       return "SPEAKING";
     }
-    if (voiceState === "preparing") {
+    if (
+      voiceState === "preparing" ||
+      voiceState === "QUEUED" ||
+      voiceState === "SYNTHESIZING"
+    ) {
       return "THINKING";
     }
     const controllerState = playbackControllerRef.current?.getState();
@@ -865,10 +880,22 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       controller.setVoiceEnabled(isVoiceEnabledRef.current);
       playbackControllerRef.current = controller;
       (window as any).__cognoraPlaybackController = controller;
-      worldModelRef.current.setLesson(processed.visualLesson || lesson, timeline);
+      (window as any).__cognoraVoiceDiagnostics = () =>
+        voiceEngineRef.current.getDiagnostics();
+      (window as any).__cognoraWorldModel = worldModelRef.current;
+      (window as any).__cognoraAuthoritativeWorld = () =>
+        worldModelRef.current.getAuthoritativeWorld();
+      worldModelRef.current.setLesson(processed.visualLesson || lesson, timeline, {
+        generationId: options.messageId,
+        worldVersion: 1,
+        branchId: "MAIN",
+      });
+      orchestratorRef.current = new TeacherBrainOrchestrator(worldModelRef.current);
 
-      // Pre-synthesize and cache speech asynchronously in background immediately upon lesson load
-      voiceEngineRef.current.prepareLessonAudio(timeline);
+      // Pre-synthesize and cache speech asynchronously in background immediately upon lesson load (non-blocking)
+      voiceEngineRef.current.prepareLessonAudio(timeline).catch((err) => {
+        console.warn("[COGNORA][VOICE] Non-blocking prepareLessonAudio notice:", err);
+      });
 
       // 4. Render initial scene state immediately
       controller.renderInitial(true);
@@ -1483,12 +1510,10 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       return;
     }
 
-    // 3e. Teacher Brain Local Decisions (Misconception Detection, Simplify, Why, What-If, Focus)
+    // 3e. Teacher Brain Local Decisions (Misconception Detection, Simplify, Why, What-If, Focus, Detours)
     if (transformationLesson && worldModelRef.current.getState().currentMoment) {
-      const decision = TeacherBrain.decide(
-        intent,
-        worldModelRef.current.getState(),
-      );
+      const orchResult = orchestratorRef.current.orchestrate(trimmed, inputSource);
+      const decision = orchResult.decision;
 
       if (decision.isLocal) {
         const userMsg: ChatMessage = {
@@ -1502,13 +1527,6 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           content: decision.explanation,
         };
         setMessages((prev) => [...prev, userMsg, assistantMsg]);
-        worldModelRef.current.appendConversation(userMsg);
-        worldModelRef.current.appendConversation(assistantMsg);
-
-        // If what-if branch creation
-        if (decision.branchToCreate) {
-          worldModelRef.current.enterBranch(decision.branchToCreate);
-        }
 
         // If focus requested
         if (decision.focusEntityId) {
@@ -1538,6 +1556,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
             title: decision.strategy,
             explanation: decision.narration,
+          }).catch((err) => {
+            console.warn("[COGNORA][VOICE] Non-blocking decision play notice:", err);
           });
         }
 
@@ -2024,6 +2044,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
           title: response.topic || "Explanation",
           explanation: assistantMessage.content,
+        }).catch((err) => {
+          console.warn("[COGNORA][VOICE] Non-blocking follow-up voice notice:", err);
         });
       }
 

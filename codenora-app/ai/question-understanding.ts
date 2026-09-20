@@ -111,6 +111,7 @@ export interface ParsedOperation {
   value?: unknown;
   key?: unknown;
   target?: unknown;
+  index?: number;
   arguments?: Record<string, unknown>;
   inputs?: unknown[];
   preconditions?: string[];
@@ -940,6 +941,10 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
       /\b(?:insert(?:ing|s)?|add(?:ing|s)?)\s+([^;.]+?)(?:\s+(?:into|in|to|on)\b|\s*(?:->|→)|\[|$)/i,
     );
     if (insertMatch && insertMatch[1]) {
+      const indexMatch = trimmed.match(
+        /\b(?:at\s+(?:index|pos|position|idx)|index\s*:?)\s*(\d+)\b/i,
+      );
+      const specifiedIndex = indexMatch ? Number(indexMatch[1]) : undefined;
       const insertNums = insertMatch[1].match(/\b\d+\b/g);
       if (insertNums && insertNums.length > 0) {
         for (const iStr of insertNums) {
@@ -948,11 +953,12 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
             op: "insert",
             value: iVal,
             target: iVal,
-            arguments: { value: iVal, baselineChain, baselineArray },
+            index: specifiedIndex,
+            arguments: { value: iVal, target: iVal, index: specifiedIndex, baselineChain, baselineArray },
             inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
             order: ++orderCounter,
             semanticRole: "operation",
-            metadata: { rawClause: trimmed, baselineElements: baselineChain || baselineArray },
+            metadata: { rawClause: trimmed, index: specifiedIndex, baselineElements: baselineChain || baselineArray },
           });
         }
         continue;

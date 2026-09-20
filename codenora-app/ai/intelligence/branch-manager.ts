@@ -58,7 +58,25 @@ export class BranchManager {
       const numMatch = lower.match(/(\d+)/);
       const val = numMatch ? parseInt(numMatch[1], 10) : undefined;
 
-      if (/remove|delete/i.test(lower) && val !== undefined) {
+      // Check for edge / relationship hypothesis
+      // e.g. "What if the edge C→D had weight 1 instead of 8?", "C->D had weight 1", "edge A-B was 3"
+      const edgePattern =
+        /(?:edge\s+)?([A-Za-z0-9_-]+)\s*(?:->|→|to|-)\s*([A-Za-z0-9_-]+)[^\d]*?(?:had\s+weight|weight|was|=|is|to)?\s*(\d+)(?:\s*(?:instead of|rather than)\s*(\d+))?/i;
+      const edgeMatch = hypothesis.match(edgePattern);
+
+      if (edgeMatch) {
+        const src = edgeMatch[1];
+        const tgt = edgeMatch[2];
+        const hypVal = parseInt(edgeMatch[3], 10);
+        mutation = {
+          mutationType: "property_change",
+          sourceEntityId: src,
+          targetEntityId: tgt,
+          propertyKey: "weight",
+          hypotheticalValue: hypVal,
+          description: `Hypothetical weight of ${hypVal} on edge ${src}→${tgt}`,
+        };
+      } else if (/remove|delete/i.test(lower) && val !== undefined) {
         mutation = {
           mutationType: "entity_removal",
           targetEntityId: `node-${val}`,
@@ -129,7 +147,7 @@ export class BranchManager {
       counterfactualResult.consequences.length > 0
         ? `If ${mutation.description || hypothesis}, then ${
             counterfactualResult.consequences[0]
-          }. Notice how this alters the search or structural balance.`
+          }. Notice how this alters the path and structural values.`
         : `Let's see what happens if ${hypothesis}. Notice the change on canvas.`;
 
     // Clone visual state for branch presentation
@@ -170,8 +188,12 @@ export class BranchManager {
       importance: "HIGH",
     };
 
+    const parentBranch = worldState.activeBranch?.branchId || "MAIN";
     const branch: WhatIfBranch = {
       branchId,
+      parentBranchId: parentBranch,
+      parentWorldVersion: parentMomentIndex,
+      worldVersion: parentMomentIndex + 1,
       description: hypothesis,
       parentMomentIndex,
       parentMomentId,
@@ -184,7 +206,7 @@ export class BranchManager {
     };
 
     console.log(
-      `[COGNORA][BRANCH][CREATED] id=${branchId} parentStep=${parentMomentIndex} hypothesis="${hypothesis}"`,
+      `[COGNORA][BRANCH][CREATE] parentBranch=${parentBranch} branchId=${branchId} parentWorldVersion=${parentMomentIndex} reason="${hypothesis}"`,
     );
 
     return branch;

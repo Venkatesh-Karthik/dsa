@@ -94,6 +94,10 @@ export interface AuthoritativeTransformation {
 
 export interface AuthoritativeSemanticModel {
   id: string;
+  /** Primary concept title */
+  concept?: string;
+  /** Primary topic category */
+  topic?: string;
   /** Formal problem definition */
   problem: ProblemModel;
   /** Semantic world of the concept */

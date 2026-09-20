@@ -62,6 +62,7 @@ export function reconcileSceneState(
   targetState: SceneState,
   currentElements: readonly ExcalidrawElement[],
   lessonId?: string,
+  isFinalStep?: boolean,
 ): ReconcileResult {
   // Index existing elements by semanticId / dslId
   const existingBySemanticId = new Map<string, ExcalidrawElement[]>();
@@ -126,6 +127,14 @@ export function reconcileSceneState(
   // 1. Reconcile Entities
   for (const [entityId, entity] of targetState.graph.entities.entries()) {
     if (entity.properties?.isAliasOf) {
+      continue;
+    }
+    // Final state cleanup: omit temporary pointers or ephemeral artifacts from final scene
+    if (
+      isFinalStep &&
+      (/^(?:pointer|temp|marker|callout[-_]temp)/i.test(entityId) ||
+        entity.semanticRole === "pointer")
+    ) {
       continue;
     }
     activeSemanticIds.add(entityId);

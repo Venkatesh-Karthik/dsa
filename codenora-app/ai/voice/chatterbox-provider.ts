@@ -5,13 +5,15 @@
  * Every request carries a unique requestId for end-to-end tracing.
  */
 
+import { AudioValidator } from "./audio-validator";
+import { circuitBreaker } from "./circuit-breaker";
 import type { TTSProvider } from "./tts-provider";
 import type { TTSAudio, TTSOptions } from "./voice-contract";
 
 let _chatterboxReqCounter = 0;
 
 /** Typed error with a `code` property for the voice error taxonomy. */
-class ChatterboxError extends Error {
+export class ChatterboxError extends Error {
   public readonly code: string;
   constructor(message: string, code: string) {
     super(message);
@@ -59,6 +61,13 @@ export class ChatterboxProvider implements TTSProvider {
     options?: TTSOptions,
     signal?: AbortSignal,
   ): Promise<TTSAudio> {
+    if (!circuitBreaker.canAttempt()) {
+      throw new ChatterboxError(
+        "Chatterbox circuit breaker is OPEN due to repeated failures/timeouts.",
+        "CHATTERBOX_CIRCUIT_OPEN",
+      );
+    }
+
     const requestId = `CB-${Date.now()}-${(++_chatterboxReqCounter).toString(
       36,
     )}`;
@@ -77,13 +86,13 @@ export class ChatterboxProvider implements TTSProvider {
       `[COGNORA][VOICE][BACKEND][FETCH_START] requestId=${requestId} url=${url} method=POST textLength=${text.length}`,
     );
 
-    // If no external signal, add a 60-second internal timeout as a safety net
+    // Bounded safety timeout: 45 seconds if no external signal provided
     let internalController: AbortController | null = null;
     let internalTimeoutId: ReturnType<typeof setTimeout> | null = null;
     let effectiveSignal = signal;
     if (!signal) {
       internalController = new AbortController();
-      internalTimeoutId = setTimeout(() => internalController!.abort(), 60_000);
+      internalTimeoutId = setTimeout(() => internalController!.abort(), 45_000);
       effectiveSignal = internalController.signal;
     }
 
@@ -119,6 +128,8 @@ export class ChatterboxProvider implements TTSProvider {
         ? "CHATTERBOX_SERVICE_UNAVAILABLE"
         : "VOICE_INTERNAL_ERROR";
 
+      circuitBreaker.recordFailure(isTimeout);
+
       console.warn(
         `[COGNORA][VOICE][BACKEND][FETCH_ERROR] requestId=${requestId} url=${url} errorName=${errorName} errorMessage="${errorMessage}" code=${code} durationMs=${durationMs}`,
       );
@@ -138,6 +149,7 @@ export class ChatterboxProvider implements TTSProvider {
     }
 
     if (!response.ok) {
+      circuitBreaker.recordFailure(false);
       const durationMs = Date.now() - t0;
       let errMsg = `Chatterbox synthesis failed with HTTP ${response.status}`;
       let errCode = "CHATTERBOX_HTTP_ERROR";
@@ -172,6 +184,7 @@ export class ChatterboxProvider implements TTSProvider {
     const durationMs = Date.now() - t0;
 
     if (blob.size === 0) {
+      circuitBreaker.recordFailure(false);
       console.warn(
         `[COGNORA][VOICE][BACKEND][FETCH_ERROR] requestId=${requestId} url=${url} code=CHATTERBOX_EMPTY_AUDIO durationMs=${durationMs}`,
       );
@@ -183,6 +196,7 @@ export class ChatterboxProvider implements TTSProvider {
 
     // Validate MIME type (expect audio/*)
     if (blob.type && !blob.type.startsWith("audio/")) {
+      circuitBreaker.recordFailure(false);
       console.warn(
         `[COGNORA][VOICE][BACKEND][FETCH_ERROR] requestId=${requestId} url=${url} code=CHATTERBOX_INVALID_AUDIO unexpectedMimeType=${blob.type} durationMs=${durationMs}`,
       );
@@ -192,13 +206,32 @@ export class ChatterboxProvider implements TTSProvider {
       );
     }
 
+    // Structural validation of audio bytes
+    const arrayBuffer = await blob.arrayBuffer();
+    const validation = AudioValidator.validateWav(arrayBuffer);
+    if (!validation.valid) {
+      circuitBreaker.recordFailure(false);
+      console.warn(
+        `[COGNORA][VOICE][BACKEND][FETCH_ERROR] requestId=${requestId} url=${url} code=CHATTERBOX_INVALID_AUDIO reason="${validation.reason}" durationMs=${durationMs}`,
+      );
+      throw new ChatterboxError(
+        `Audio validation failed: ${validation.reason}`,
+        "CHATTERBOX_INVALID_AUDIO",
+      );
+    }
+
+    circuitBreaker.recordSuccess();
+
     console.info(
       `[COGNORA][VOICE][BACKEND][FETCH_SUCCESS] requestId=${requestId} durationMs=${durationMs} mimeType=${
         blob.type || "audio/wav"
-      } contentLength=${blob.size}`,
+      } contentLength=${blob.size} estimatedDuration=${validation.durationSeconds}s`,
     );
 
-    const audioUrl = URL.createObjectURL(blob);
+    const audioUrl =
+      typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(blob)
+        : "";
 
     return {
       audioUrl,

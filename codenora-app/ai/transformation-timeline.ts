@@ -214,7 +214,12 @@ export function compileAuthoritativeTimeline(
     previousGraph = graph;
   }
 
-  const moments = TeachingMomentCompiler.compile(model, states);
+  const moments = TeachingMomentCompiler.compile(model, states, {
+    lessonId,
+    generationId: (options as any)?.generationId,
+    worldVersion: (options as any)?.worldVersion,
+    branchId: (options as any)?.branchId,
+  });
 
   return {
     lessonId,

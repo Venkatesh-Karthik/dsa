@@ -92,7 +92,20 @@ export class OrderedOperationEngine {
       }
     }
 
-    if (!parsedOperations || parsedOperations.length < 2) {
+    if (!parsedOperations || parsedOperations.length < 1) {
+      return false;
+    }
+
+    if (parsedOperations.length === 1) {
+      const singleOp = parsedOperations[0];
+      if (
+        (singleOp.op === "insert" ||
+          singleOp.op === "delete" ||
+          singleOp.op === "swap") &&
+        (!existingSteps || existingSteps.length < 2)
+      ) {
+        return true;
+      }
       return false;
     }
 
@@ -1296,6 +1309,25 @@ export class OrderedOperationEngine {
       ? "queue-main"
       : "ll-main";
 
+    // Baseline step
+    if (elements.length > 0) {
+      steps.push({
+        title: `Initial ${concept}`,
+        explanation: `Baseline state of the ${concept} with initial elements: [${elements.join(", ")}].`,
+        role: "baseline",
+        operations: [
+          {
+            type: structType,
+            id: structId,
+            elements: elements.map((v) => ({
+              id: `node-${v}`,
+              value: v,
+            })),
+          },
+        ],
+      });
+    }
+
     // Track sequential execution
     for (let i = 0; i < operations.length; i++) {
       const op = operations[i];
@@ -1372,16 +1404,21 @@ export class OrderedOperationEngine {
           });
         }
       } else if (op.op === "insert" && !isNaN(val)) {
-        elements.push(val);
+        const atIdx =
+          typeof op.index === "number" && op.index >= 0 && op.index <= elements.length
+            ? op.index
+            : elements.length;
+        elements.splice(atIdx, 0, val);
         steps.push({
-          title: `Insert Element ${val}`,
-          explanation: `Element ${val} added to ${concept}. Structure updated maintaining order.`,
+          title: `Insert Element ${val}${typeof op.index === "number" ? ` at Index ${op.index}` : ""}`,
+          explanation: `Element ${val} added to ${concept}${typeof op.index === "number" ? ` at index ${op.index}` : ""}. Structure updated maintaining order.`,
           role: "mechanism",
           operations: [
             {
               type: structType,
               id: structId,
               elements: elements.map((v) => ({
+                id: `node-${v}`,
                 value: v,
                 highlight: v === val ? ("success" as const) : undefined,
               })),

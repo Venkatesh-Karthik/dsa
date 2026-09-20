@@ -7,15 +7,19 @@
 
 import { AudioPlayer } from "./audio-player";
 import { ChatterboxProvider } from "./chatterbox-provider";
+import { SpeechDirector } from "./speech-director";
 import { SpeechPreprocessor } from "./speech-preprocessor";
 import { VoiceCache } from "./voice-cache";
+import { VoiceQueue } from "./voice-queue";
 
 import type { TTSProvider } from "./tts-provider";
-import type {
-  TTSAudio,
-  TTSOptions,
-  VoiceExplanationContext,
-  VoiceState,
+import {
+  type TTSAudio,
+  type TTSOptions,
+  VoicePriority,
+  type VoiceDiagnostics,
+  type VoiceExplanationContext,
+  type VoiceState,
 } from "./voice-contract";
 
 export type VoiceStateListener = (
@@ -36,29 +40,36 @@ export class VoiceExplanationEngine {
 
   private ttsProvider: TTSProvider;
   private cache: VoiceCache;
+  private queue: VoiceQueue;
   private player: AudioPlayer;
   private listeners = new Set<VoiceStateListener>();
   private onAudioEndedListeners = new Set<(sessionToken: number) => void>();
   private prepAbortController: AbortController | null = null;
   private prepLessonId: string | null = null;
 
+  // Authoritative lifecycle identifiers for stale audio isolation
+  private activeGenerationId: string = "GEN-INIT";
+  private activeWorldVersion: number = 1;
+  private activeBranchId: string = "MAIN";
+
   constructor(customProvider?: TTSProvider) {
     this.ttsProvider = customProvider || new ChatterboxProvider();
-    this.cache = new VoiceCache(50);
+    this.cache = new VoiceCache(100);
+    this.queue = new VoiceQueue(this.ttsProvider, this.cache);
     this.player = new AudioPlayer({
       onStatusChange: (status) => {
         if (status === "playing") {
-          this.setState("speaking");
+          this.setState("PLAYING");
           console.info(
             `[COGNORA][VOICE][AUDIO][PLAY] session=${this.activeSessionToken}`,
           );
         } else if (status === "paused") {
-          this.setState("paused");
+          this.setState("PAUSED");
           console.info(
             `[COGNORA][VOICE][AUDIO][PAUSE] session=${this.activeSessionToken}`,
           );
         } else if (status === "ended") {
-          this.setState("finished");
+          this.setState("READY");
           console.info(
             `[COGNORA][VOICE][AUDIO][FINISH] session=${this.activeSessionToken}`,
           );
@@ -71,8 +82,8 @@ export class VoiceExplanationEngine {
             }
           }
         } else if (status === "idle") {
-          if (this.state === "speaking" || this.state === "paused") {
-            this.setState("stopped");
+          if (this.state === "PLAYING" || this.state === "PAUSED") {
+            this.setState("IDLE");
             console.info(
               `[COGNORA][VOICE][AUDIO][STOP] session=${this.activeSessionToken}`,
             );
@@ -84,7 +95,7 @@ export class VoiceExplanationEngine {
           `[COGNORA][VOICE][AUDIO][ERROR] session=${this.activeSessionToken} error="${err.message}"`,
         );
         this.errorMessage = err.message;
-        this.setState("error");
+        this.setState("FAILED");
         const currentToken = this.activeSessionToken;
         for (const cb of this.onAudioEndedListeners) {
           try {
@@ -163,6 +174,25 @@ export class VoiceExplanationEngine {
     }
   }
 
+  public setAuthoritativeContext(
+    generationId: string,
+    worldVersion: number = 1,
+    branchId: string = "MAIN",
+  ): void {
+    this.activeGenerationId = generationId;
+    this.activeWorldVersion = worldVersion;
+    this.activeBranchId = branchId;
+    this.queue.setAuthoritativeContext(generationId, worldVersion, branchId);
+  }
+
+  public getDiagnostics(): VoiceDiagnostics {
+    return this.queue.getDiagnostics();
+  }
+
+  public getQueue(): VoiceQueue {
+    return this.queue;
+  }
+
   /**
    * Prepares and speaks the authoritative explanation for the given context.
    */
@@ -176,6 +206,16 @@ export class VoiceExplanationEngine {
 
     this.currentContext = context;
     this.errorMessage = null;
+
+    if (context.generationId) {
+      this.activeGenerationId = context.generationId;
+    }
+    if (context.worldVersion !== undefined) {
+      this.activeWorldVersion = context.worldVersion;
+    }
+    if (context.branchId) {
+      this.activeBranchId = context.branchId;
+    }
 
     console.info(
       `[COGNORA][VOICE][PLAY] session=${sessionToken} lessonId=${context.lessonId} transformationId=${context.transformationId} stepIndex=${context.stepIndex}`,
@@ -232,6 +272,22 @@ export class VoiceExplanationEngine {
       if (this.activeSessionToken !== sessionToken) {
         console.info(
           `[COGNORA][VOICE][DISCARD] Stale TTS response for session ${sessionToken} discarded.`,
+        );
+        return;
+      }
+
+      // Check authoritative stale isolation
+      if (
+        context.generationId &&
+        this.queue.isAudioStale(
+          context.generationId,
+          context.worldVersion ?? 1,
+          context.branchId ?? "MAIN",
+          context.transformationId,
+        )
+      ) {
+        console.warn(
+          `[COGNORA][VOICE][STALE] Audio arrived for outdated generation or branch: ${context.generationId}/${context.branchId}`,
         );
         return;
       }
@@ -326,6 +382,10 @@ export class VoiceExplanationEngine {
     this.player.stop();
     this.currentContext = newContext || null;
     this.setState("idle");
+
+    if (newContext) {
+      this.queue.updatePlaybackPosition(newContext.stepIndex);
+    }
   }
 
   private cancelPendingRequest(): void {
@@ -344,6 +404,9 @@ export class VoiceExplanationEngine {
       lessonId: string;
       topic?: string;
       currentIndex?: number;
+      generationId?: string;
+      worldVersion?: number;
+      branchId?: string;
       meta?: readonly {
         id: string;
         title: string;
@@ -351,6 +414,7 @@ export class VoiceExplanationEngine {
         calculations?: string;
         insight?: string;
         semanticTarget?: string;
+        narration?: string;
       }[];
     },
     options?: TTSOptions,
@@ -359,130 +423,42 @@ export class VoiceExplanationEngine {
       return;
     }
 
-    // Cancel any in-flight background queue from previous lesson
-    if (this.prepAbortController) {
-      this.prepAbortController.abort();
-      this.prepAbortController = null;
-    }
+    // Update authoritative context
+    const genId = timeline.generationId || this.activeGenerationId;
+    const worldVer = timeline.worldVersion ?? this.activeWorldVersion;
+    const branch = timeline.branchId || this.activeBranchId;
+    this.setAuthoritativeContext(genId, worldVer, branch);
 
-    const abortController = new AbortController();
-    this.prepAbortController = abortController;
-    this.prepLessonId = timeline.lessonId;
+    // Convert metas to items for the prioritized, bounded queue
+    const items = timeline.meta.map((m, idx) => {
+      const ctx: VoiceExplanationContext = {
+        lessonId: timeline.lessonId,
+        transformationId: m.id || `t-${idx}`,
+        stepIndex: idx,
+        totalSteps: timeline.meta!.length,
+        title: m.title || `Step ${idx + 1}`,
+        explanation: m.explanation || "",
+        calculations: m.calculations,
+        insight: m.insight,
+        topic: timeline.topic || "Concept",
+        concept: timeline.topic || "Concept",
+        semanticFocus: m.semanticTarget,
+      };
+      const prep = SpeechPreprocessor.prepare(ctx);
+      return {
+        transformationId: m.id || `t-${idx}`,
+        narration: m.narration || prep.spokenText,
+        stepIndex: idx,
+      };
+    });
 
-    const metas = [...timeline.meta];
-    const totalSteps = metas.length;
-    const startIdx = Math.max(
-      0,
-      Math.min(timeline.currentIndex ?? 0, totalSteps - 1),
+    // Schedule current + next
+    await this.queue.prepareCurrentAndNext(
+      timeline.lessonId,
+      timeline.currentIndex ?? 0,
+      items,
+      options,
     );
-
-    // Order items: priority to current step, then sequential remaining steps
-    const orderedIndices = [startIdx];
-    for (let i = 0; i < totalSteps; i++) {
-      if (i !== startIdx) {
-        orderedIndices.push(i);
-      }
-    }
-
-    console.info(
-      `[COGNORA][VOICE][PREPARE_QUEUE][START] lessonId=${timeline.lessonId} totalSteps=${totalSteps} prioritizedStep=${startIdx}`,
-    );
-
-    // Process sequentially (concurrency = 1) to respect local Chatterbox-Turbo single-worker
-    (async () => {
-      // HEALTH CHECK FIRST: probe the provider before attempting any synthesis.
-      // If the service is down, we abort immediately rather than spamming N failed fetches.
-      const isAvailable = await this.ttsProvider.isAvailable();
-      if (!isAvailable) {
-        console.warn(
-          `[COGNORA][VOICE][PREPARE_QUEUE][CHATTERBOX_UNAVAILABLE] lessonId=${timeline.lessonId} — Chatterbox service is not reachable. Skipping preparation queue. Start with: .\\cognora-voice\\start_voice_service.ps1`,
-        );
-        return;
-      }
-
-      // Cap consecutive failures to prevent retry storms when service goes down mid-queue
-      const MAX_CONSECUTIVE_FAILURES = 2;
-      let consecutiveFailures = 0;
-
-      for (const idx of orderedIndices) {
-        if (abortController.signal.aborted) {
-          console.info(
-            `[COGNORA][VOICE][PREPARE_QUEUE][ABORT] Preparation for lessonId=${timeline.lessonId} aborted.`,
-          );
-          break;
-        }
-
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-          console.warn(
-            `[COGNORA][VOICE][PREPARE_QUEUE][ABORT_CONSECUTIVE_FAILURES] lessonId=${timeline.lessonId} — ${consecutiveFailures} consecutive failures. Aborting preparation queue to prevent retry storm.`,
-          );
-          break;
-        }
-
-        const meta = metas[idx];
-        if (!meta) {
-          continue;
-        }
-
-        const context: VoiceExplanationContext = {
-          lessonId: timeline.lessonId,
-          transformationId: meta.id || `t-${idx}`,
-          stepIndex: idx,
-          totalSteps,
-          title: meta.title || `Step ${idx + 1}`,
-          explanation: meta.explanation || "",
-          calculations: meta.calculations,
-          insight: meta.insight,
-          topic: timeline.topic || "Concept",
-          concept: timeline.topic || "Concept",
-          semanticFocus: meta.semanticTarget,
-        };
-
-        const prep = SpeechPreprocessor.prepare(context);
-        const cacheKey = VoiceCache.generateKey(
-          context.lessonId,
-          context.transformationId,
-          prep.spokenText,
-          this.ttsProvider.name,
-          options?.voiceId,
-        );
-
-        if (this.cache.get(cacheKey)) {
-          consecutiveFailures = 0; // Reset on cache hit (success path)
-          continue; // Already synthesized and cached
-        }
-
-        try {
-          console.info(
-            `[COGNORA][VOICE][PREPARE_QUEUE][SYNTH_START] step=${idx} transformationId=${context.transformationId}`,
-          );
-          const audio = await this.ttsProvider.synthesize(
-            prep.spokenText,
-            options,
-            abortController.signal,
-          );
-          if (abortController.signal.aborted) {
-            break;
-          }
-          audio.cacheKey = cacheKey;
-          this.cache.set(cacheKey, audio);
-          consecutiveFailures = 0; // Reset on success
-          console.info(
-            `[COGNORA][VOICE][PREPARE_QUEUE][SYNTH_SUCCESS] step=${idx} transformationId=${context.transformationId} cached`,
-          );
-        } catch (err: unknown) {
-          if (abortController.signal.aborted) {
-            break;
-          }
-          consecutiveFailures++;
-          const errorName = err instanceof Error ? err.name : "UnknownError";
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `[COGNORA][VOICE][PREPARE_QUEUE][SYNTH_FAIL] step=${idx} transformationId=${context.transformationId} consecutiveFailures=${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES} errorName=${errorName} errorMessage="${errorMessage}"`,
-          );
-        }
-      }
-    })();
   }
 
   public isAudioReady(
@@ -559,6 +535,7 @@ export class VoiceExplanationEngine {
       this.prepAbortController = null;
     }
     this.stop();
+    this.queue.cleanup();
     this.cache.clear();
     this.player.cleanup();
     this.listeners.clear();

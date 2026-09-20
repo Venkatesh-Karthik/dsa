@@ -14,11 +14,16 @@
 import { ExplanationEngine } from "../explanation-engine";
 
 import type { TeachingMoment } from "../teaching-moment";
-import type { VoiceExplanationContext } from "./voice-contract";
+import {
+  type SpeechSegment,
+  VoicePriority,
+  type VoiceExplanationContext,
+} from "./voice-contract";
 
 export class SpeechDirector {
   /**
    * Directs and synthesizes a polished spoken narration script from a TeachingMoment.
+   * Ensures natural WHAT + WHY + RESULT pedagogical structure.
    */
   public static directNarration(
     moment: TeachingMoment,
@@ -33,16 +38,25 @@ export class SpeechDirector {
     const parts: string[] = [];
 
     const title = ExplanationEngine.scrubMetadata(moment.title || "");
+    const whatChanged = (moment as any).whatChanged
+      ? ExplanationEngine.scrubMetadata((moment as any).whatChanged)
+      : "";
     const explanation = ExplanationEngine.scrubMetadata(
       moment.explanation || "",
     );
-    const why = moment.why ? ExplanationEngine.scrubMetadata(moment.why) : "";
+    const why = (moment as any).whyItChanged
+      ? ExplanationEngine.scrubMetadata((moment as any).whyItChanged)
+      : moment.why
+      ? ExplanationEngine.scrubMetadata(moment.why)
+      : "";
     const consequence = moment.consequence
       ? ExplanationEngine.scrubMetadata(moment.consequence)
       : "";
 
-    // What happened (Action)
-    if (explanation) {
+    // What happened (Action / What Changed)
+    if (whatChanged) {
+      parts.push(whatChanged);
+    } else if (explanation) {
       parts.push(explanation);
     } else if (title) {
       parts.push(title);
@@ -51,27 +65,106 @@ export class SpeechDirector {
     // Why did it happen (Causal rationale)
     if (
       why &&
-      !explanation.toLowerCase().includes(why.toLowerCase().slice(0, 20))
+      !explanation.toLowerCase().includes(why.toLowerCase().slice(0, 20)) &&
+      (!whatChanged || !whatChanged.toLowerCase().includes(why.toLowerCase().slice(0, 20)))
     ) {
-      parts.push(`This is because ${why.replace(/^(because|since)\s+/i, "")}.`);
+      const cleanedWhy = why.replace(/^(because|since|due to)\s+/i, "");
+      parts.push(`This is because ${cleanedWhy}.`);
     }
 
-    // Consequence / What changed
+    // Consequence / What changed as a result
     if (
       consequence &&
       !explanation
         .toLowerCase()
         .includes(consequence.toLowerCase().slice(0, 20))
     ) {
-      parts.push(
-        `As a result, ${consequence.replace(/^(so|as a result)\s+/i, "")}.`,
+      const cleanedConsequence = consequence.replace(
+        /^(so|as a result|consequently|therefore)\s+/i,
+        "",
       );
+      parts.push(`As a result, ${cleanedConsequence}.`);
     }
 
     const combined = parts.join(" ");
     return this.polishSpokenText(
       combined || title || "We observe the current visual state.",
     );
+  }
+
+  /**
+   * Directs a structured SpeechSegment from a TeachingMoment and lesson metadata.
+   */
+  public static directSpeechSegment(
+    moment: TeachingMoment,
+    context: {
+      lessonId: string;
+      generationId: string;
+      worldVersion?: number;
+      branchId?: string;
+      priority?: VoicePriority;
+    },
+  ): SpeechSegment {
+    const narration = this.directNarration(moment);
+    // Estimate ~140 words per minute -> ~2.33 words per second (approx 60 / 140 = ~0.43 sec/word)
+    const wordCount = narration.split(/\s+/).filter(Boolean).length;
+    const estimatedDuration = Math.max(1.5, Math.round((wordCount / 2.33) * 10) / 10);
+
+    return {
+      lessonId: context.lessonId,
+      generationId: context.generationId,
+      transformationId: moment.transformationId || moment.stepId || `step-${moment.stepIndex ?? 0}`,
+      worldVersion: context.worldVersion ?? (moment as any).worldVersion ?? 1,
+      branchId: context.branchId ?? (moment as any).branchId ?? "MAIN",
+      narration,
+      semanticFocus:
+        typeof moment.semanticFocus === "string"
+          ? moment.semanticFocus
+          : moment.semanticFocus?.label || moment.semanticFocus?.operationId || moment.title,
+      priority: context.priority ?? VoicePriority.CURRENT_STEP,
+      estimatedDuration,
+      status: "PENDING",
+    };
+  }
+
+  /**
+   * Dynamically splits a long narration at semantic sentence boundaries
+   * instead of arbitrary character cuts.
+   */
+  public static splitIntoSemanticSegments(narration: string, maxSegmentWords = 35): string[] {
+    const cleaned = this.polishSpokenText(narration);
+    if (!cleaned) return [];
+
+    // Split at sentence terminators (. ! ?)
+    const rawSentences = cleaned.match(/[^.!?]+[.!?]+(\s|$)/g) || [cleaned];
+    const sentences = rawSentences.map((s) => s.trim()).filter(Boolean);
+
+    if (sentences.length <= 1) {
+      return sentences;
+    }
+
+    const segments: string[] = [];
+    let currentChunk: string[] = [];
+    let currentWordCount = 0;
+
+    for (const sentence of sentences) {
+      const sentenceWords = sentence.split(/\s+/).length;
+
+      if (currentWordCount + sentenceWords > maxSegmentWords && currentChunk.length > 0) {
+        segments.push(currentChunk.join(" "));
+        currentChunk = [sentence];
+        currentWordCount = sentenceWords;
+      } else {
+        currentChunk.push(sentence);
+        currentWordCount += sentenceWords;
+      }
+    }
+
+    if (currentChunk.length > 0) {
+      segments.push(currentChunk.join(" "));
+    }
+
+    return segments;
   }
 
   /**

@@ -1402,16 +1402,30 @@ export class ConceptualJourneyOptimizer {
         "",
       );
 
-      // Ensure unintroduced entities are introduced before being transformed
+      // Ensure unintroduced domain entities are introduced before being transformed
+      const isInternalArtifact = (id: string) =>
+        /^(?:pointer|ptr|dist-table|pq|invariant|table|queue|marker|temp|callout)/i.test(id) ||
+        /(?:-before|-after|-table|-pq|-pointer)$/i.test(id);
+
+      const formatFriendlyName = (id: string) => {
+        const graphMatch = id.match(/(?:graph[-_])([A-Za-z0-9]+)$/i);
+        if (graphMatch) return `Node ${graphMatch[1]}`;
+        const nodeMatch = id.match(/(?:node[-_])([A-Za-z0-9]+)$/i);
+        if (nodeMatch) return `Node ${nodeMatch[1]}`;
+        return id;
+      };
+
       const unintroduced = m.affectedEntities.filter(
-        (id) => !introducedEntities.has(id) && !m.createdEntities.includes(id),
+        (id) =>
+          !isInternalArtifact(id) &&
+          !introducedEntities.has(id) &&
+          !m.createdEntities.includes(id),
       );
       if (unintroduced.length > 0) {
-        const unintroducedList = unintroduced.join(", ");
-        if (
-          !explanation.toLowerCase().includes(unintroduced[0].toLowerCase())
-        ) {
-          explanation = `Introducing ${unintroducedList}. ${explanation}`;
+        const friendlyList = unintroduced.map(formatFriendlyName).join(", ");
+        const firstClean = formatFriendlyName(unintroduced[0]).toLowerCase();
+        if (!explanation.toLowerCase().includes(firstClean)) {
+          explanation = `Focusing on ${friendlyList}. ${explanation}`;
         }
       }
 

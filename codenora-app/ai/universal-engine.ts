@@ -1792,33 +1792,13 @@ export class UniversalConceptIntelligenceEngine {
     };
 
     // Extract raw steps from proposal
+    // Extract raw steps from proposal
     let rawSteps =
       rawProposal?.steps ||
       rawProposal?.transformations ||
       (rawProposal as any)?.visualLesson?.transformations ||
       (rawProposal as any)?.visual_lesson?.transformations ||
       [];
-
-    if (rawSteps.length === 0 && filteredEntities.length > 0) {
-      const ent0 = filteredEntities[0];
-      const ent1 = filteredEntities[1] || filteredEntities[0];
-      rawSteps = [
-        {
-          title: `Initiate ${understanding.concept}`,
-          explanation: `System transitions into active processing for ${understanding.concept}.`,
-          operations: [
-            { type: "update_entity", entityId: ent0.id, state: "active" },
-          ],
-        },
-        {
-          title: `Execute ${understanding.concept} Mechanism`,
-          explanation: `Primary transformation connects and mutates state.`,
-          operations: [
-            { type: "update_entity", entityId: ent1.id, state: "success" },
-          ],
-        },
-      ];
-    }
 
     // Check if ordered operations require un-collapsing/synthesis
     let wasSynthesized = false;
@@ -1840,6 +1820,27 @@ export class UniversalConceptIntelligenceEngine {
         prompt,
       );
       wasSynthesized = true;
+    }
+
+    if (rawSteps.length === 0 && filteredEntities.length > 0) {
+      const ent0 = filteredEntities[0];
+      const ent1 = filteredEntities[1] || filteredEntities[0];
+      rawSteps = [
+        {
+          title: `Initiate ${understanding.concept}`,
+          explanation: `System transitions into active processing for ${understanding.concept}.`,
+          operations: [
+            { type: "update_entity", entityId: ent0.id, state: "active" },
+          ],
+        },
+        {
+          title: `Execute ${understanding.concept} Mechanism`,
+          explanation: `Primary transformation connects and mutates state.`,
+          operations: [
+            { type: "update_entity", entityId: ent1.id, state: "success" },
+          ],
+        },
+      ];
     }
 
     // Tier 1: Try optimizing raw steps into conceptual milestones ONLY if not authoritatively synthesized
@@ -2010,6 +2011,8 @@ export class UniversalConceptIntelligenceEngine {
     // 5.5. Evaluate and auto-repair via TeachingQualityCritic (5.0)
     const criticReport = TeachingQualityCritic.evaluate(model, prompt);
     const activeModel = criticReport.repairedPlan || model;
+    activeModel.concept = understanding.concept;
+    activeModel.topic = understanding.concept;
 
     // 6. Build World Graph
     const worldGraph = SemanticWorldGraph.fromAuthoritativeModel(activeModel);
