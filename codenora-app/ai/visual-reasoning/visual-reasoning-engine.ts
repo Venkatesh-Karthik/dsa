@@ -194,6 +194,9 @@ export class VisualReasoningEngine {
 
     // 1. Populate Entities for this state from elementPlan or dynamic fallback
     for (const [id, semEnt] of semState.entities.entries()) {
+      if (semEnt.properties?.isAliasOf) {
+        continue;
+      }
       let plannedEl = plan.elementPlan.elements.get(id);
       if (!plannedEl) {
         const cap = VisualCapabilityRegistry.resolveMatchingCapability(

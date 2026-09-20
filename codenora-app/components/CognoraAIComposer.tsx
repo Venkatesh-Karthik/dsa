@@ -27,6 +27,8 @@ export interface CognoraAIComposerProps {
   onSuggestionClick?: (prompt: string) => void;
   onAttachFile?: (file: File) => void;
   commandContext?: CommandContext;
+  isListening?: boolean;
+  onToggleVoiceListening?: () => void;
   children?: React.ReactNode;
 }
 
@@ -49,13 +51,16 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   onSuggestionClick,
   onAttachFile,
   commandContext,
+  isListening: isListeningProp,
+  onToggleVoiceListening,
   children,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isSubmittingRef = useRef(false);
   const isComposingRef = useRef(false);
-  const [isListening, setIsListening] = useState(false);
+  const [internalIsListening, setInternalIsListening] = useState(false);
+  const isListening = isListeningProp !== undefined ? isListeningProp : internalIsListening;
 
   // Release the synchronous submitting lock when loading settles
   useEffect(() => {
@@ -167,6 +172,11 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   };
 
   const toggleVoice = () => {
+    if (onToggleVoiceListening) {
+      onToggleVoiceListening();
+      return;
+    }
+
     const win = textareaRef.current?.ownerDocument?.defaultView as any;
     const SpeechRecognition =
       win?.SpeechRecognition || win?.webkitSpeechRecognition;
@@ -175,8 +185,8 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
       return;
     }
 
-    if (isListening) {
-      setIsListening(false);
+    if (internalIsListening) {
+      setInternalIsListening(false);
       return;
     }
 
@@ -186,9 +196,9 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
       recognition.interimResults = false;
       recognition.lang = "en-US";
 
-      recognition.onstart = () => setIsListening(true);
-      recognition.onend = () => setIsListening(false);
-      recognition.onerror = () => setIsListening(false);
+      recognition.onstart = () => setInternalIsListening(true);
+      recognition.onend = () => setInternalIsListening(false);
+      recognition.onerror = () => setInternalIsListening(false);
       recognition.onresult = (event: any) => {
         const transcript = event.results?.[0]?.[0]?.transcript;
         if (transcript) {
@@ -196,12 +206,12 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
             inputValue ? `${inputValue} ${transcript}` : transcript,
           );
         }
-        setIsListening(false);
+        setInternalIsListening(false);
       };
 
       recognition.start();
     } catch {
-      setIsListening(false);
+      setInternalIsListening(false);
     }
   };
 
@@ -416,8 +426,8 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
               isListening ? "is-listening" : ""
             }`}
             onClick={toggleVoice}
-            title={isListening ? "Listening..." : "Voice input"}
-            aria-label={isListening ? "Listening..." : "Voice input"}
+            title={isListening ? "Listening (Speak to interrupt)..." : "Voice input"}
+            aria-label={isListening ? "Listening (Speak to interrupt)..." : "Voice input"}
             disabled={isLoading}
             style={{
               background: isListening ? "#fee2e2" : "transparent",

@@ -53,6 +53,8 @@ PEDAGOGICAL THINKING & EXECUTION PRINCIPLES
    - A transformation is a meaningful educational event (e.g. 1. Show imbalance, 2. Perform rotation, 3. Show balanced result).
    - Provide as many meaningful macro-transformations as conceptually required by the topic. Do NOT force a fixed number.
    - EVERY TRANSFORMATION MUST CHANGE THE SCENE (previousState != nextState). The final state must achieve the teaching goal and must differ from the initial state!
+   - MULTI-OPERATION TEACHING GRANULARITY (CRITICAL): When the user's prompt requests multiple operations (e.g. "Eliminate nodes 20 and 30", "Insert 10, 20, 30", "Swap 2 and 5 then reverse"), generate a separate, distinct transformation for EACH operation. NEVER collapse multiple mutations into one step. The learner must see each operation happen sequentially.
+   - NO FUTURE STATE LEAKAGE: Each transformation's explanation must describe ONLY that specific operation and its immediate result. NEVER describe future operations or final outcomes before they occur on canvas.
 4. TREE COMPLEXITY & DEPTH INVARIANTS:
    - MINIMUM MEANINGFUL TREE DEPTH: For ANY tree question, the initial tree MUST have a depth of at least 2 levels (at least 3 nodes: root, child, grandchild, e.g. root 30, left 20, left 10) unless the user explicitly asks for a trivial single-node example.
    - REQUESTED COMPLEXITY OVERRIDES MINIMUM: If the user requests a specific height (e.g. "height 5 tree"), generate a tree matching that requested depth.
@@ -511,6 +513,7 @@ SCENE ARCHITECTURE — ONE CANVAS, ONE SCENE:
 - Provide as many progressive transformations as conceptually required.
 - EVERY TRANSFORMATION MUST CHANGE THE SCENE: previousState != nextState. Never output an empty or duplicate transformation.
 - FINAL STATE MUST ACHIEVE THE TEACHING GOAL: initial and final states must differ!
+- MULTI-OPERATION TEACHING GRANULARITY: When the question specifies multiple operations (e.g. "Eliminate 20 and 30", "Insert 10, 20, 30"), generate a separate, distinct transformation for EACH operation. NEVER collapse multiple operations into one transformation. Each step's explanation must describe only that current step, never future operations.
 - NO GENERIC FALLBACK PLACEHOLDERS: Generate meaningful semantic visualizations based on the user's question. Do NOT generate generic placeholder components (e.g. "Component 1", "Component 2"). Do NOT fake success with meaningless placeholders.
 
 SCOPE MATCHING:

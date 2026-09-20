@@ -31,8 +31,10 @@ export interface UIObstacles {
   navbar: ScreenRect;
   inspector?: ScreenRect | null;
   composer?: ScreenRect | null;
+  playbackBar?: ScreenRect | null;
   toolbar?: ScreenRect | null;
   zoomControls?: ScreenRect | null;
+  tutor?: ScreenRect | null;
 }
 
 export interface OverlayPlacementInput {
@@ -111,6 +113,9 @@ export function getUIObstacles(
   containerHeight: number,
   isInspectorOpen: boolean,
 ): UIObstacles {
+  const activeAreaW = isInspectorOpen ? containerWidth - 410 : containerWidth;
+  const centerX = activeAreaW / 2;
+
   return {
     // Top Navbar
     navbar: makeScreenRect(0, 0, containerWidth, 84),
@@ -120,12 +125,16 @@ export function getUIObstacles(
       : null,
     // Bottom Composer & Playback Region
     composer: makeScreenRect(
-      isInspectorOpen
-        ? Math.max(80, (containerWidth - 410) / 2 - 340)
-        : Math.max(80, containerWidth / 2 - 340),
-      containerHeight - 160,
+      Math.max(80, centerX - 340),
+      containerHeight - 150,
       680,
-      160,
+      150,
+    ),
+    playbackBar: makeScreenRect(
+      Math.max(80, centerX - 260),
+      containerHeight - 110,
+      520,
+      75,
     ),
     // Floating Left Toolbar
     toolbar: makeScreenRect(16, 90, 68, 380),
@@ -206,6 +215,8 @@ export function extractProtectedSceneElements(
 
 /**
  * Computes an intelligent, collision-free position for the contextual overlay.
+ * Enforces a strict Hard Collision Gate: callouts NEVER overlap target nodes,
+ * adjacent nodes, connectors/arrows, labels, or UI obstacles.
  */
 export function computeIntelligentOverlayPosition(
   input: OverlayPlacementInput,
@@ -222,8 +233,11 @@ export function computeIntelligentOverlayPosition(
 
   const containerW = containerRect.width;
   const containerH = containerRect.height;
-  const cardW = Math.min(cardDimensions.width, containerW - 48);
-  const cardH = cardDimensions.height;
+  const cardW = Math.min(
+    Math.max(cardDimensions.width || 280, 280),
+    containerW - 48,
+  );
+  const cardH = Math.max(cardDimensions.height || 96, 96);
 
   // 1. Determine usable screen margins
   const minSafeX = 24;
@@ -245,6 +259,36 @@ export function computeIntelligentOverlayPosition(
   const targetElement = protectedElements.find((e) => e.type === "target");
   const targetRect = targetElement ? targetElement.rect : null;
 
+  // Compute scene bounding box across all protected elements
+  let sceneMinX = Infinity;
+  let sceneMinY = Infinity;
+  let sceneMaxX = -Infinity;
+  let sceneMaxY = -Infinity;
+
+  for (const p of protectedElements) {
+    if (p.rect.left < sceneMinX) {
+      sceneMinX = p.rect.left;
+    }
+    if (p.rect.top < sceneMinY) {
+      sceneMinY = p.rect.top;
+    }
+    if (p.rect.right > sceneMaxX) {
+      sceneMaxX = p.rect.right;
+    }
+    if (p.rect.bottom > sceneMaxY) {
+      sceneMaxY = p.rect.bottom;
+    }
+  }
+  const hasSceneElements = protectedElements.length > 0 && isFinite(sceneMinX);
+
+  const availableCanvasW = maxSafeX - minSafeX;
+  const targetCenterX = targetRect
+    ? targetRect.left + targetRect.width / 2
+    : minSafeX + availableCanvasW / 2;
+  const targetCenterY = targetRect
+    ? targetRect.top + targetRect.height / 2
+    : minSafeY + (maxSafeY - minSafeY) / 2;
+
   // 4. Generate candidate placement positions
   interface Candidate {
     x: number;
@@ -256,121 +300,203 @@ export function computeIntelligentOverlayPosition(
   const candidates: Candidate[] = [];
 
   if (targetRect) {
-    const targetCenterX = targetRect.left + targetRect.width / 2;
-    const targetCenterY = targetRect.top + targetRect.height / 2;
+    // Gap distances must strictly exceed the 24px target buffer
+    const gaps = [28, 48, 72, 108];
 
-    const gaps = [18, 36, 64, 100];
-
-    // Above candidates
+    // Above candidates (pedagogically preferred for horizontally-aligned structures)
     for (const gap of gaps) {
-      candidates.push({
-        x: targetCenterX - cardW / 2,
-        y: targetRect.top - cardH - gap,
-        placement: "above",
-        preferenceBonus: gap === 18 ? -100 : -60,
-      });
+      const candY = targetRect.top - cardH - gap;
+      if (candY >= minSafeY) {
+        candidates.push({
+          x: Math.max(
+            minSafeX,
+            Math.min(targetCenterX - cardW / 2, maxSafeX - cardW),
+          ),
+          y: candY,
+          placement: "above",
+          preferenceBonus: gap === 28 ? -120 : -80,
+        });
+      }
     }
 
-    // Below candidates
+    // Below candidates (only if candidate fits above bottom composer/playback)
+    const composerTop = uiObstacles.composer?.top ?? containerH - 160;
     for (const gap of gaps) {
-      candidates.push({
-        x: targetCenterX - cardW / 2,
-        y: targetRect.bottom + gap,
-        placement: "below",
-        preferenceBonus: gap === 18 ? -90 : -50,
-      });
+      const candY = targetRect.bottom + gap;
+      if (candY + cardH <= composerTop) {
+        candidates.push({
+          x: Math.max(
+            minSafeX,
+            Math.min(targetCenterX - cardW / 2, maxSafeX - cardW),
+          ),
+          y: candY,
+          placement: "below",
+          preferenceBonus: gap === 28 ? -100 : -70,
+        });
+      }
     }
 
     // Right candidates
-    for (const gap of [24, 48, 80]) {
-      candidates.push({
-        x: targetRect.right + gap,
-        y: targetCenterY - cardH / 2,
-        placement: "right",
-        preferenceBonus: -70,
-      });
+    for (const gap of [32, 56, 88]) {
+      const candX = targetRect.right + gap;
+      if (candX + cardW <= maxSafeX) {
+        candidates.push({
+          x: candX,
+          y: Math.max(
+            minSafeY,
+            Math.min(targetCenterY - cardH / 2, maxSafeY - cardH),
+          ),
+          placement: "right",
+          preferenceBonus: -60,
+        });
+      }
     }
 
     // Left candidates
-    for (const gap of [24, 48, 80]) {
+    for (const gap of [32, 56, 88]) {
+      const candX = targetRect.left - cardW - gap;
+      if (candX >= minSafeX) {
+        candidates.push({
+          x: candX,
+          y: Math.max(
+            minSafeY,
+            Math.min(targetCenterY - cardH / 2, maxSafeY - cardH),
+          ),
+          placement: "left",
+          preferenceBonus: -60,
+        });
+      }
+    }
+
+    // Corner / diagonal candidates (safe buffers >= 28)
+    if (targetRect.top - cardH - 28 >= minSafeY) {
+      if (targetRect.right + 28 + cardW <= maxSafeX) {
+        candidates.push({
+          x: targetRect.right + 28,
+          y: targetRect.top - cardH - 28,
+          placement: "above",
+          preferenceBonus: -40,
+        });
+      }
+      if (targetRect.left - cardW - 28 >= minSafeX) {
+        candidates.push({
+          x: targetRect.left - cardW - 28,
+          y: targetRect.top - cardH - 28,
+          placement: "above",
+          preferenceBonus: -40,
+        });
+      }
+    }
+
+    if (targetRect.bottom + 28 + cardH <= composerTop) {
+      if (targetRect.right + 28 + cardW <= maxSafeX) {
+        candidates.push({
+          x: targetRect.right + 28,
+          y: targetRect.bottom + 28,
+          placement: "below",
+          preferenceBonus: -40,
+        });
+      }
+      if (targetRect.left - cardW - 28 >= minSafeX) {
+        candidates.push({
+          x: targetRect.left - cardW - 28,
+          y: targetRect.bottom + 28,
+          placement: "below",
+          preferenceBonus: -40,
+        });
+      }
+    }
+  }
+
+  // Scene-Adaptive Free Space candidates
+  const composerTop = uiObstacles.composer?.top ?? containerH - 160;
+  if (hasSceneElements) {
+    // Dynamic Above Scene
+    if (sceneMinY - minSafeY >= cardH + 28) {
       candidates.push({
-        x: targetRect.left - cardW - gap,
-        y: targetCenterY - cardH / 2,
-        placement: "left",
-        preferenceBonus: -70,
+        x: Math.max(
+          minSafeX + 16,
+          Math.min(targetCenterX - cardW / 2, maxSafeX - cardW - 16),
+        ),
+        y: Math.max(minSafeY + 12, sceneMinY - cardH - 28),
+        placement: "above",
+        preferenceBonus: -50,
       });
     }
 
-    // Corner / diagonal candidates
-    candidates.push(
-      {
-        x: targetRect.right + 24,
-        y: targetRect.top - cardH - 16,
-        placement: "above",
-        preferenceBonus: -40,
-      },
-      {
-        x: targetRect.left - cardW - 24,
-        y: targetRect.top - cardH - 16,
-        placement: "above",
-        preferenceBonus: -40,
-      },
-      {
-        x: targetRect.right + 24,
-        y: targetRect.bottom + 16,
+    // Dynamic Below Scene
+    if (composerTop - sceneMaxY >= cardH + 28) {
+      candidates.push({
+        x: Math.max(
+          minSafeX + 16,
+          Math.min(targetCenterX - cardW / 2, maxSafeX - cardW - 16),
+        ),
+        y: sceneMaxY + 28,
         placement: "below",
         preferenceBonus: -40,
-      },
-      {
-        x: targetRect.left - cardW - 24,
-        y: targetRect.bottom + 16,
-        placement: "below",
-        preferenceBonus: -40,
-      },
-    );
+      });
+    }
+
+    // Dynamic Right of Scene
+    if (maxSafeX - sceneMaxX >= cardW + 32) {
+      candidates.push({
+        x: sceneMaxX + 32,
+        y: Math.max(
+          minSafeY + 16,
+          Math.min(targetCenterY - cardH / 2, composerTop - cardH),
+        ),
+        placement: "right",
+        preferenceBonus: -30,
+      });
+    }
+
+    // Dynamic Left of Scene
+    if (sceneMinX - minSafeX >= cardW + 32) {
+      candidates.push({
+        x: minSafeX + 32,
+        y: Math.max(
+          minSafeY + 16,
+          Math.min(targetCenterY - cardH / 2, composerTop - cardH),
+        ),
+        placement: "left",
+        preferenceBonus: -30,
+      });
+    }
   }
 
-  // Free space canvas quadrant candidates
-  const availableCanvasW = maxSafeX - minSafeX;
+  // Stable Peripheral Quadrants (always available safe havens)
   candidates.push(
     // Top-Right Free Space (left of inspector)
     {
-      x: maxSafeX - cardW - 24,
+      x: maxSafeX - cardW - 20,
       y: minSafeY + 16,
       placement: "floating",
       preferenceBonus: 0,
     },
-    // Top-Left Free Space (right of toolbar)
+    // Middle-Left Free Space (right of toolbar)
     {
-      x: minSafeX + 80,
-      y: minSafeY + 16,
+      x: minSafeX + 84,
+      y: Math.max(minSafeY + 20, containerH / 2 - cardH / 2),
       placement: "floating",
       preferenceBonus: 0,
     },
     // Middle-Right Free Space
     {
-      x: maxSafeX - cardW - 24,
+      x: maxSafeX - cardW - 20,
       y: Math.max(minSafeY + 20, containerH / 2 - cardH / 2),
       placement: "floating",
       preferenceBonus: 0,
     },
-    // Middle-Left Free Space
+    // Top-Left Free Space
     {
-      x: minSafeX + 80,
-      y: Math.max(minSafeY + 20, containerH / 2 - cardH / 2),
+      x: minSafeX + 84,
+      y: minSafeY + 16,
       placement: "floating",
       preferenceBonus: 0,
-    },
-    // Top-Center Safe Free Space
-    {
-      x: minSafeX + (availableCanvasW - cardW) / 2,
-      y: minSafeY + 14,
-      placement: "floating",
-      preferenceBonus: -20,
     },
     // Bottom-Left (above zoom controls)
     {
-      x: minSafeX + 80,
+      x: minSafeX + 84,
       y: containerH - cardH - 180,
       placement: "floating",
       preferenceBonus: 0,
@@ -387,106 +513,69 @@ export function computeIntelligentOverlayPosition(
     });
   }
 
-  // 5. Score candidates
-  let bestCandidate: Candidate = candidates[0] || {
-    x: minSafeX + 80,
-    y: minSafeY + 20,
-    placement: "floating",
-    preferenceBonus: 0,
-  };
-  let lowestScore = Infinity;
+  // 5. Score candidates with HARD COLLISION GATE
+  interface ScoredCandidate {
+    x: number;
+    y: number;
+    placement: OverlayPlacementResult["placement"];
+    score: number;
+    isColliding: boolean;
+  }
 
-  const targetCenterX = targetRect
-    ? targetRect.left + targetRect.width / 2
-    : minSafeX + availableCanvasW / 2;
-  const targetCenterY = targetRect
-    ? targetRect.top + targetRect.height / 2
-    : minSafeY + (maxSafeY - minSafeY) / 2;
+  const scoredCandidates: ScoredCandidate[] = [];
 
   for (const cand of candidates) {
     let score = cand.preferenceBonus;
 
-    // A. Boundary constraints
-    const candLeft = cand.x;
-    const candTop = cand.y;
+    // Clamp candidate rect to screen boundaries
+    const candLeft = Math.max(minSafeX, Math.min(cand.x, maxSafeX - cardW));
+    const candTop = Math.max(minSafeY, Math.min(cand.y, maxSafeY - cardH));
 
-    // Penalize out of usable bounds
-    if (candLeft < minSafeX) {
-      score += (minSafeX - candLeft) * 1000 + 50000;
-    }
-    if (candLeft + cardW > maxSafeX) {
-      score += (candLeft + cardW - maxSafeX) * 1000 + 50000;
-    }
-    if (candTop < minSafeY) {
-      score += (minSafeY - candTop) * 1000 + 50000;
-    }
-    if (candTop + cardH > maxSafeY) {
-      score += (candTop + cardH - maxSafeY) * 1000 + 50000;
-    }
+    const candRect = makeScreenRect(candLeft, candTop, cardW, cardH);
 
-    // Clamp candidate rect for obstacle collision check
-    const clampedCandRect = makeScreenRect(
-      Math.max(minSafeX, Math.min(candLeft, maxSafeX - cardW)),
-      Math.max(minSafeY, Math.min(candTop, maxSafeY - cardH)),
-      cardW,
-      cardH,
-    );
+    // Check UI Obstacles Overlap
+    const navOverlap = getRectOverlapArea(candRect, uiObstacles.navbar);
+    const inspOverlap = uiObstacles.inspector
+      ? getRectOverlapArea(candRect, uiObstacles.inspector)
+      : 0;
+    const compOverlap = uiObstacles.composer
+      ? getRectOverlapArea(candRect, uiObstacles.composer)
+      : 0;
+    const playbackOverlap = uiObstacles.playbackBar
+      ? getRectOverlapArea(candRect, uiObstacles.playbackBar)
+      : 0;
+    const toolOverlap = uiObstacles.toolbar
+      ? getRectOverlapArea(candRect, uiObstacles.toolbar)
+      : 0;
+    const zoomOverlap = uiObstacles.zoomControls
+      ? getRectOverlapArea(candRect, uiObstacles.zoomControls)
+      : 0;
 
-    // B. Check collision with UI Obstacles
-    // Navbar
-    const navOverlap = getRectOverlapArea(clampedCandRect, uiObstacles.navbar);
-    if (navOverlap > 0) {
-      score += navOverlap * 500 + 100000;
-    }
+    const totalUIOverlap =
+      navOverlap +
+      inspOverlap +
+      compOverlap +
+      playbackOverlap +
+      toolOverlap +
+      zoomOverlap;
 
-    // Inspector
-    if (uiObstacles.inspector) {
-      const inspOverlap = getRectOverlapArea(
-        clampedCandRect,
-        uiObstacles.inspector,
-      );
-      if (inspOverlap > 0) {
-        score += inspOverlap * 500 + 100000;
-      }
-    }
+    // Check Protected Scene Elements Overlap
+    let totalElementOverlap = 0;
+    let hasTargetCollision = false;
+    let hasNodeCollision = false;
+    let hasConnectorCollision = false;
+    let hasLabelCollision = false;
 
-    // Composer
-    if (uiObstacles.composer) {
-      const compOverlap = getRectOverlapArea(
-        clampedCandRect,
-        uiObstacles.composer,
-      );
-      if (compOverlap > 0) {
-        score += compOverlap * 500 + 100000;
-      }
-    }
-
-    // Toolbar
-    if (uiObstacles.toolbar) {
-      const toolOverlap = getRectOverlapArea(
-        clampedCandRect,
-        uiObstacles.toolbar,
-      );
-      if (toolOverlap > 0) {
-        score += toolOverlap * 200 + 40000;
-      }
-    }
-
-    // Zoom Controls
-    if (uiObstacles.zoomControls) {
-      const zoomOverlap = getRectOverlapArea(
-        clampedCandRect,
-        uiObstacles.zoomControls,
-      );
-      if (zoomOverlap > 0) {
-        score += zoomOverlap * 200 + 40000;
-      }
-    }
-
-    // C. Check collision with Protected Primary Visual Elements
     for (const prot of protectedElements) {
-      // Add a generous safety buffer around nodes and connectors
-      const buffer = prot.type === "node" || prot.type === "target" ? 24 : 12;
+      const buffer =
+        prot.type === "target"
+          ? 24
+          : prot.type === "node"
+          ? 20
+          : prot.type === "connector"
+          ? 12
+          : 8;
+
       const bufferedRect: ScreenRect = {
         left: prot.rect.left - buffer,
         top: prot.rect.top - buffer,
@@ -496,56 +585,82 @@ export function computeIntelligentOverlayPosition(
         height: prot.rect.height + buffer * 2,
       };
 
-      const overlap = getRectOverlapArea(clampedCandRect, bufferedRect);
+      const overlap = getRectOverlapArea(candRect, bufferedRect);
       if (overlap > 0) {
+        totalElementOverlap += overlap;
         if (prot.type === "target") {
-          // Zero tolerance: NEVER obscure the target element!
-          score += overlap * 1000 + 500000;
+          hasTargetCollision = true;
         } else if (prot.type === "node") {
-          // Do not obscure nodes / tree nodes / array cells
-          score += overlap * 800 + 300000;
+          hasNodeCollision = true;
         } else if (prot.type === "connector") {
-          // Do not obscure connectors / arrows
-          score += overlap * 400 + 100000;
+          hasConnectorCollision = true;
         } else if (prot.type === "label") {
-          // Do not obscure labels
-          score += overlap * 300 + 80000;
-        } else {
-          score += overlap * 100 + 20000;
+          hasLabelCollision = true;
         }
       }
     }
 
-    // D. Distance reward (if no critical overlap)
-    // Small distance penalty so closest collision-free position wins
-    const candCenterX = clampedCandRect.left + clampedCandRect.width / 2;
-    const candCenterY = clampedCandRect.top + clampedCandRect.height / 2;
-    const distToTarget = Math.hypot(
-      candCenterX - targetCenterX,
-      candCenterY - targetCenterY,
-    );
-    score += distToTarget * 0.15;
+    const isColliding = totalUIOverlap > 0 || totalElementOverlap > 0;
 
-    // E. Temporal continuity: give subtle bonus if close to previous position to avoid unnecessary jumping
-    if (input.previousPosition) {
-      const distToPrev = Math.hypot(
-        clampedCandRect.left - input.previousPosition.x,
-        clampedCandRect.top - input.previousPosition.y,
+    // Hard Collision Gate: insurmountable penalty for any collision
+    if (isColliding) {
+      score +=
+        100_000_000 +
+        (hasTargetCollision ? 50_000_000 : 0) +
+        (hasNodeCollision ? 20_000_000 : 0) +
+        (hasConnectorCollision ? 10_000_000 : 0) +
+        (hasLabelCollision ? 5_000_000 : 0) +
+        (totalUIOverlap + totalElementOverlap) * 10_000;
+    } else {
+      // Distance reward: closest collision-free candidate wins
+      const candCenterX = candRect.left + candRect.width / 2;
+      const candCenterY = candRect.top + candRect.height / 2;
+      const distToTarget = Math.hypot(
+        candCenterX - targetCenterX,
+        candCenterY - targetCenterY,
       );
-      if (distToPrev < 90) {
-        score -= 35; // reward stable placement
+      score += distToTarget * 0.15;
+
+      // Temporal continuity bonus (subtle anchor, never overrides primary spatial safety)
+      if (input.previousPosition) {
+        const distToPrev = Math.hypot(
+          candRect.left - input.previousPosition.x,
+          candRect.top - input.previousPosition.y,
+        );
+        if (distToPrev < 90) {
+          score -= 15;
+        }
       }
     }
 
-    if (score < lowestScore) {
-      lowestScore = score;
-      bestCandidate = {
-        x: clampedCandRect.left,
-        y: clampedCandRect.top,
-        placement: cand.placement,
-        preferenceBonus: cand.preferenceBonus,
-      };
-    }
+    scoredCandidates.push({
+      x: candRect.left,
+      y: candRect.top,
+      placement: cand.placement,
+      score,
+      isColliding,
+    });
+  }
+
+  // Prefer collision-free candidates first
+  const collisionFreeCandidates = scoredCandidates.filter(
+    (c) => !c.isColliding,
+  );
+
+  let bestCandidate: ScoredCandidate;
+  if (collisionFreeCandidates.length > 0) {
+    collisionFreeCandidates.sort((a, b) => a.score - b.score);
+    bestCandidate = collisionFreeCandidates[0];
+  } else {
+    // If no candidate is completely collision-free, pick candidate with lowest penalty
+    scoredCandidates.sort((a, b) => a.score - b.score);
+    bestCandidate = scoredCandidates[0] || {
+      x: minSafeX + 80,
+      y: minSafeY + 20,
+      placement: "floating",
+      score: 0,
+      isColliding: false,
+    };
   }
 
   // 6. Apply manual directional offset if user overrode position
@@ -565,7 +680,7 @@ export function computeIntelligentOverlayPosition(
     x: Math.round(finalX),
     y: Math.round(finalY),
     placement: bestCandidate.placement,
-    score: lowestScore,
+    score: bestCandidate.score,
     targetRect,
   };
 }

@@ -92,22 +92,31 @@ export class OrderedOperationEngine {
       }
     }
 
-    if (!parsedOperations || parsedOperations.length < 3) {
+    if (!parsedOperations || parsedOperations.length < 2) {
       return false;
     }
 
     // If existing steps are too coarse compared to the operations requested
-    // (e.g. 9 inserts or 15 quicksort elements collapsed into 1 or 2 steps)
-    const minExpectedSteps = Math.min(parsedOperations.length, 6);
+    // (e.g. 2 deletions collapsed into 1 step, or 9 inserts into 2 steps)
+    const minExpectedSteps = Math.min(parsedOperations.length, 8);
     if (!existingSteps || existingSteps.length < minExpectedSteps) {
       return true;
     }
 
-    // If existing steps do not demonstrate the later operations (e.g. deletions requested but no deletion step)
-    const hasDeletes = parsedOperations.some((op) => op.op === "delete");
-    if (hasDeletes) {
+    // If existing steps collapse multiple deletions into a single step
+    const deleteOps = parsedOperations.filter((op) => op.op === "delete");
+    if (deleteOps.length >= 2) {
+      const distinctDeleteSteps = existingSteps.filter((s) =>
+        /\b(delete|remove|popped|eliminate|elimination|discard)\b/i.test(
+          `${s.title || ""} ${s.explanation || ""}`,
+        ),
+      );
+      if (distinctDeleteSteps.length < deleteOps.length) {
+        return true;
+      }
+    } else if (deleteOps.length === 1) {
       const stepsMentionDelete = existingSteps.some((s) =>
-        /\b(delete|remove|popped)\b/i.test(
+        /\b(delete|remove|popped|eliminate|elimination|discard)\b/i.test(
           `${s.title || ""} ${s.explanation || ""}`,
         ),
       );
@@ -205,13 +214,17 @@ export class OrderedOperationEngine {
       return this.synthesizeTreeSteps(concept, parsedOperations, prompt);
     }
 
-    // 8. Check for Linear Sequences (Linked List / Stack / Queue)
+    // 8. Check for Linear Sequences (Linked List / Stack / Queue / Array)
     if (
       corpus.includes("list") ||
       corpus.includes("stack") ||
-      corpus.includes("queue")
+      corpus.includes("queue") ||
+      corpus.includes("array") ||
+      corpus.includes("chain") ||
+      prompt.includes("->") ||
+      prompt.includes("→")
     ) {
-      return this.synthesizeLinearSteps(concept, parsedOperations);
+      return this.synthesizeLinearSteps(concept, parsedOperations, inputs, prompt);
     }
 
     // 9. Universal General Operations Fallback
@@ -1197,50 +1210,221 @@ export class OrderedOperationEngine {
   }
 
   /**
-   * Synthesizes step-by-step linear data structure operations.
+   * Synthesizes step-by-step linear data structure operations (Linked List, Array, Stack, Queue).
+   * Universally preserves entity conservation and relationship/pointer redirection semantics.
    */
   private static synthesizeLinearSteps(
     concept: string,
     operations: ParsedOperation[],
+    inputs?: unknown[],
+    prompt: string = "",
   ): RawProposalStep[] {
     const steps: RawProposalStep[] = [];
-    const elements: number[] = [];
+    const corpus = `${concept} ${prompt}`.toLowerCase();
 
+    // 1. Resolve initial elements
+    let elements: number[] = [];
+    if (Array.isArray(inputs?.[0]) && inputs[0].length > 0) {
+      elements = (inputs[0] as unknown[])
+        .map((x) => Number(x))
+        .filter((n) => !isNaN(n));
+    }
+
+    if (elements.length === 0 && operations.length > 0) {
+      const fromOp =
+        operations[0].metadata?.baselineElements ||
+        operations[0].arguments?.baselineChain ||
+        operations[0].arguments?.baselineArray;
+      if (Array.isArray(fromOp) && fromOp.length > 0) {
+        elements = (fromOp as unknown[])
+          .map((x) => Number(x))
+          .filter((n) => !isNaN(n));
+      }
+    }
+
+    if (elements.length === 0) {
+      const chainMatch = prompt.match(
+        /([A-Za-z0-9_-]+(?:\s*(?:->|→)\s*[A-Za-z0-9_-]+)+)/,
+      );
+      if (chainMatch) {
+        elements = chainMatch[1]
+          .split(/\s*(?:->|→)\s*/)
+          .map((s) => Number(s.trim()))
+          .filter((n) => !isNaN(n));
+      }
+    }
+
+    if (elements.length === 0) {
+      const arrayMatch = prompt.match(/\[([\d\s,.-]+)\]/);
+      if (arrayMatch) {
+        elements = arrayMatch[1]
+          .split(",")
+          .map((s) => Number(s.trim()))
+          .filter((n) => !isNaN(n));
+      }
+    }
+
+    // Fallback baseline if operations are deletes and no container was found
+    if (elements.length === 0) {
+      const deleteVals = operations
+        .filter((op) => op.op === "delete" && op.value !== undefined)
+        .map((op) => Number(op.value))
+        .filter((n) => !isNaN(n));
+      if (deleteVals.length > 0) {
+        elements = [10, ...deleteVals, 40, 50];
+      }
+    }
+
+    // Determine visual structure type
+    const isArray = corpus.includes("array");
+    const isStack = corpus.includes("stack");
+    const isQueue = corpus.includes("queue");
+    const isLinkedList = !isArray && !isStack && !isQueue;
+
+    const structType = isArray
+      ? "create_array"
+      : isStack
+      ? "create_stack"
+      : isQueue
+      ? "create_queue"
+      : "create_linked_list";
+    const structId = isArray
+      ? "arr-main"
+      : isStack
+      ? "stack-main"
+      : isQueue
+      ? "queue-main"
+      : "ll-main";
+
+    // Track sequential execution
     for (let i = 0; i < operations.length; i++) {
       const op = operations[i];
       const val = typeof op.value === "number" ? op.value : Number(op.value);
 
-      if (op.op === "insert" && !isNaN(val)) {
-        elements.push(val);
-        steps.push({
-          title: `Insert Element ${val}`,
-          explanation: `Element ${val} appended to ${concept}. Structure updated maintaining order.`,
-          role: "mechanism",
-          operations: [
-            {
-              type: "create_linked_list",
-              id: "ll-main",
-              elements: elements.map((v) => ({ value: v })),
-            },
-          ],
-        });
-      } else if (op.op === "delete" && !isNaN(val)) {
+      if (op.op === "delete" && !isNaN(val)) {
         const idx = elements.indexOf(val);
         if (idx !== -1) {
-          elements.splice(idx, 1);
+          const pred = idx > 0 ? elements[idx - 1] : undefined;
+          const succ = idx + 1 < elements.length ? elements[idx + 1] : undefined;
+
+          // MOMENT A: Focus / Identify target element before mutating
+          const focusElements = elements.map((v) => ({
+            id: `node-${v}`,
+            value: v,
+            highlight: v === val ? ("warning" as const) : undefined,
+          }));
+
+          const focusExplanation =
+            isLinkedList && pred !== undefined
+              ? `Identify node ${val} for elimination. Predecessor node ${pred} currently points to node ${val}.`
+              : isLinkedList && pred === undefined
+              ? `Identify head node ${val} for elimination. The head pointer currently references node ${val}.`
+              : `Locate element ${val} at index ${idx} for removal from ${concept}.`;
+
           steps.push({
-            title: `Delete Element ${val}`,
-            explanation: `Element ${val} removed from ${concept}. Connectors redirected.`,
+            title: `Identify Node ${val} for Elimination`,
+            explanation: focusExplanation,
+            role: "exploration",
+            operations: [
+              {
+                type: structType,
+                id: structId,
+                elements: focusElements,
+              },
+            ],
+          });
+
+          // MOMENT B: Execute removal & rewire pointers / connectors
+          elements.splice(idx, 1);
+          const mutatedElements = elements.map((v) => ({
+            id: `node-${v}`,
+            value: v,
+            highlight:
+              isLinkedList && succ !== undefined && v === succ
+                ? ("success" as const)
+                : isLinkedList && pred !== undefined && v === pred
+                ? ("success" as const)
+                : undefined,
+          }));
+
+          const removalExplanation =
+            isLinkedList && pred !== undefined && succ !== undefined
+              ? `Node ${val} is removed. Node ${pred}'s next pointer is redirected to point directly to node ${succ}.`
+              : isLinkedList && pred !== undefined
+              ? `Node ${val} is removed. Node ${pred} now points to null (tail).`
+              : isLinkedList && succ !== undefined
+              ? `Head node ${val} is removed. The list now begins at node ${succ}.`
+              : `Element ${val} removed from ${concept}. Remaining elements shifted to maintain continuity.`;
+
+          steps.push({
+            title: isLinkedList && pred !== undefined && succ !== undefined
+              ? `Remove Node ${val}: Pointer ${pred} -> ${succ}`
+              : `Remove Element ${val}`,
+            explanation: removalExplanation,
             role: "mechanism",
             operations: [
               {
-                type: "create_linked_list",
-                id: "ll-main",
-                elements: elements.map((v) => ({ value: v })),
+                type: structType,
+                id: structId,
+                elements: mutatedElements,
               },
             ],
           });
         }
+      } else if (op.op === "insert" && !isNaN(val)) {
+        elements.push(val);
+        steps.push({
+          title: `Insert Element ${val}`,
+          explanation: `Element ${val} added to ${concept}. Structure updated maintaining order.`,
+          role: "mechanism",
+          operations: [
+            {
+              type: structType,
+              id: structId,
+              elements: elements.map((v) => ({
+                value: v,
+                highlight: v === val ? ("success" as const) : undefined,
+              })),
+            },
+          ],
+        });
+      } else if (op.op === "swap" && Array.isArray(op.value)) {
+        const [a, b] = op.value as [number, number];
+        const idxA = elements.indexOf(a);
+        const idxB = elements.indexOf(b);
+        if (idxA !== -1 && idxB !== -1) {
+          elements[idxA] = b;
+          elements[idxB] = a;
+          steps.push({
+            title: `Swap Elements ${a} and ${b}`,
+            explanation: `Swapped element ${a} at index ${idxA} with element ${b} at index ${idxB}.`,
+            role: "mechanism",
+            operations: [
+              {
+                type: structType,
+                id: structId,
+                elements: elements.map((v) => ({
+                  value: v,
+                  highlight: v === a || v === b ? ("accent" as const) : undefined,
+                })),
+              },
+            ],
+          });
+        }
+      } else if (op.op === "reverse") {
+        elements.reverse();
+        steps.push({
+          title: `Reverse Sequence`,
+          explanation: `Reversed all elements in ${concept}, flipping the order of links.`,
+          role: "mechanism",
+          operations: [
+            {
+              type: structType,
+              id: structId,
+              elements: elements.map((v) => ({ value: v })),
+            },
+          ],
+        });
       }
     }
 

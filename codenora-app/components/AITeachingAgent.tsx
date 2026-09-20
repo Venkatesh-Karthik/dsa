@@ -129,6 +129,15 @@ import {
 } from "./CognoraDrawingToolbar";
 import { CognoraHeader } from "./CognoraHeader";
 import { CognoraVoiceOrb, type VoiceOrbState } from "./CognoraVoiceOrb";
+import {
+  CognoraWorldModel,
+  type CognoraWorldState,
+} from "../ai/intelligence/cognora-world-model";
+import { IntentEngine } from "../ai/intelligence/intent-engine";
+import { ContextEngine } from "../ai/intelligence/context-engine";
+import { TeacherBrain } from "../ai/intelligence/teacher-brain";
+import { BranchManager } from "../ai/intelligence/branch-manager";
+import { VoiceListener } from "../ai/voice/voice-listener";
 
 import "./AITeachingAgent.scss";
 
@@ -407,6 +416,83 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   );
   const playbackControllerRef = useRef<LessonPlaybackController | null>(null);
 
+  // Cognora World Model (Authoritative Runtime Truth)
+  const worldModelRef = useRef<CognoraWorldModel>(new CognoraWorldModel());
+  const [worldState, setWorldState] = useState<CognoraWorldState>(() =>
+    worldModelRef.current.getState(),
+  );
+
+  useEffect(() => {
+    return worldModelRef.current.subscribe(setWorldState);
+  }, []);
+
+  // Voice 2: Live Listener with VAD & Streaming Interruption
+  const voiceListenerRef = useRef<VoiceListener | null>(null);
+  const [isVoiceListening, setIsVoiceListening] = useState<boolean>(false);
+
+  const handleToggleVoiceListening = useCallback(async () => {
+    if (isVoiceListening) {
+      voiceListenerRef.current?.stop();
+      setIsVoiceListening(false);
+      worldModelRef.current.setOrbState(isLessonPlaying ? "SPEAKING" : "IDLE");
+      return;
+    }
+
+    if (!voiceListenerRef.current) {
+      voiceListenerRef.current = new VoiceListener(
+        {
+          onStateChange: (state) => {
+            if (state === "LISTENING") {
+              setIsVoiceListening(true);
+              worldModelRef.current.setOrbState("LISTENING");
+            } else if (state === "INTERRUPTED") {
+              worldModelRef.current.setOrbState("INTERRUPTED");
+            } else if (state === "IDLE") {
+              setIsVoiceListening(false);
+            }
+          },
+          onSpeechStart: () => {
+            console.log(
+              "[COGNORA][INTERRUPT] User speech detected! Halting audio immediately.",
+            );
+            voiceEngineRef.current.stop();
+            if (playbackControllerRef.current?.getStatus() === "PLAYING") {
+              playbackControllerRef.current.pause();
+              setIsLessonPlaying(false);
+            }
+            worldModelRef.current.setOrbState("INTERRUPTED");
+            setTimeout(() => {
+              worldModelRef.current.setOrbState("LISTENING");
+            }, 120);
+          },
+          onInterimTranscript: (_text) => {},
+          onFinalTranscript: (text) => {
+            console.log(`[COGNORA][VOICE_INPUT] Spoken turn: "${text}"`);
+            handleSubmitRef.current(text, "voice_speech_turn");
+          },
+          onError: (err) => {
+            console.warn("[COGNORA][VOICE_LISTENER_ERR]", err);
+            setIsVoiceListening(false);
+          },
+        },
+        getOwnerDoc().defaultView,
+      );
+    }
+
+    const started = await voiceListenerRef.current.start();
+    if (started) {
+      setIsVoiceListening(true);
+      worldModelRef.current.setOrbState("LISTENING");
+    }
+  }, [isVoiceListening, isLessonPlaying, getOwnerDoc]);
+
+  useEffect(() => {
+    return () => {
+      voiceListenerRef.current?.destroy();
+      voiceListenerRef.current = null;
+    };
+  }, []);
+
   const handleToggleVoice = useCallback(() => {
     setIsVoiceEnabled((prev) => {
       const next = !prev;
@@ -428,6 +514,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   }, []);
 
   const voiceOrbState: VoiceOrbState = useMemo(() => {
+    if (worldState.orbState === "LISTENING") {
+      return "LISTENING";
+    }
+    if (worldState.orbState === "INTERRUPTED") {
+      return "INTERRUPTED";
+    }
     if (voiceState === "error") {
       return "ERROR";
     }
@@ -449,12 +541,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       return "COMPLETED";
     }
     return "IDLE";
-  }, [voiceState, isLessonPlaying]);
+  }, [voiceState, isLessonPlaying, worldState.orbState]);
 
   useEffect(() => {
     const engine = voiceEngineRef.current;
     const unsubscribe = engine.subscribe((state) => {
       setVoiceState(state);
+      worldModelRef.current.setVoiceState(state);
     });
     return () => {
       unsubscribe();
@@ -771,6 +864,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       );
       controller.setVoiceEnabled(isVoiceEnabledRef.current);
       playbackControllerRef.current = controller;
+      (window as any).__cognoraPlaybackController = controller;
+      worldModelRef.current.setLesson(processed.visualLesson || lesson, timeline);
 
       // Pre-synthesize and cache speech asynchronously in background immediately upon lesson load
       voiceEngineRef.current.prepareLessonAudio(timeline);
@@ -813,6 +908,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       // 5. Subscribe to state transitions
       controller.subscribe((state) => {
+        worldModelRef.current.setCurrentMoment(state.currentIndex);
+        worldModelRef.current.updatePlaybackState(state);
         previousSnapshotRef.current = createSemanticSnapshot(
           excalidrawAPI.getSceneElements(),
         );
@@ -902,6 +999,12 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       };
       (window as any).__cognoraToggleTools = () => {
         setIsToolsPaletteOpen((prev) => !prev);
+      };
+      (window as any).__cognoraPlaybackNext = () => {
+        playbackControllerRef.current?.next(true);
+      };
+      (window as any).__cognoraPlaybackPrev = () => {
+        playbackControllerRef.current?.prev(true);
       };
     }
   }, [excalidrawAPI]);
@@ -1265,7 +1368,187 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     setErrorCode(null);
     setIsConversationMinimized(false);
 
-    // 3. Intercept and execute commands (direct slash or deterministic natural language)
+    // 3. Multimodal Intent Resolution
+    const inputSource = userAction.startsWith("voice") ? "voice" : "keyboard";
+    const intent = IntentEngine.resolveIntent(
+      trimmed,
+      inputSource,
+      worldModelRef.current.getState(),
+    );
+
+    // 3a. Immediate Interruption
+    if (intent.intentType === "INTERRUPT") {
+      voiceEngineRef.current.stop();
+      if (playbackControllerRef.current?.getStatus() === "PLAYING") {
+        playbackControllerRef.current.pause();
+        setIsLessonPlaying(false);
+      }
+      worldModelRef.current.setOrbState("LISTENING");
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: trimmed,
+      };
+      const assistantMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        content: "Paused. Listening to you...",
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      worldModelRef.current.appendConversation(userMsg);
+      worldModelRef.current.appendConversation(assistantMsg);
+      activeRequestLockRef.current = null;
+      setRequestState("idle");
+      setInputValue("");
+      return;
+    }
+
+    // 3b. What-If Branch Exit ("Go back", "Return to lesson")
+    if (intent.intentType === "BRANCH_EXIT") {
+      const activeBranch = worldModelRef.current.getActiveBranch();
+      if (activeBranch) {
+        const returnIndex = activeBranch.parentMomentIndex;
+        worldModelRef.current.exitBranch();
+        playbackControllerRef.current?.seek(returnIndex, true);
+        const userMsg: ChatMessage = {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: trimmed,
+        };
+        const assistantMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: `Returned to step ${returnIndex + 1} in the primary lesson.`,
+        };
+        setMessages((prev) => [...prev, userMsg, assistantMsg]);
+        worldModelRef.current.appendConversation(userMsg);
+        worldModelRef.current.appendConversation(assistantMsg);
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+    }
+
+    // 3c. Pacing Controls ("Slower", "Faster")
+    if (intent.intentType === "PACE_CONTROL") {
+      const pace = intent.parameters.pace as "slower" | "faster";
+      const newSpeed = pace === "slower" ? 0.75 : 1.25;
+      playbackControllerRef.current?.setSpeed(newSpeed);
+      worldModelRef.current.updateStudentState((s) => {
+        s.pace = pace;
+        s.playbackSpeed = newSpeed;
+      });
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: trimmed,
+      };
+      const assistantMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: "assistant",
+        content:
+          pace === "slower"
+            ? "Slowing down pacing (0.75x speed)."
+            : "Increasing pacing (1.25x speed).",
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      worldModelRef.current.appendConversation(userMsg);
+      worldModelRef.current.appendConversation(assistantMsg);
+      activeRequestLockRef.current = null;
+      setRequestState("idle");
+      setInputValue("");
+      return;
+    }
+
+    // 3d. Playback Navigation Controls ("Next", "Previous", "Replay", "Pause", "Resume")
+    if (intent.intentType === "PLAYBACK_CONTROL") {
+      const action = intent.parameters.action;
+      if (action === "next") {
+        handleNextTransformation();
+      } else if (action === "previous") {
+        handlePreviousTransformation();
+      } else if (action === "replay") {
+        playbackControllerRef.current?.seek(0, true);
+      } else if (action === "pause") {
+        playbackControllerRef.current?.pause();
+        setIsLessonPlaying(false);
+      } else if (action === "resume") {
+        playbackControllerRef.current?.play();
+        setIsLessonPlaying(true);
+      }
+      activeRequestLockRef.current = null;
+      setRequestState("idle");
+      setInputValue("");
+      return;
+    }
+
+    // 3e. Teacher Brain Local Decisions (Misconception Detection, Simplify, Why, What-If, Focus)
+    if (transformationLesson && worldModelRef.current.getState().currentMoment) {
+      const decision = TeacherBrain.decide(
+        intent,
+        worldModelRef.current.getState(),
+      );
+
+      if (decision.isLocal) {
+        const userMsg: ChatMessage = {
+          id: `user-${Date.now()}`,
+          role: "user",
+          content: trimmed,
+        };
+        const assistantMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: decision.explanation,
+        };
+        setMessages((prev) => [...prev, userMsg, assistantMsg]);
+        worldModelRef.current.appendConversation(userMsg);
+        worldModelRef.current.appendConversation(assistantMsg);
+
+        // If what-if branch creation
+        if (decision.branchToCreate) {
+          worldModelRef.current.enterBranch(decision.branchToCreate);
+        }
+
+        // If focus requested
+        if (decision.focusEntityId) {
+          const el = excalidrawAPI
+            ?.getSceneElements?.()
+            .find(
+              (e: any) =>
+                e.id === String(decision.focusEntityId) ||
+                e.customData?.dslId === String(decision.focusEntityId),
+            );
+          if (el) {
+            (excalidrawAPI as any)?.scrollToContent?.([el], {
+              animate: true,
+              fitToViewport: false,
+            });
+          }
+        }
+
+        // Speak decision narration if available and voice is enabled
+        if (decision.narration && isVoiceEnabled) {
+          voiceEngineRef.current.play({
+            lessonId: transformationLesson.lessonId,
+            transformationId: `local-decision-${Date.now()}`,
+            stepIndex:
+              worldModelRef.current.getState().currentMoment?.stepIndex ?? 0,
+            totalSteps:
+              worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
+            title: decision.strategy,
+            explanation: decision.narration,
+          });
+        }
+
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
+        setInputValue("");
+        return;
+      }
+    }
+
+    // 4. Intercept and execute commands (direct slash or deterministic natural language)
     const resolvedCommand = trimmed.startsWith("/")
       ? trimmed
       : parseNaturalLanguageToCommand(trimmed);
@@ -1500,9 +1783,23 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       const tReqBuild = Math.round(performance.now() - tReqBuildStart);
 
       const tProviderStart = performance.now();
+      let promptToSend = trimmed;
+      if (
+        transformationLesson &&
+        worldModelRef.current.getState().currentMoment
+      ) {
+        const resolvedCtx = ContextEngine.resolveContext(
+          intent,
+          worldModelRef.current.getState(),
+        );
+        promptToSend = `${ContextEngine.formatCompactPromptContext(
+          resolvedCtx,
+        )}\n\nLearner Question: ${trimmed}`;
+      }
+
       const response = await requestTeachingExplanation(
         {
-          prompt: trimmed,
+          prompt: promptToSend,
           context: requestContext,
           requestId,
           generationId,
@@ -1657,6 +1954,11 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           replacePreviousAI: true,
           focusViewport: true,
         });
+      } else if (transformationLesson) {
+        // Follow-up question answered in context of active lesson without corrupting canvas
+        console.log(
+          "[COGNORA][FOLLOW_UP] Conceptual follow-up answered in active lesson context.",
+        );
       } else {
         throw new Error(
           "Teaching model produced no visual entities or lesson.",
@@ -1708,7 +2010,22 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       setErrorMessage(null);
       setErrorCode(null);
       setMessages((prev) => [...prev, assistantMessage]);
+      worldModelRef.current.appendConversation(assistantMessage);
       setRequestState("success");
+
+      // Speak follow-up answer if voice is enabled and this was an answer to a question (not a full visual lesson replay)
+      if (assistantMessage.content && isVoiceEnabled && !visualLesson) {
+        voiceEngineRef.current.play({
+          lessonId: transformationLesson?.lessonId || "live",
+          transformationId: `follow-up-${Date.now()}`,
+          stepIndex:
+            worldModelRef.current.getState().currentMoment?.stepIndex ?? 0,
+          totalSteps:
+            worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
+          title: response.topic || "Explanation",
+          explanation: assistantMessage.content,
+        });
+      }
 
       // Settle cleanly before returning to idle
       setTimeout(() => {
@@ -3103,6 +3420,53 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           </CognoraErrorBoundary>
         )}
 
+        {/* 5b. What-If Counterfactual Branch Banner */}
+        {worldState.activeBranch && (
+          <div
+            className="cognora-whatif-banner"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
+              padding: "8px 16px",
+              margin: "0 auto 8px auto",
+              maxWidth: "520px",
+              background: "rgba(255, 255, 255, 0.92)",
+              backdropFilter: "blur(16px)",
+              border: "1px solid rgba(37, 99, 235, 0.35)",
+              borderRadius: "16px",
+              boxShadow: "0 8px 32px rgba(37, 99, 235, 0.14)",
+              fontSize: "13px",
+              color: "#1e293b",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "16px" }}>🌿</span>
+              <span>
+                <strong>What-If Branch:</strong>{" "}
+                {worldState.activeBranch.description}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => handleSubmit("go back", "branch_return_click")}
+              style={{
+                padding: "4px 12px",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "#ffffff",
+                background: "#2563eb",
+                border: "none",
+                borderRadius: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Return to Lesson
+            </button>
+          </div>
+        )}
+
         {/* 6. AI Composer Dock with Integrated Conversation Thread */}
         <CognoraErrorBoundary componentName="CognoraAIComposer">
           <CognoraAIComposer
@@ -3110,6 +3474,8 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             onInputChange={setInputValue}
             onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
             isLoading={isTeachingRequestActive}
+            isListening={isVoiceListening}
+            onToggleVoiceListening={handleToggleVoiceListening}
             isPanelOpen={isContextualPanelOpen}
             selectedContext={selectedContext}
             onClearSelectedContext={() => setSelectedContext([])}

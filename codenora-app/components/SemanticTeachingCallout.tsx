@@ -40,6 +40,8 @@ export const SemanticTeachingCallout: React.FC<
   placement,
   x,
   y,
+  cardWidth,
+  cardHeight,
   targetRect,
   secondaryTargetRects = [],
   showSecondaryAnchors = false,
@@ -155,6 +157,8 @@ export const SemanticTeachingCallout: React.FC<
         }`}
         style={{
           transform: `translate3d(${x}px, ${y}px, 0)`,
+          width: cardWidth ? `${cardWidth}px` : undefined,
+          maxWidth: cardWidth ? `${cardWidth}px` : "320px",
           zIndex: 25,
         }}
         data-purpose="compact-teaching-callout"

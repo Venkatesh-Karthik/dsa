@@ -125,7 +125,13 @@ export function reconcileSceneState(
 
   // 1. Reconcile Entities
   for (const [entityId, entity] of targetState.graph.entities.entries()) {
+    if (entity.properties?.isAliasOf) {
+      continue;
+    }
     activeSemanticIds.add(entityId);
+    if (entity.properties?.aliasIndex) {
+      activeSemanticIds.add(String(entity.properties.aliasIndex));
+    }
     const pos = targetState.layoutState?.get(entityId) ?? { x: 100, y: 100 };
     const existing = existingBySemanticId.get(entityId);
 
@@ -160,6 +166,9 @@ export function reconcileSceneState(
 
     entityElementMap.set(entityId, renderedEls);
     primaryElementMap.set(entityId, primaryEl);
+    if (entity.properties?.aliasIndex) {
+      primaryElementMap.set(String(entity.properties.aliasIndex), primaryEl);
+    }
     resultElements.push(...renderedEls);
   }
 

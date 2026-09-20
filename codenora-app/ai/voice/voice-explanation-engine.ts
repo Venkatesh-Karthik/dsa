@@ -282,6 +282,7 @@ export class VoiceExplanationEngine {
   }
 
   public stop(): void {
+    this.activeSessionToken++;
     this.cancelPendingRequest();
     this.player.stop();
     this.setState("stopped");

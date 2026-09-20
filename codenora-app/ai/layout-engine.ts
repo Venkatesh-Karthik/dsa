@@ -852,7 +852,9 @@ export function computeSceneGraphLayout(
   previousLayout?: Map<string, LayoutPoint>,
 ): { positions: Map<string, LayoutPoint>; bounds: LayoutBounds } {
   const positions = new Map<string, LayoutPoint>();
-  const entityList = Array.from(graph.entities.values());
+  const entityList = Array.from(graph.entities.values()).filter(
+    (e) => !e.properties?.isAliasOf,
+  );
 
   if (entityList.length === 0) {
     return {

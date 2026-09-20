@@ -591,14 +591,40 @@ export class ConceptualJourneyOptimizer {
     const textA = `${milestoneA.title} ${milestoneA.explanation}`.toLowerCase();
     const textB = `${stepB.title} ${stepB.explanation}`.toLowerCase();
     const isMutationA =
-      /\b(insert|delete|remove|add|push|pop|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
+      /\b(insert|delete|remove|eliminate|elimination|drop|discard|add|push|pop|dequeue|enqueue|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
         textA,
       );
     const isMutationB =
-      /\b(insert|delete|remove|add|push|pop|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
+      /\b(insert|delete|remove|eliminate|elimination|drop|discard|add|push|pop|dequeue|enqueue|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
         textB,
       );
     if (isMutationA && isMutationB) {
+      return false;
+    }
+
+    // RULE 1D: Never merge separate structural mutations on containers (linked lists, arrays, trees, graphs)
+    const hasContainerMutationA = (milestoneA.rawSteps || []).some((s: any) =>
+      [...(s.operations || []), ...(s.visual_actions || [])].some((op: any) =>
+        op?.type?.startsWith("create_linked_list") ||
+        op?.type?.startsWith("create_array") ||
+        op?.type?.startsWith("create_tree") ||
+        op?.type?.startsWith("create_graph") ||
+        op?.type === "delete" ||
+        op?.type === "delete_node",
+      ),
+    );
+    const hasContainerMutationB = [
+      ...(stepB.raw.operations || []),
+      ...(stepB.raw.visual_actions || []),
+    ].some((op: any) =>
+      op?.type?.startsWith("create_linked_list") ||
+      op?.type?.startsWith("create_array") ||
+      op?.type?.startsWith("create_tree") ||
+      op?.type?.startsWith("create_graph") ||
+      op?.type === "delete" ||
+      op?.type === "delete_node",
+    );
+    if (hasContainerMutationA && hasContainerMutationB) {
       return false;
     }
 

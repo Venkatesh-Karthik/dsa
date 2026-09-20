@@ -159,6 +159,9 @@ export class UniversalConceptIntelligenceEngine {
     if (candidateEntities.length === 0 && initialActions.length > 0) {
       const parsedGraph = createSceneGraphFromActions(initialActions);
       for (const ent of parsedGraph.entities.values()) {
+        if (ent.properties?.isAliasOf) {
+          continue;
+        }
         candidateEntities.push({
           id: ent.id,
           type: ent.primitiveType || "GenericEntity",
@@ -303,33 +306,95 @@ export class UniversalConceptIntelligenceEngine {
     );
 
     if (filteredEntities.length === 0) {
-      const concepts =
-        understanding.importantConcepts.length > 0
-          ? understanding.importantConcepts
-          : [understanding.concept || "Primary Concept", "Secondary Concept"];
-      for (let i = 0; i < concepts.length; i++) {
-        const cName = concepts[i];
-        const cId = `ent-${i + 1}`;
-        const entObj: Entity = {
-          id: cId,
-          type: "GenericEntity",
-          label: cName,
-          properties: {},
-          semanticRole: i === 0 ? "root" : "component",
-        };
-        filteredEntities.push(entObj);
-        candidateEntities.push(entObj);
-        if (i > 0) {
-          const relObj: Relationship = {
-            id: `rel-${i}`,
-            source: `ent-${i}`,
-            target: cId,
-            type: "relates_to",
-            direction: "forward",
-            label: "flows_to",
-            properties: {},
+      const baseElements =
+        understanding.baselineElements ||
+        understanding.metadata?.baselineElements ||
+        (Array.isArray(understanding.inputs[0])
+          ? (understanding.inputs[0] as unknown[])
+          : undefined);
+      if (Array.isArray(baseElements) && baseElements.length > 0) {
+        const base = baseElements;
+        const isLinkedList =
+          !understanding.concept.toLowerCase().includes("array") &&
+          !understanding.concept.toLowerCase().includes("stack") &&
+          !understanding.concept.toLowerCase().includes("queue");
+        const listId = "ll-main";
+
+        let prevId: string | null = null;
+        for (let i = 0; i < base.length; i++) {
+          const val = base[i];
+          const numVal =
+            typeof val === "number"
+              ? val
+              : !isNaN(Number(val))
+              ? Number(val)
+              : val;
+          const entId = `node-${val}`;
+          const entObj: Entity = {
+            id: entId,
+            type: isLinkedList ? "LinkedListNode" : "GenericEntity",
+            label: String(val),
+            value: numVal,
+            semanticRole:
+              i === 0
+                ? "head"
+                : i === base.length - 1
+                ? "tail"
+                : "list-node",
+            properties: {
+              rawId: String(val),
+              listId,
+              containerId: listId,
+              index: i,
+            },
           };
-          candidateRelationships.push(relObj);
+          filteredEntities.push(entObj);
+          candidateEntities.push(entObj);
+
+          if (prevId) {
+            const relId = `edge-${prevId}-${entId}`;
+            const relObj: Relationship = {
+              id: relId,
+              source: prevId,
+              target: entId,
+              type: "next",
+              direction: "forward",
+              label: "next",
+              properties: { directed: true },
+            };
+            candidateRelationships.push(relObj);
+          }
+          prevId = entId;
+        }
+      } else {
+        const concepts =
+          understanding.importantConcepts.length > 0
+            ? understanding.importantConcepts
+            : [understanding.concept || "Primary Concept", "Secondary Concept"];
+        for (let i = 0; i < concepts.length; i++) {
+          const cName = concepts[i];
+          const cId = `ent-${i + 1}`;
+          const entObj: Entity = {
+            id: cId,
+            type: "GenericEntity",
+            label: cName,
+            properties: {},
+            semanticRole: i === 0 ? "root" : "component",
+          };
+          filteredEntities.push(entObj);
+          candidateEntities.push(entObj);
+          if (i > 0) {
+            const relObj: Relationship = {
+              id: `rel-${i}`,
+              source: `ent-${i}`,
+              target: cId,
+              type: "relates_to",
+              direction: "forward",
+              label: "flows_to",
+              properties: {},
+            };
+            candidateRelationships.push(relObj);
+          }
         }
       }
     }
@@ -1215,11 +1280,82 @@ export class UniversalConceptIntelligenceEngine {
               list.doubly === true ||
               understanding.concept.toLowerCase().includes("doubl");
 
+            // Collect all current elements in this list snapshot
+            const currentListCanonicalIds = new Set<string>();
+            const currentListValues = new Set<any>();
+            for (let elIdx = 0; elIdx < list.elements.length; elIdx++) {
+              const el = list.elements[elIdx];
+              const rawId = el.id ? String(el.id) : undefined;
+              const nodeId =
+                rawId ||
+                (el.value !== undefined ? `node-${el.value}` : `${listId}-${elIdx}`);
+              currentListCanonicalIds.add(nodeId);
+              if (el.value !== undefined) {
+                currentListValues.add(el.value);
+              }
+            }
+
+            // Clear existing list relationships for this list to prevent stale arrows
+            for (const [rid, r] of nextRels.entries()) {
+              if (
+                r.type === "next" ||
+                r.type === "previous" ||
+                r.id.startsWith(`edge-${listId}`) ||
+                r.id.startsWith("edge-node-") ||
+                r.id.startsWith("rel-node-")
+              ) {
+                nextRels.delete(rid);
+              }
+            }
+
+            // Purge any stale list nodes from nextEntities that belong to this list but are absent in this step,
+            // or any old duplicate representations of nodes in this list
+            const staleNodeIds: string[] = [];
+            const seenValues = new Set<any>();
+            for (const [eId, ent] of nextEntities.entries()) {
+              const entListId =
+                (ent.properties?.listId as string | undefined) ||
+                (ent.properties?.containerId as string | undefined);
+              const isListEntity =
+                ent.type === "LinkedListNode" ||
+                ent.semanticRole === "head" ||
+                ent.semanticRole === "tail" ||
+                ent.semanticRole === "list-node" ||
+                entListId === listId ||
+                eId.startsWith(`${listId}-`) ||
+                eId.startsWith("node-");
+              if (isListEntity) {
+                const isCurrentVal =
+                  ent.value !== undefined && currentListValues.has(ent.value);
+                if (!isCurrentVal) {
+                  staleNodeIds.push(eId);
+                } else if (
+                  seenValues.has(ent.value) ||
+                  (!currentListCanonicalIds.has(eId) && !eId.startsWith("node-"))
+                ) {
+                  staleNodeIds.push(eId);
+                } else {
+                  seenValues.add(ent.value);
+                }
+              }
+            }
+            for (const sId of staleNodeIds) {
+              nextEntities.delete(sId);
+              affectedEntities.push(sId);
+              for (const [rid, r] of nextRels.entries()) {
+                if (r.source === sId || r.target === sId) {
+                  nextRels.delete(rid);
+                }
+              }
+            }
+
             let prevNodeId: string | null = null;
             for (let elIdx = 0; elIdx < list.elements.length; elIdx++) {
               const el = list.elements[elIdx];
               const rawId = el.id ? String(el.id) : undefined;
-              const nodeId = `${listId}-${elIdx}`;
+              const nodeId =
+                rawId ||
+                (el.value !== undefined ? `node-${el.value}` : `${listId}-${elIdx}`);
               const existing = nextEntities.get(nodeId);
               const entObj: Entity = {
                 id: nodeId,
@@ -1234,7 +1370,7 @@ export class UniversalConceptIntelligenceEngine {
                     : "list-node",
                 properties: {
                   ...(existing?.properties || {}),
-                  rawId,
+                  rawId: rawId || String(el.value ?? elIdx),
                   listId,
                   containerId: listId,
                   index: elIdx,
@@ -1245,9 +1381,9 @@ export class UniversalConceptIntelligenceEngine {
               nextEntities.set(nodeId, entObj);
               affectedEntities.push(nodeId);
 
-              if (rawId) {
+              if (rawId && rawId !== nodeId) {
                 const aliasId = `${listId}-${rawId}`;
-                if (aliasId !== nodeId && !nextEntities.has(aliasId)) {
+                if (!nextEntities.has(aliasId)) {
                   nextEntities.set(aliasId, {
                     ...entObj,
                     id: aliasId,

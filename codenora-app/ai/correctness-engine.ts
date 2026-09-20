@@ -433,6 +433,95 @@ export class CorrectnessEngine {
               }
             }
           }
+
+          // Container structural update: if an entity was in fromState but is absent from the container's new snapshot, it was intentionally deleted
+          if (
+            (opType === "create_linked_list" ||
+              opType === "create_array" ||
+              opType === "create_stack" ||
+              opType === "create_queue") &&
+            Array.isArray((op as any).elements)
+          ) {
+            const containerElements = (op as any).elements;
+            const containerVals = new Set(
+              containerElements
+                .map((el: any) => el?.value)
+                .filter((v: any) => v !== undefined),
+            );
+            const containerIds = new Set(
+              containerElements
+                .map((el: any) => el?.id)
+                .filter((id: any) => id !== undefined),
+            );
+            const containerId = (op as any).id;
+            for (const [fromEntId, fromEnt] of fromState.entities.entries()) {
+              const matchesContainer =
+                fromEnt.properties?.containerId === containerId ||
+                fromEnt.properties?.listId === containerId ||
+                (containerId && fromEntId.startsWith(`${containerId}-`)) ||
+                (opType === "create_linked_list" &&
+                  (fromEnt.type === "LinkedListNode" ||
+                    fromEnt.semanticRole === "head" ||
+                    fromEnt.semanticRole === "tail" ||
+                    fromEnt.semanticRole === "list-node" ||
+                    fromEntId.startsWith("node-"))) ||
+                (opType === "create_array" && fromEnt.type === "ArrayCell");
+              if (matchesContainer) {
+                if (
+                  !containerIds.has(fromEntId) &&
+                  (fromEnt.value === undefined || !containerVals.has(fromEnt.value))
+                ) {
+                  explicitlyDeletedIds.add(fromEntId);
+                }
+              }
+            }
+          }
+
+          if (opType === "create_tree" && Array.isArray((op as any).nodes)) {
+            const treeNodes = (op as any).nodes;
+            const treeNodeIds = new Set(
+              treeNodes.map((n: any) => n.id || n.value),
+            );
+            for (const [fromEntId, fromEnt] of fromState.entities.entries()) {
+              if (
+                fromEnt.type === "TreeNode" ||
+                fromEnt.properties?.treeId === (op as any).id ||
+                fromEntId.startsWith(`${(op as any).id}-`)
+              ) {
+                const rawId = fromEnt.properties?.rawId || fromEntId;
+                if (!treeNodeIds.has(fromEntId) && !treeNodeIds.has(rawId)) {
+                  explicitlyDeletedIds.add(fromEntId);
+                }
+              }
+            }
+          }
+        }
+
+        // Narrative intent detection: if transformation explicitly states deletion/elimination of an entity
+        const transText = `${t.title || ""} ${t.explanation || ""} ${t.action || ""}`.toLowerCase();
+        if (
+          /\b(delete|remove|eliminate|elimination|discard|drop|pop)\b/i.test(
+            transText,
+          )
+        ) {
+          for (const [fromEntId, fromEnt] of fromState.entities.entries()) {
+            const valStr =
+              fromEnt.value !== undefined ? String(fromEnt.value).toLowerCase() : "";
+            const labelStr = (fromEnt.label || "").toLowerCase();
+            if (
+              (valStr &&
+                new RegExp(`\\b(?:node|element|val|value|key)?\\s*${valStr}\\b`, "i").test(
+                  transText,
+                )) ||
+              (labelStr &&
+                new RegExp(`\\b(?:node|element|val|value|key)?\\s*${labelStr}\\b`, "i").test(
+                  transText,
+                )) ||
+              transText.includes(fromEntId.toLowerCase())
+            ) {
+              explicitlyDeletedIds.add(fromEntId);
+            }
+          }
         }
 
         // Check if any entity from fromState disappeared without explicit deletion

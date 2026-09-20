@@ -97,6 +97,7 @@ export interface CompiledTimeline {
   states: SceneState[]; // Index 0 = initialScene, Index 1 = after T1, etc.
   meta: TransformationMeta[];
   moments?: TeachingMoment[];
+  model?: AuthoritativeSemanticModel;
   currentIndex: number;
   milestones?: any[];
   visualPlan?: VisualReasoningPlan;
@@ -224,6 +225,7 @@ export function compileAuthoritativeTimeline(
     states,
     meta,
     moments,
+    model,
     currentIndex: 0,
     milestones: options?.milestones || model.transformations,
     visualPlan,

@@ -6,8 +6,10 @@
 
 export type OrbBaseState =
   | "IDLE"
+  | "LISTENING"
   | "THINKING"
   | "SPEAKING"
+  | "INTERRUPTED"
   | "PAUSED"
   | "COMPLETED"
   | "ERROR"

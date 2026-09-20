@@ -253,8 +253,11 @@ export function createSceneGraphFromActions(
         let prevId: string | null = null;
         for (let i = 0; i < list.elements.length; i++) {
           const el = list.elements[i];
-          const rawId = (el as any).id;
-          const nodeId = `${listId}-${i}`;
+          const rawId = (el as any).id ? String((el as any).id) : undefined;
+          const nodeId =
+            rawId ||
+            (el.value !== undefined ? `node-${el.value}` : `${listId}-${i}`);
+          const indexAlias = `${listId}-${i}`;
           const entData = {
             id: nodeId,
             primitiveType: "LinkedListNode" as const,
@@ -264,11 +267,24 @@ export function createSceneGraphFromActions(
             properties: {
               index: i,
               containerId: listId,
-              rawId,
+              listId,
+              rawId: rawId || String(el.value ?? i),
               highlight: el.highlight,
+              aliasIndex: indexAlias,
             },
           };
           addEntity(graph, entData);
+
+          if (indexAlias !== nodeId && !graph.entities.has(indexAlias)) {
+            addEntity(graph, {
+              ...entData,
+              id: indexAlias,
+              properties: {
+                ...entData.properties,
+                isAliasOf: nodeId,
+              },
+            });
+          }
 
           if (rawId) {
             const aliasId = `${listId}-${rawId}`;

@@ -192,4 +192,92 @@ describe("Cognora Intelligent Overlay Placement Engine", () => {
     expect(placement.x).toBeGreaterThan(0);
     expect(placement.y).toBeGreaterThan(84);
   });
+
+  it("guarantees zero collision with a horizontal linked list chain (10 -> 20 -> 30 -> 40 -> 50)", () => {
+    // A realistic linked list centered horizontally around y=240
+    const node10 = createMockElement("n-10", "rectangle", 300, 240, 80, 50);
+    const arrow1 = createMockElement("arr-1", "arrow", 380, 265, 40, 1);
+    const node20 = createMockElement("n-20", "rectangle", 420, 240, 80, 50);
+    const arrow2 = createMockElement("arr-2", "arrow", 500, 265, 40, 1);
+    const node30 = createMockElement("n-30", "rectangle", 540, 240, 80, 50);
+    const arrow3 = createMockElement("arr-3", "arrow", 620, 265, 40, 1);
+    const node40 = createMockElement("n-40", "rectangle", 660, 240, 80, 50);
+    const arrow4 = createMockElement("arr-4", "arrow", 740, 265, 40, 1);
+    const node50 = createMockElement("n-50", "rectangle", 780, 240, 80, 50);
+
+    const sceneElements = [
+      node10,
+      arrow1,
+      node20,
+      arrow2,
+      node30,
+      arrow3,
+      node40,
+      arrow4,
+      node50,
+    ];
+
+    const placement = computeIntelligentOverlayPosition({
+      containerRect,
+      cardDimensions: { width: 260, height: 95 },
+      targetElementId: "n-20",
+      sceneElements,
+      appState: mockAppState,
+      isInspectorOpen: false,
+    });
+
+    expect(placement).not.toBeNull();
+
+    const overlayRect = {
+      left: placement.x,
+      top: placement.y,
+      right: placement.x + 260,
+      bottom: placement.y + 95,
+    };
+
+    // Check collision against EVERY node in the list
+    for (const el of [node10, node20, node30, node40, node50]) {
+      const elRight = el.x + el.width;
+      const elBottom = el.y + el.height;
+      const overlaps =
+        overlayRect.left < elRight &&
+        overlayRect.right > el.x &&
+        overlayRect.top < elBottom &&
+        overlayRect.bottom > el.y;
+
+      expect(overlaps).toBe(false);
+    }
+  });
+
+  it("avoids bottom floating playback controller bar", () => {
+    // Target element situated near the bottom center (600, 680)
+    const targetNode = createMockElement("n-bottom", "rectangle", 600, 680, 80, 50);
+    const sceneElements = [targetNode];
+
+    const placement = computeIntelligentOverlayPosition({
+      containerRect,
+      cardDimensions: { width: 260, height: 95 },
+      targetElementId: "n-bottom",
+      sceneElements,
+      appState: mockAppState,
+      isInspectorOpen: false,
+    });
+
+    expect(placement).not.toBeNull();
+
+    // Bottom playback bar is located at containerHeight - 110 (900 - 110 = 790) to 865
+    // The overlay should be placed safely above the target or to the side, not over the playback bar
+    const overlayBottom = placement.y + 95;
+    const playbackBarTop = 900 - 110;
+    const playbackBarLeft = 1400 / 2 - 260;
+    const playbackBarRight = 1400 / 2 + 260;
+
+    const overlapsPlaybackBar =
+      placement.x < playbackBarRight &&
+      placement.x + 260 > playbackBarLeft &&
+      placement.y < 900 - 35 &&
+      overlayBottom > playbackBarTop;
+
+    expect(overlapsPlaybackBar).toBe(false);
+  });
 });

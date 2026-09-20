@@ -207,6 +207,12 @@ export class CognoraOrbController {
         case "SPEAKING":
           targetScale = 1.08;
           break;
+        case "LISTENING":
+          targetScale = 1.05;
+          break;
+        case "INTERRUPTED":
+          targetScale = 0.98;
+          break;
         case "PAUSED":
           targetScale = 0.98;
           break;

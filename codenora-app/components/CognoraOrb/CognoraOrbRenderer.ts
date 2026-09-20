@@ -114,8 +114,8 @@ void main() {
   float t = u_time * (u_reduced_motion > 0.5 ? 0.25 : 0.85);
   
   // State dynamic factors
-  float speedMult = u_state == 1.0 ? 1.8 : (u_state == 2.0 ? 1.4 : 0.75);
-  float ampMult   = (u_state == 1.0 ? 1.35 : (u_state == 2.0 ? 1.20 : 1.0)) * (1.0 - u_reduced_motion * 0.7);
+  float speedMult = u_state == 1.0 ? 1.8 : (u_state == 2.0 ? 1.4 : (u_state == 7.0 ? 0.95 : (u_state == 8.0 ? 0.5 : 0.75)));
+  float ampMult   = (u_state == 1.0 ? 1.35 : (u_state == 2.0 ? 1.20 : (u_state == 7.0 ? 1.08 : (u_state == 8.0 ? 0.8 : 1.0)))) * (1.0 - u_reduced_motion * 0.7);
   
   // === ORGANIC ASYMMETRIC SILHOUETTE (Sections 4 & 5) ===
   // Multiple incommensurate harmonic periods + subtle natural fluid droplet gravity bias
@@ -148,12 +148,16 @@ void main() {
   if (u_state == 2.0) auraIntensity = 0.40 + u_audio_energy * 0.28;
   if (u_state == 3.0) auraIntensity = 0.18;
   if (u_state == 5.0) auraIntensity = 0.48;
+  if (u_state == 7.0) auraIntensity = 0.46; // Listening
+  if (u_state == 8.0) auraIntensity = 0.38; // Interrupted
   
   float auraDist = max(0.0, deformedR - 0.95);
   float aura = smoothstep(0.18, 0.0, auraDist) * auraIntensity;
   vec3 auraColor = vec3(0.14, 0.42, 0.96); // Cognora Sapphire
   if (u_state == 1.0) auraColor = vec3(0.26, 0.64, 1.0);
   if (u_state == 5.0) auraColor = vec3(0.95, 0.25, 0.25);
+  if (u_state == 7.0) auraColor = vec3(0.20, 0.74, 0.98); // Luminous cyan attention
+  if (u_state == 8.0) auraColor = vec3(0.38, 0.58, 0.96);
   
   // Outside the liquid glass body: only subtle aura and soft contact shadow (Section 16)
   if (deformedR > 1.0) {
@@ -239,6 +243,10 @@ void main() {
     corePos.x += cos(t * 2.4) * 0.18;
     corePos.y += sin(t * 2.4) * 0.18;
     corePos.z += sin(t * 1.8) * 0.12;
+  }
+  if (u_state == 7.0) { // Listening: gentle respiratory pulsation & attention
+    corePos.z += sin(t * 1.6) * 0.08;
+    corePos.x += cos(t * 1.2) * 0.06;
   }
   
   // Closest approach along refracted ray
@@ -554,6 +562,8 @@ export class OrbRenderer {
       COMPLETED: 4,
       ERROR: 5,
       VOICE_OFF: 6,
+      LISTENING: 7,
+      INTERRUPTED: 8,
     };
     const stateNum = stateMap[state] ?? 0;
 

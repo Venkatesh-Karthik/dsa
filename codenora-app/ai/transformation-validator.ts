@@ -736,21 +736,42 @@ export function validateTransformationTimeline(
   }
 
   // 2.5 Entity Conservation Check & Auto-Repair:
-  // Nodes must not vanish across transitions unless explicitly deleted
+  // Nodes must not vanish across transitions unless explicitly deleted or part of an elimination/mutation step
   for (let sIdx = 0; sIdx < timeline.states.length - 1; sIdx++) {
     const currGraph = timeline.states[sIdx].graph;
     const nextGraph = timeline.states[sIdx + 1].graph;
+    const meta = timeline.meta[sIdx + 1];
+    const moment = timeline.moments?.[sIdx + 1];
+    const stepText = `${meta?.title || ""} ${meta?.explanation || ""} ${
+      moment?.title || ""
+    } ${moment?.explanation || ""}`.toLowerCase();
+    const isDeletionStep =
+      /(?:delete|eliminat|remov|drop|pop|dequeue|prune|discard|extract|cut)/i.test(
+        stepText,
+      );
+
     for (const [entId, ent] of currGraph.entities) {
       if (!nextGraph.entities.has(entId)) {
-        if (!ent.properties?.isTemporary) {
-          nextGraph.entities.set(entId, { ...ent });
-          warnings.push(
-            `State ${sIdx + 1} auto-restored entity '${
-              ent.label || entId
-            }' to preserve entity conservation.`,
-          );
-          repaired = true;
+        // If this step is an elimination, deletion, or removal, the entity was intentionally eliminated
+        if (isDeletionStep) {
+          continue;
         }
+        // If entity was temporary or transient, it naturally expires
+        if (ent.properties?.isTemporary || ent.properties?.isTransient) {
+          continue;
+        }
+        // Do NOT auto-restore if nextState does not have layout coordinates for it (prevents (100, 100) orphan placement)
+        const nextLayout = timeline.states[sIdx + 1].layoutState;
+        if (!nextLayout || !nextLayout.has(entId)) {
+          continue;
+        }
+        nextGraph.entities.set(entId, { ...ent });
+        warnings.push(
+          `State ${sIdx + 1} auto-restored entity '${
+            ent.label || entId
+          }' to preserve entity conservation.`,
+        );
+        repaired = true;
       }
     }
   }

@@ -173,6 +173,10 @@ export interface QuestionUnderstandingResult {
   requiresStepByStep: boolean;
   /** Original user prompt */
   rawQuestion: string;
+  /** Baseline elements extracted from explicit containers or sequences (e.g. linked list chain, array) */
+  baselineElements?: unknown[];
+  /** Additional metadata including extracted baseline containers */
+  metadata?: Record<string, unknown>;
   /** Epistemic confidence in this understanding */
   confidence: Confidence;
 }
@@ -367,7 +371,7 @@ export function understandQuestion(
     requestedOperation = opMatch[1];
   }
 
-  // Extract explicit inputs (e.g. array [1, 2, 3], key 42, numbers)
+  // Extract explicit inputs (e.g. array [1, 2, 3], chain 10 -> 20 -> 30, key 42, numbers)
   const inputs: unknown[] = [];
   const arrayMatch = p.match(/\[([\d\s,.-]+)\]/);
   if (arrayMatch) {
@@ -377,6 +381,18 @@ export function understandQuestion(
       .filter((n) => !isNaN(n));
     if (parsed.length > 0) {
       inputs.push(parsed);
+    }
+  }
+  const chainInputMatch = p.match(
+    /([A-Za-z0-9_-]+(?:\s*(?:->|→)\s*[A-Za-z0-9_-]+)+)/,
+  );
+  if (chainInputMatch && inputs.length === 0) {
+    const chainElements = chainInputMatch[1]
+      .split(/\s*(?:->|→)\s*/)
+      .map((s) => s.trim())
+      .map((s) => (!isNaN(Number(s)) ? Number(s) : s));
+    if (chainElements.length > 0) {
+      inputs.push(chainElements);
     }
   }
   const numMatches = p.match(/\b\d+\b/g);
@@ -575,6 +591,16 @@ export function understandQuestion(
     requiresSimulation,
     requiresStepByStep,
     rawQuestion: prompt,
+    baselineElements:
+      inputs.length > 0 && Array.isArray(inputs[0])
+        ? (inputs[0] as unknown[])
+        : (parsedOperations[0]?.metadata?.baselineElements as unknown[] | undefined),
+    metadata: {
+      baselineElements:
+        inputs.length > 0 && Array.isArray(inputs[0])
+          ? (inputs[0] as unknown[])
+          : (parsedOperations[0]?.metadata?.baselineElements as unknown[] | undefined),
+    },
     confidence: ambiguity.length > 0 ? CONFIDENCE_ASSUMED : CONFIDENCE_INFERRED,
   };
 }
@@ -714,13 +740,13 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
       ? Number(betweenMatch[3])
       : betweenMatch[3];
 
-    // Check for baseline chain e.g. "10 -> 40 -> 60"
+    // Check for baseline chain e.g. "10 -> 40 -> 60" or "10 → 40 → 60"
     const chainMatch = prompt.match(
-      /([A-Za-z0-9_-]+(?:\s*->\s*[A-Za-z0-9_-]+)+)/,
+      /([A-Za-z0-9_-]+(?:\s*(?:->|→)\s*[A-Za-z0-9_-]+)+)/,
     );
     const baselineChain = chainMatch
       ? chainMatch[1]
-          .split("->")
+          .split(/\s*(?:->|→)\s*/)
           .map((s) => s.trim())
           .map((s) => (!isNaN(Number(s)) ? Number(s) : s))
       : undefined;
@@ -809,6 +835,25 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
     }
   }
 
+  // Extract baseline container chain or array for operations to bind to
+  const chainMatch = prompt.match(
+    /([A-Za-z0-9_-]+(?:\s*(?:->|→)\s*[A-Za-z0-9_-]+)+)/,
+  );
+  const baselineChain = chainMatch
+    ? chainMatch[1]
+        .split(/\s*(?:->|→)\s*/)
+        .map((s) => s.trim())
+        .map((s) => (!isNaN(Number(s)) ? Number(s) : s))
+    : undefined;
+
+  const arrayMatch = prompt.match(/\[([\d\s,.-]+)\]/);
+  const baselineArray = arrayMatch
+    ? arrayMatch[1]
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => !isNaN(n))
+    : undefined;
+
   // Split clauses by sequence markers: "then", "followed by", "after that", "finally", "and then", semicolons, periods
   const clauses = promptToProcess.split(
     /\b(?:then|followed by|after that|finally|and then)\b|[;.]/i,
@@ -820,13 +865,23 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
       continue;
     }
 
-    // Check for repetitions (e.g. "remove the minimum element three times")
+    // Check for repetitions / deletions / eliminations
     const deleteMatch = trimmed.match(
-      /\b(?:delete(?:ing|s|ion)?|remove(?:ing|s|al)?|pop(?:ping|s)?|extract(?:ing)?)\b/i,
+      /\b(?:delete(?:ing|s|ion)?|remove(?:ing|s|al)?|pop(?:ping|s)?|extract(?:ing)?|eliminate(?:ing|s|ion)?|drop(?:ping|s)?|discard(?:ing|s)?)\b/i,
     );
     if (deleteMatch) {
-      // Check for explicit values to delete (e.g. "delete 20, 70, 50 in order" or "remove 15")
-      const deleteNums = trimmed.match(/\b\d+\b/g);
+      // Isolate target clause from container clause if present
+      // e.g. "Eliminate nodes 20 and 30 from the linked list 10 → 20 → 30 → 40 → 50"
+      let targetClause = trimmed;
+      const containerBoundaryMatch = trimmed.match(
+        /\b(?:delete(?:ing|s|ion)?|remove(?:ing|s|al)?|pop(?:ping|s)?|extract(?:ing)?|eliminate(?:ing|s|ion)?|drop(?:ping|s)?|discard(?:ing|s)?)\s+([^;.]+?)(?:\s+(?:from|in|into|on|within|inside)\b|\s*(?:->|→)|\[|$)/i,
+      );
+      if (containerBoundaryMatch && containerBoundaryMatch[1]) {
+        targetClause = containerBoundaryMatch[1];
+      }
+
+      // Check for explicit values to delete (e.g. "delete 20, 70, 50 in order" or "eliminate nodes 20 and 30")
+      const deleteNums = targetClause.match(/\b\d+\b/g);
       if (deleteNums && deleteNums.length > 0) {
         for (const dStr of deleteNums) {
           const dVal = Number(dStr);
@@ -834,10 +889,11 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
             op: "delete",
             value: dVal,
             target: dVal,
-            arguments: { value: dVal, target: dVal },
+            arguments: { value: dVal, target: dVal, baselineChain, baselineArray },
+            inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
             order: ++orderCounter,
             semanticRole: "operation",
-            metadata: { rawClause: trimmed },
+            metadata: { rawClause: trimmed, baselineElements: baselineChain || baselineArray },
           });
         }
         continue;
@@ -864,32 +920,75 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
         operations.push({
           op: "delete",
           target: targetDesc,
-          arguments: { target: targetDesc },
+          arguments: { target: targetDesc, baselineChain, baselineArray },
+          inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
           order: ++orderCounter,
           semanticRole: "operation",
           metadata: {
             rawClause: trimmed,
             repetition: r + 1,
             totalRepetitions: repeatCount,
+            baselineElements: baselineChain || baselineArray,
           },
         });
       }
       continue;
     }
 
-    // Check for single insertion clause e.g. "insert 25"
+    // Check for insertion clauses e.g. "insert 25" or "insert 20 and 30"
     const insertMatch = trimmed.match(
-      /\b(?:insert(?:ing|s)?|add(?:ing|s)?)\s+(\d+)\b/i,
+      /\b(?:insert(?:ing|s)?|add(?:ing|s)?)\s+([^;.]+?)(?:\s+(?:into|in|to|on)\b|\s*(?:->|→)|\[|$)/i,
     );
-    if (insertMatch && operations.length === 0) {
+    if (insertMatch && insertMatch[1]) {
+      const insertNums = insertMatch[1].match(/\b\d+\b/g);
+      if (insertNums && insertNums.length > 0) {
+        for (const iStr of insertNums) {
+          const iVal = Number(iStr);
+          operations.push({
+            op: "insert",
+            value: iVal,
+            target: iVal,
+            arguments: { value: iVal, baselineChain, baselineArray },
+            inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+            order: ++orderCounter,
+            semanticRole: "operation",
+            metadata: { rawClause: trimmed, baselineElements: baselineChain || baselineArray },
+          });
+        }
+        continue;
+      }
+    }
+
+    // Check for swap clauses e.g. "swap 2 and 5"
+    const swapMatch = trimmed.match(
+      /\bswap(?:ping|s)?\s+(\d+|[A-Za-z0-9_-]+)\s+(?:and|with)\s+(\d+|[A-Za-z0-9_-]+)/i,
+    );
+    if (swapMatch) {
+      const aVal = !isNaN(Number(swapMatch[1])) ? Number(swapMatch[1]) : swapMatch[1];
+      const bVal = !isNaN(Number(swapMatch[2])) ? Number(swapMatch[2]) : swapMatch[2];
       operations.push({
-        op: "insert",
-        value: Number(insertMatch[1]),
-        arguments: { value: Number(insertMatch[1]) },
+        op: "swap",
+        value: [aVal, bVal],
+        arguments: { a: aVal, b: bVal, baselineChain, baselineArray },
+        inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
         order: ++orderCounter,
         semanticRole: "operation",
-        metadata: { rawClause: trimmed },
+        metadata: { rawClause: trimmed, a: aVal, b: bVal, baselineElements: baselineChain || baselineArray },
       });
+      continue;
+    }
+
+    // Check for reverse clause
+    if (/\breverse(?:ing)?\b/i.test(trimmed)) {
+      operations.push({
+        op: "reverse",
+        arguments: { baselineChain, baselineArray },
+        inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+        order: ++orderCounter,
+        semanticRole: "operation",
+        metadata: { rawClause: trimmed, baselineElements: baselineChain || baselineArray },
+      });
+      continue;
     }
   }
 

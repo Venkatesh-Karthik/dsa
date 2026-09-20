@@ -249,7 +249,7 @@ export function estimateGlimpseDimensions(
   glimpse: DerivedGlimpse,
   containerWidth: number,
 ): GlimpseDimensions {
-  const maxSafeWidth = Math.min(310, Math.max(220, containerWidth - 48));
+  const maxSafeWidth = Math.min(270, Math.max(200, containerWidth - 48));
 
   // Title: ~26 chars per line at 13px bold
   const titleChars = glimpse.title.length;
@@ -260,11 +260,11 @@ export function estimateGlimpseDimensions(
   const glimpseLines = Math.ceil(glimpseChars / 36) || 1;
 
   // Vertical budget:
-  // padding-top (10px) + indicator/title (titleLines * 18px) + gap (6px) +
-  // glimpse text (glimpseLines * 17px) + affordance link (18px) + padding-bottom (10px)
+  // padding-top (10px) + indicator/title (titleLines * 18px) + gap (4px) +
+  // glimpse text (glimpseLines * 16px) + affordance link (16px) + padding-bottom (8px)
   const estHeight = Math.min(
-    115,
-    Math.max(68, 20 + titleLines * 18 + 6 + glimpseLines * 17 + 18),
+    108,
+    Math.max(64, 18 + titleLines * 18 + 4 + glimpseLines * 16 + 16),
   );
 
   return {
