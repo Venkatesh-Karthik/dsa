@@ -75,17 +75,22 @@ export function createTreeNode(props: TreeNodeProps): TreeNodePrimitive {
 
   const allElements: ExcalidrawElement[] = [circle, valueLabel];
 
-  // Render native balance factor or state badge directly on node perimeter
+  // Render balance factor only when the node is imbalanced (|BF| > 1, requiring rotation),
+  // or when explicitly requested via options/badge property.
+  // Balanced nodes (|BF| <= 1) display clean nodes with their value once, avoiding visual clutter.
+  const isImbalanced =
+    balanceFactor !== undefined && Math.abs(balanceFactor) > 1;
+  const shouldShowBadge =
+    isImbalanced || Boolean(badge) || Boolean((props as any)?.showBalanceFactor);
+
   const badgeContent =
     balanceFactor !== undefined
       ? `BF: ${balanceFactor > 0 ? `+${balanceFactor}` : balanceFactor}`
       : badge;
 
-  if (badgeContent) {
-    const isImbalanced =
-      balanceFactor !== undefined && Math.abs(balanceFactor) > 1;
+  if (shouldShowBadge && badgeContent) {
     const badgeBg = isImbalanced ? "#ef4444" : "#475569";
-    const badgeWidth = 44;
+    const badgeWidth = 46;
     const badgeHeight = 16;
     const badgeX = x + diameter - 14;
     const badgeY = y - 4;
@@ -105,6 +110,7 @@ export function createTreeNode(props: TreeNodeProps): TreeNodePrimitive {
         dslId: `${id}-bf-badge`,
         semanticId: id,
         subRole: "badge",
+        isSecondary: true,
       },
     });
 
@@ -122,6 +128,7 @@ export function createTreeNode(props: TreeNodeProps): TreeNodePrimitive {
         dslId: `${id}-bf-lbl`,
         semanticId: id,
         subRole: "badge-text",
+        isSecondary: true,
       },
     });
 

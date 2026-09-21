@@ -986,6 +986,13 @@ export function updateVisualPrimitive(
         if (entity.properties?.index !== undefined) {
           updates.text = String(entity.properties.index);
         }
+      } else if (subRole === "badge-text") {
+        const bf = entity.properties?.balanceFactor as number | undefined;
+        if (bf !== undefined) {
+          updates.text = `BF: ${bf > 0 ? `+${bf}` : bf}`;
+        } else if (entity.properties?.badge) {
+          updates.text = String(entity.properties.badge);
+        }
       } else if (subRole === "label") {
         const cleanName = sanitizeDisplayLabel(
           entity.label,

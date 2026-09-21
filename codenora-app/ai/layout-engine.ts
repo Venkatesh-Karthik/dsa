@@ -152,11 +152,11 @@ export interface GridLayoutResult {
 // ==========================================
 
 export const TREE_LAYOUT = {
-  NODE_RADIUS: 35,
-  NODE_DIAMETER: 70,
-  LEVEL_GAP: 100, // vertical gap between levels
-  SIBLING_GAP: 25, // minimum horizontal gap between siblings
-  SUBTREE_GAP: 50, // minimum horizontal gap between subtrees
+  NODE_RADIUS: 28,
+  NODE_DIAMETER: 56,
+  LEVEL_GAP: 85, // vertical gap between levels (compact and readable)
+  SIBLING_GAP: 20, // minimum horizontal gap between siblings
+  SUBTREE_GAP: 32, // minimum horizontal gap between subtrees
 } as const;
 
 export const GRAPH_LAYOUT = {
@@ -402,6 +402,38 @@ export function computeTreeLayout(
 
   if (root) {
     positionTree(root, origin.x, origin.y);
+  }
+
+  // Universal Composed Tree Centering & Canvas Containment
+  // Rather than centering only the root node (which forces left subtrees off-canvas),
+  // we center the entire composed tree bounding box within the available canvas region.
+  if (root && minX !== Infinity && maxX !== -Infinity) {
+    const rawTreeWidth = maxX - minX;
+    const targetCenter = Math.max(origin.x + rawTreeWidth / 2, 540);
+    let targetMinX = Math.max(origin.x, targetCenter - rawTreeWidth / 2);
+
+    // Responsive Spacing Compression for wide trees (e.g. >= 10-15 nodes)
+    const maxUsableWidth = 1000;
+    if (rawTreeWidth > maxUsableWidth) {
+      const compression = Math.max(0.65, maxUsableWidth / rawTreeWidth);
+      const rawCenterX = (minX + maxX) / 2;
+      for (const [id, pos] of positions.entries()) {
+        const compressedX = rawCenterX + (pos.x - rawCenterX) * compression;
+        positions.set(id, { x: compressedX, y: pos.y });
+      }
+      minX = rawCenterX + (minX - rawCenterX) * compression;
+      maxX = rawCenterX + (maxX - rawCenterX) * compression;
+      targetMinX = Math.max(origin.x, targetCenter - (maxX - minX) / 2);
+    }
+
+    const shiftX = targetMinX - minX;
+    if (Math.abs(shiftX) > 0.001) {
+      for (const [id, pos] of positions.entries()) {
+        positions.set(id, { x: Math.round(pos.x + shiftX), y: pos.y });
+      }
+      minX += shiftX;
+      maxX += shiftX;
+    }
   }
 
   return {
@@ -1544,7 +1576,7 @@ export function computeSceneGraphLayout(
     }
 
     const treeOrigin: LayoutPoint = {
-      x: Math.max(origin.x, 420),
+      x: Math.max(origin.x, 80),
       y: origin.y,
     };
 
@@ -1817,7 +1849,7 @@ export function computeSceneGraphLayout(
     }
 
     const treeOrigin: LayoutPoint = {
-      x: Math.max(origin.x, 420),
+      x: Math.max(origin.x, 80),
       y: origin.y,
     };
 

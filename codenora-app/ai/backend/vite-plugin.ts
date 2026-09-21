@@ -8,6 +8,7 @@
 import {
   handleTeachingRequest,
   handleProviderInfoRequest,
+  handleCodeGenerationRequest,
   handleVoiceSynthesisRequest,
   handleVoiceHealthRequest,
   logStartupConfiguration,
@@ -48,6 +49,19 @@ export function aiTeachingBackendPlugin(
           }
         },
       );
+      return;
+    }
+
+    if (url === "/api/ai/code") {
+      handleCodeGenerationRequest(req, res).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("[ai-teaching-backend] Code generation error:", err);
+        if (!res.headersSent) {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ success: false, error: String(err) }));
+        }
+      });
       return;
     }
 

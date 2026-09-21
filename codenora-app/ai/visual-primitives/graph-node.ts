@@ -59,9 +59,12 @@ export function createGraphNode(props: GraphNodeProps): GraphNodePrimitive {
 
   const elements: ExcalidrawElement[] = [circle];
 
-  // Primary Label (e.g. "A")
+  const hasSecondaryValue =
+    value !== undefined && String(value).trim() !== label.trim();
+
+  // Primary Label (e.g. "A" or "30")
   const primaryTextY =
-    value !== undefined ? y + diameter / 2 - 10 : y + diameter / 2;
+    hasSecondaryValue ? y + diameter / 2 - 10 : y + diameter / 2;
 
   const primaryLabel = newTextElement({
     text: label,
@@ -81,8 +84,8 @@ export function createGraphNode(props: GraphNodeProps): GraphNodePrimitive {
   });
   elements.push(primaryLabel);
 
-  // Secondary Value (e.g. "0" or "∞")
-  if (value !== undefined) {
+  // Secondary Value (e.g. "0" or "∞") - only when distinct from primary label
+  if (hasSecondaryValue) {
     const valueText = newTextElement({
       text: String(value),
       x: x + diameter / 2,

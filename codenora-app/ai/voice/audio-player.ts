@@ -50,6 +50,12 @@ export class AudioPlayer {
     this.currentSessionId = sessionId;
     this.currentUrl = audioUrl;
 
+    if (typeof Audio === "undefined") {
+      this.status = "ended";
+      this.events.onStatusChange?.("ended");
+      return;
+    }
+
     const audio = new Audio(audioUrl);
     this.currentAudio = audio;
 

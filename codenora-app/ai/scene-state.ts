@@ -203,16 +203,23 @@ export function createSceneGraphFromActions(
           title: g.label,
         };
 
+        const validRawNodeIds = new Set<string>();
         for (const node of g.nodes) {
-          const nodeId = normalizeEntityId(graphId, node.id);
+          if (!node || typeof node.id !== "string" || !node.id.trim()) continue;
+          const rawId = node.id.trim();
+          // Graph Entity Contract: vertex IDs must not be long prose words or contain whitespace
+          if (rawId.length > 12 || /\s/.test(rawId)) continue;
+
+          validRawNodeIds.add(rawId);
+          const nodeId = normalizeEntityId(graphId, rawId);
           addEntity(graph, {
             id: nodeId,
             primitiveType: "GraphNode",
             semanticRole: "graph-node",
-            value: node.value ?? node.label,
-            label: node.label,
+            value: node.value ?? node.label ?? rawId,
+            label: node.label ?? rawId,
             properties: {
-              rawId: node.id,
+              rawId,
               graphId,
               highlight: node.highlight,
               value: node.value,
@@ -221,8 +228,14 @@ export function createSceneGraphFromActions(
         }
 
         for (const edge of g.edges) {
-          const fromId = normalizeEntityId(graphId, edge.from);
-          const toId = normalizeEntityId(graphId, edge.to);
+          if (!edge || typeof edge.from !== "string" || typeof edge.to !== "string") continue;
+          const fromRaw = edge.from.trim();
+          const toRaw = edge.to.trim();
+          // Edge endpoints must exist in declared vertices
+          if (!validRawNodeIds.has(fromRaw) || !validRawNodeIds.has(toRaw)) continue;
+
+          const fromId = normalizeEntityId(graphId, fromRaw);
+          const toId = normalizeEntityId(graphId, toRaw);
           addRelationship(graph, {
             id: `edge-${fromId}-${toId}`,
             type: edge.directed ? "sendsTo" : "connects",

@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { IconSparkles } from "./CognoraIcons";
 
 import type { CodeContext } from "../ai/visual-dsl";
+import { resolveCodeArtifact, onCodeArtifactUpdated } from "../dsa/code/code-provider";
+import type { SupportedLanguage } from "../dsa/code/code-types";
 
 export type PanelTabType = "analyze" | "explain" | "code" | "practice";
 
@@ -123,6 +125,11 @@ export interface CognoraContextualPanelProps {
   analyzeData?: AnalyzeModel;
   explainData?: ExplainModel;
   codeContext?: CodeContext;
+  conceptId?: string;
+  lessonTitle?: string;
+  lessonInput?: any;
+  transformationType?: string;
+  codeContexts?: Record<string, CodeContext> | CodeContext[];
   codeSolution?: {
     language?: string;
     code?: string;
@@ -147,6 +154,11 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
   analyzeData,
   explainData,
   codeContext,
+  conceptId,
+  lessonTitle,
+  lessonInput,
+  transformationType,
+  codeContexts,
   codeSolution,
   practiceData,
   capabilities = DEFAULT_PANEL_CAPABILITIES,
@@ -154,6 +166,9 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
 }) => {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("python");
   const [copied, setCopied] = useState<boolean>(false);
+  // Version counter: incremented whenever any background code artifact is cached.
+  // This forces a re-render so resolveCodeArtifact() picks up the new cache entry.
+  const [codeVersion, setCodeVersion] = useState(0);
 
   // Auto-fallback if activeTab is not permitted in capabilities
   useEffect(() => {
@@ -166,18 +181,52 @@ export const CognoraContextualPanel: React.FC<CognoraContextualPanelProps> = ({
     }
   }, [capabilities, activeTab, onTabChange]);
 
+  // Subscribe to background code generation completions so the Code tab
+  // updates live without requiring user interaction.
+  useEffect(() => {
+    return onCodeArtifactUpdated((_cacheKey, _artifact) => {
+      setCodeVersion((v) => v + 1);
+    });
+  }, []);
+
   const steps = analyzeData?.stepperSteps ?? [];
   const hasActiveLesson = steps.length > 0;
   const currentStepNum = steps.findIndex((s) => s.isActive) + 1 || 1;
 
-  const activeCode =
-    codeContext?.code ||
-    codeSolution?.code ||
-    (hasActiveLesson
-      ? "# Code implementation for active lesson step"
-      : "# Cognora Code Inspector\n# Ask a DSA question below to view algorithm implementations and live highlights.");
+  // Resolve code artifact for currently selected language and transformation.
+  // codeVersion is read here so ESLint/React sees this path is version-sensitive;
+  // the actual re-computation is driven by the codeVersion state change.
+  void codeVersion;
+  const resolvedArtifact = resolveCodeArtifact({
+    conceptId:
+      conceptId ||
+      (analyzeData as any)?.conceptType ||
+      (codeContext as any)?.conceptId,
+    title:
+      lessonTitle ||
+      analyzeData?.title ||
+      explainData?.title ||
+      (codeContext as any)?.title,
+    language: selectedLanguage as SupportedLanguage,
+    input: lessonInput,
+    transformationType:
+      transformationType || (codeContext as any)?.transformationType,
+    customCodeContexts: codeContexts || codeContext,
+  });
 
-  const highlightLines = codeContext?.highlightLines || [8, 9, 10];
+  const activeCode =
+    (codeContext?.language === selectedLanguage && codeContext?.code)
+      ? codeContext.code
+      : resolvedArtifact.source ||
+        codeSolution?.code ||
+        (hasActiveLesson
+          ? resolvedArtifact.source
+          : "# Cognora Code Inspector\n# Ask a DSA question below to view algorithm implementations and live highlights.");
+
+  const highlightLines =
+    (codeContext?.language === selectedLanguage && codeContext?.highlightLines)
+      ? codeContext.highlightLines
+      : resolvedArtifact.highlightLines || [1, 2, 3];
 
   const handleCopyCode = (e: React.MouseEvent) => {
     const win = e.currentTarget?.ownerDocument?.defaultView;

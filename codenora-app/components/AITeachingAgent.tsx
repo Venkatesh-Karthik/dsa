@@ -149,6 +149,8 @@ import { CognoraVoiceOrb, type VoiceOrbState } from "./CognoraVoiceOrb";
 
 import "./AITeachingAgent.scss";
 
+import { DSAExecutionRouter } from "../dsa";
+
 import type { TeachingMoment } from "../ai/teaching-moment";
 import type { CommandRiskLevel } from "../ai/commands/command-types";
 import type { AuthoritativeSemanticModel } from "../ai/authoritative-model";
@@ -276,9 +278,20 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   >(async () => {});
 
   const isTeachingRequestActive =
-    requestState === "sending" ||
-    requestState === "thinking" ||
-    requestState === "success";
+    requestState === "sending" || requestState === "thinking";
+
+  const handleCancelRequest = useCallback(() => {
+    console.log(
+      `[COGNORA][TEACH][USER_CANCEL] User cancelled in-flight request ${currentRequestIdRef.current}`,
+    );
+    if (currentAbortControllerRef.current) {
+      currentAbortControllerRef.current.abort();
+      currentAbortControllerRef.current = null;
+    }
+    activeRequestLockRef.current = null;
+    currentRequestIdRef.current = null;
+    setRequestState("idle");
+  }, []);
 
   // Autocomplete state
   const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<
@@ -821,24 +834,63 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     setIsLessonPlaying(false);
   };
 
+  const handleResetSession = useCallback(() => {
+    voiceEngineRef.current.stop();
+    if (playbackControllerRef.current) {
+      playbackControllerRef.current.destroy();
+      playbackControllerRef.current = null;
+    }
+    if (playbackTimerRef.current) {
+      clearInterval(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+    if (currentAbortControllerRef.current) {
+      currentAbortControllerRef.current.abort();
+      currentAbortControllerRef.current = null;
+    }
+    setTransformationLesson(null);
+    setAuthoritativeModel(null);
+    setIsLessonPlaying(false);
+    setSelectedContext([]);
+    setInspectedActionExplanation(null);
+    setErrorMessage(null);
+    setErrorCode(null);
+    setRequestState("idle");
+    activeRequestLockRef.current = null;
+    if (excalidrawAPI && !excalidrawAPI.isDestroyed) {
+      excalidrawAPI.updateScene({ elements: [] });
+    }
+    console.log("[COGNORA][SESSION][RESET] Session and canvas state successfully cleared.");
+  }, [excalidrawAPI]);
+
   const startTransformationLesson = (
     lesson: VisualLesson,
     options: { messageId: string; topic?: string; prompt?: string },
     initialIndex = 0,
+    precompiled?: {
+      timeline: CompiledTimeline;
+      authoritativeModel: AuthoritativeSemanticModel;
+    },
   ) => {
     isApplyingVisualsRef.current = true;
     try {
-      // 1. Process question through the universal intelligence engine to build AuthoritativeSemanticModel
-      const processed = UniversalConceptIntelligenceEngine.processQuestion(
-        options.prompt || options.topic || lesson.title,
-        lesson as any,
-      );
+      // 0. Reset audio, selections, and callouts from any previous lesson
+      voiceEngineRef.current.stop();
+      setSelectedContext([]);
+      setInspectedActionExplanation(null);
+      // 1. Resolve AuthoritativeSemanticModel & CompiledTimeline (from precompiled deterministic execution or universal engine)
+      const processed = precompiled
+        ? null
+        : UniversalConceptIntelligenceEngine.processQuestion(
+            options.prompt || options.topic || lesson.title,
+            lesson as any,
+          );
 
-      const model = processed.authoritativeModel;
+      const model = precompiled ? precompiled.authoritativeModel : processed!.authoritativeModel;
       setAuthoritativeModel(model);
 
       // 2. The authoritative timeline is derived directly from the validated semantic model
-      const timeline = processed.timeline;
+      const timeline = precompiled ? precompiled.timeline : processed!.timeline;
 
       const validation = validateTransformationTimeline(timeline, {
         prompt: options.prompt || options.topic || lesson.title,
@@ -900,7 +952,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       (window as any).__cognoraAuthoritativeWorld = () =>
         worldModelRef.current.getAuthoritativeWorld();
       worldModelRef.current.setLesson(
-        processed.visualLesson || lesson,
+        (processed ? processed.visualLesson : null) || lesson,
         timeline,
         {
           generationId: options.messageId,
@@ -975,7 +1027,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               messageId: options.messageId,
               lessonId: timeline.lessonId,
               topic: options.topic,
-              lesson: processed.visualLesson || lesson,
+              lesson: (processed ? processed.visualLesson : null) || lesson,
               timeline,
               currentTransformationIndex: state.currentIndex,
               playbackSpeed: state.speed,
@@ -1837,6 +1889,131 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       const intentClassification = detectUserIntent(trimmed);
       const tIntent = Math.round(performance.now() - tIntentStart);
 
+      // --- SESSION RESET INTELLIGENCE (PHASE 27) ---
+      if (/^(reset|clear|reset session|clear canvas)$/i.test(trimmed)) {
+        handleResetSession();
+        const assistantMsgId = `assistant-${Date.now()}`;
+        const assistantMessage: ChatMessage = {
+          id: assistantMsgId,
+          role: "assistant",
+          content: "Session reset. Whiteboard and active lesson state have been cleanly reset.",
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setRequestState("idle");
+        activeRequestLockRef.current = null;
+        return;
+      }
+
+      // --- LOCAL TUTOR INTELLIGENCE (PHASE 24) ---
+      // If a lesson is active, handle conversational pedagogical follow-ups locally
+      // using the current TeachingMoment context without restarting or regenerating the lesson.
+      if (transformationLesson && transformationLesson.timeline) {
+        const lower = trimmed.toLowerCase().trim().replace(/[?!.,]+$/, "");
+        const activeIdx = transformationLesson.currentTransformationIndex ?? 0;
+        const currentMoments = transformationLesson.timeline.moments || [];
+        const activeMoment = currentMoments[activeIdx] || currentMoments[Math.max(0, activeIdx - 1)];
+
+        const isWhy = /^(why|why did this change|why is this here|why did it rotate|why did this rotate|why relax|why choose this|why is this selected|why\?*)$/.test(lower);
+        const isNext = /^(what happens next|what is next|whats next|what's next|what next|next step|next)$/.test(lower);
+        const isBack = /^(go back|previous|previous step|step back|back)$/.test(lower);
+        const isReplay = /^(show that again|show this again|replay|repeat|repeat this step)$/.test(lower);
+        const isExplain = /^(explain this|explain this step|what does this mean|explain more|tell me more)$/.test(lower);
+
+        if (isWhy || isNext || isBack || isReplay || isExplain) {
+          let replyContent = "";
+
+          if (isWhy) {
+            const whyText = activeMoment?.whyItChanged || activeMoment?.why || activeMoment?.explanation;
+            const whatText = activeMoment?.whatChanged || activeMoment?.title;
+            replyContent = `**${activeMoment?.title || `Step ${activeIdx + 1}`} Explanation:**\n\n${whyText || "This step enforces the foundational invariants of the algorithm."}\n\n*Action taken:* ${whatText || "State updated."}${activeMoment?.consequence ? `\n\n*Result:* ${activeMoment.consequence}` : ""}`;
+          } else if (isNext) {
+            const nextIdx = activeIdx + 1;
+            if (nextIdx < currentMoments.length) {
+              const nextMoment = currentMoments[nextIdx];
+              replyContent = `**Upcoming Step ${nextIdx + 1} (${nextMoment?.title}):**\n\n${nextMoment?.whatChanged || nextMoment?.explanation}\n\n*Advance with the Next button or Play.*`;
+            } else {
+              replyContent = `The lesson has reached its final verified state. All algorithmic invariants are satisfied. You can use **Replay** to review from the beginning or ask about a new concept.`;
+            }
+          } else if (isBack) {
+            playbackControllerRef.current?.previous();
+            replyContent = `Stepped back to Step ${Math.max(1, activeIdx)}.`;
+          } else if (isReplay) {
+            handleReplayVoice();
+            replyContent = `Replaying Step ${activeIdx + 1}: **${activeMoment?.title || ""}**.`;
+          } else if (isExplain) {
+            replyContent = `**Step ${activeIdx + 1}: ${activeMoment?.title}**\n\n${activeMoment?.explanation || activeMoment?.whatChanged}\n\n${activeMoment?.whyItChanged ? `**Why:** ${activeMoment.whyItChanged}` : ""}`;
+          }
+
+          const assistantMsgId = `assistant-${Date.now()}`;
+          const assistantMessage: ChatMessage = {
+            id: assistantMsgId,
+            role: "assistant",
+            content: replyContent,
+            topic: transformationLesson.lesson.topic,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+          setRequestState("idle");
+          activeRequestLockRef.current = null;
+          return;
+        }
+      }
+
+      // --- DETERMINISTIC DSA ACCELERATION ROUTING ---
+      // For registered & supported DSA concepts, execute the deterministic algorithm engine.
+      // For unsupported concepts (e.g. Bellman-Ford, Tree rotations in Prompt 1, or non-DSA topics),
+      // smoothly fall back to the universal Nemotron pipeline without error.
+      const dsaRoute = DSAExecutionRouter.tryExecuteDSA(trimmed);
+      if (dsaRoute.handled && dsaRoute.lesson) {
+        const dsaLesson = dsaRoute.lesson;
+        const assistantMsgId = `assistant-${Date.now()}`;
+        startTransformationLesson(
+          dsaLesson.visualLesson,
+          {
+            messageId: assistantMsgId,
+            topic: dsaLesson.authoritativeModel.concept,
+            prompt: trimmed,
+          },
+          0,
+          {
+            timeline: dsaLesson.timeline,
+            authoritativeModel: dsaLesson.authoritativeModel,
+          },
+        );
+        setIsContextualPanelOpen(true);
+        setContextualTab("analyze");
+        setIsConversationMinimized(true);
+
+        const firstMoment = dsaLesson.timeline.moments?.[0];
+        const assistantMessage: ChatMessage = {
+          id: assistantMsgId,
+          role: "assistant",
+          content:
+            firstMoment?.explanation ||
+            `Let's explore ${dsaRoute.conceptId} step by step.`,
+          topic: dsaLesson.authoritativeModel.concept,
+          visualLesson: dsaLesson.visualLesson,
+          hasVisuals: true,
+          visualStatus: "success",
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setRequestState("idle");
+        activeRequestLockRef.current = null;
+        return;
+      } else if (!dsaRoute.handled && dsaRoute.reason === "INPUT_ERROR" && dsaRoute.errorMessage) {
+        const assistantMsgId = `assistant-${Date.now()}`;
+        const assistantMessage: ChatMessage = {
+          id: assistantMsgId,
+          role: "assistant",
+          content: `Input Error: ${dsaRoute.errorMessage} Please provide a valid input within limits.`,
+          visualStatus: "failed",
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setRequestState("idle");
+        activeRequestLockRef.current = null;
+        return;
+      }
+      // --- END DETERMINISTIC DSA ACCELERATION ROUTING ---
+
       const tReqBuildStart = performance.now();
       const existingDslIds = getExistingDslIds(excalidrawAPI);
       const requestContext: TeachingRequestContext = {
@@ -2101,20 +2278,18 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       // Settle cleanly before returning to idle
       setTimeout(() => {
+        setRequestState("idle");
         if (activeRequestLockRef.current === requestId) {
-          setRequestState("idle");
           activeRequestLockRef.current = null;
         }
-      }, 450);
+      }, 100);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") {
         console.log(
           `[COGNORA][TEACH][ABORTED] Request ${requestId} was cancelled.`,
         );
-        if (activeRequestLockRef.current === requestId) {
-          activeRequestLockRef.current = null;
-          setRequestState("idle");
-        }
+        activeRequestLockRef.current = null;
+        setRequestState("idle");
         return;
       }
 
@@ -2360,6 +2535,9 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     } finally {
       if (currentAbortControllerRef.current === abortController) {
         currentAbortControllerRef.current = null;
+      }
+      if (activeRequestLockRef.current === requestId) {
+        activeRequestLockRef.current = null;
       }
     }
   };
@@ -3544,6 +3722,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             onInputChange={setInputValue}
             onSubmit={(prompt) => handleSubmit(prompt, "composer_submit")}
             isLoading={isTeachingRequestActive}
+            onCancel={handleCancelRequest}
             isListening={isVoiceListening}
             onToggleVoiceListening={handleToggleVoiceListening}
             isPanelOpen={isContextualPanelOpen}
@@ -3612,6 +3791,21 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
             analyzeData={analyzeData}
             explainData={explainData}
             codeContext={currentCodeContext}
+            conceptId={transformationLesson?.lesson?.concept}
+            lessonTitle={transformationLesson?.lesson?.title}
+            lessonInput={transformationLesson?.lesson?.input}
+            transformationType={
+              transformationLesson?.lesson?.transformations?.[
+                Math.min(
+                  Math.max(0, transformationLesson.currentTransformationIndex),
+                  Math.max(
+                    0,
+                    (transformationLesson.lesson.transformations?.length || 1) - 1,
+                  ),
+                )
+              ]?.type
+            }
+            codeContexts={transformationLesson?.lesson?.codeContexts}
             practiceData={practiceData}
             capabilities={panelCapabilities}
             overlayControls={
@@ -3677,10 +3871,7 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           onClose={() => setIsToolsPaletteOpen(false)}
           onSelectCanvasTool={handlePaletteSelectCanvasTool}
           onSelectCognoraAction={handlePaletteSelectCognoraAction}
-          onClearCanvas={() => {
-            excalidrawAPI.updateScene({ elements: [] });
-            setTransformationLesson(null);
-          }}
+          onClearCanvas={handleResetSession}
         />
       </CognoraErrorBoundary>
 

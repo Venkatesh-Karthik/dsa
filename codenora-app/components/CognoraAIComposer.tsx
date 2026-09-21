@@ -29,6 +29,7 @@ export interface CognoraAIComposerProps {
   commandContext?: CommandContext;
   isListening?: boolean;
   onToggleVoiceListening?: () => void;
+  onCancel?: () => void;
   children?: React.ReactNode;
 }
 
@@ -37,6 +38,7 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
   onInputChange,
   onSubmit,
   isLoading,
+  onCancel,
   isPanelOpen = false,
   selectedContext = [],
   onClearSelectedContext,
@@ -456,18 +458,35 @@ export const CognoraAIComposer: React.FC<CognoraAIComposerProps> = ({
             </svg>
           </button>
 
-          {/* Canonical Send Button */}
+          {/* Canonical Send / Cancel Button */}
           <button
-            type="submit"
-            className="cognora-ai-composer__send-btn"
-            disabled={
-              isLoading || isSubmittingRef.current || !inputValue?.trim()
-            }
-            title={isLoading ? "Generating..." : "Send prompt"}
-            aria-label={isLoading ? "Generating..." : "Send prompt"}
+            type={isLoading ? "button" : "submit"}
+            className={`cognora-ai-composer__send-btn ${isLoading ? "is-loading" : ""}`}
+            onClick={isLoading ? onCancel : undefined}
+            disabled={!isLoading && (isSubmittingRef.current || !inputValue?.trim())}
+            title={isLoading ? "Cancel generation" : "Send prompt"}
+            aria-label={isLoading ? "Cancel generation" : "Send prompt"}
           >
             {isLoading ? (
-              <div className="cognora-ai-composer__send-spinner" />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "14px",
+                  height: "14px",
+                }}
+                title="Cancel generation"
+              >
+                <div
+                  style={{
+                    width: "9px",
+                    height: "9px",
+                    background: "currentColor",
+                    borderRadius: "2px",
+                  }}
+                />
+              </div>
             ) : (
               <svg
                 style={{ width: "14px", height: "14px", marginLeft: "1px" }}

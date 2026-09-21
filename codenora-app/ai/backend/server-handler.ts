@@ -661,3 +661,160 @@ export async function handleVoiceHealthRequest(
     });
   }
 }
+
+export interface CodeGenerationPayload {
+  lessonId?: string;
+  generationId?: string;
+  conceptId?: string;
+  title?: string;
+  language?: string;
+  stepNumber?: number;
+  transformationType?: string;
+  explanation?: string;
+  userPrompt?: string;
+  input?: any;
+}
+
+/**
+ * Handles POST /api/ai/code requests for dynamic, step-specific code generation using NVIDIA Nemotron.
+ * Independent output channel: failure never interrupts lesson playback.
+ */
+export async function handleCodeGenerationRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  ensureServerEnvLoaded();
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed. Use POST." });
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = await parseJsonBody(req);
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body." });
+    return;
+  }
+
+  const payload = (body || {}) as CodeGenerationPayload;
+  const language = (payload.language || "python").toLowerCase();
+  const concept = payload.conceptId || payload.title || "algorithm";
+  const stepNum = payload.stepNumber || 1;
+  const transType = payload.transformationType || "TRANSFORMATION";
+
+  console.info(
+    `[COGNORA][CODE][START] concept=${concept} step=${stepNum} trans=${transType} lang=${language}`,
+  );
+
+  const apiKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.OPENAI_API_KEY;
+
+  if (!apiKey || apiKey.trim().length === 0) {
+    sendJson(res, 200, {
+      success: true,
+      fromCatalog: true,
+      message: "No NVIDIA API key configured, using catalog code.",
+    });
+    return;
+  }
+
+  const model =
+    process.env.NVIDIA_MODEL || "nvidia/nemotron-3-ultra-550b-a55b";
+  const baseUrl =
+    process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
+
+  const systemPrompt = `You are the Cognora Code Intelligence Engine.
+Generate production-quality, syntactically valid, executable ${language} code that implements this algorithm and demonstrates this specific teaching transformation.
+
+RULES:
+1. Return ONLY the code inside a single \`\`\`${language} code block.
+2. Incorporate the user's input directly into the demonstration/driver code.
+3. No placeholder comments (no "TODO", no "implement here").
+4. No explanatory prose outside the code block.
+5. The code must be correct and complete.`;
+
+  const userPrompt = `Algorithm: ${concept} (${payload.title || ""})
+Teaching Step ${stepNum}: ${payload.explanation || transType}
+Active Transformation: ${transType}
+User Input: ${payload.input ? JSON.stringify(payload.input) : "default dataset"}
+Original Question: ${payload.userPrompt || concept}
+
+Generate the complete, working ${language} implementation focusing on step ${stepNum} (${transType}).`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+
+    const apiRes = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.1,
+        max_tokens: 2048,
+      }),
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    if (!apiRes.ok) {
+      console.warn(
+        `[COGNORA][CODE][API_ERROR] status=${apiRes.status} statusText=${apiRes.statusText}`,
+      );
+      sendJson(res, 200, {
+        success: false,
+        error: `NVIDIA API returned ${apiRes.status}`,
+      });
+      return;
+    }
+
+    const data = (await apiRes.json()) as any;
+    let rawContent: string = data.choices?.[0]?.message?.content || "";
+
+    // Strip reasoning tags if present
+    rawContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+    // Extract code block
+    const codeBlockMatch = rawContent.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+    const code = codeBlockMatch ? codeBlockMatch[1].trim() : rawContent.trim();
+
+    if (!code || code.length < 20) {
+      sendJson(res, 200, {
+        success: false,
+        error: "Extracted code was empty or too short.",
+      });
+      return;
+    }
+
+    console.info(
+      `[COGNORA][CODE][SUCCESS] concept=${concept} step=${stepNum} lang=${language} bytes=${code.length}`,
+    );
+
+    sendJson(res, 200, {
+      success: true,
+      code,
+      language,
+      conceptId: concept,
+      stepNumber: stepNum,
+      transformationType: transType,
+      highlightLines: [1, 2, 3],
+    });
+  } catch (err: any) {
+    console.warn(
+      `[COGNORA][CODE][FETCH_ERROR] error="${err.message || String(err)}"`,
+    );
+    sendJson(res, 200, {
+      success: false,
+      error: err.message || "Failed to fetch code from NVIDIA provider.",
+    });
+  }
+}
