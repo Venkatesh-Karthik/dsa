@@ -90,6 +90,36 @@ export function polylineIntersectsBox(
   return false;
 }
 
+function computeShapePerimeterPoint(
+  bounds: BoundingBox,
+  targetCenter: { x: number; y: number },
+  isEllipse: boolean,
+): { x: number; y: number } {
+  const cx = bounds.x + bounds.width / 2;
+  const cy = bounds.y + bounds.height / 2;
+  const dx = targetCenter.x - cx;
+  const dy = targetCenter.y - cy;
+  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+    return { x: cx, y: cy };
+  }
+  const rx = Math.max(bounds.width / 2, 1);
+  const ry = Math.max(bounds.height / 2, 1);
+  if (isEllipse) {
+    const theta = Math.atan2(dy, dx);
+    return {
+      x: cx + rx * Math.cos(theta),
+      y: cy + ry * Math.sin(theta),
+    };
+  }
+  const tx = Math.abs(dx) > 0.0001 ? rx / Math.abs(dx) : Infinity;
+  const ty = Math.abs(dy) > 0.0001 ? ry / Math.abs(dy) : Infinity;
+  const t = Math.min(tx, ty);
+  return {
+    x: cx + t * dx,
+    y: cy + t * dy,
+  };
+}
+
 /**
  * Computes Euclidean length of a polyline through world-coordinate points.
  */
@@ -166,7 +196,43 @@ export function computeOptimalRoute(
   let directEndX: number;
   let directEndY: number;
 
-  if (isHorizontal) {
+  const isSourceEllipse = options?.sourceShape === "ellipse";
+  const isTargetEllipse = options?.targetShape === "ellipse";
+
+  if (isSourceEllipse || isTargetEllipse) {
+    const pStart = computeShapePerimeterPoint(
+      sourceBounds,
+      { x: tgtCx, y: tgtCy },
+      isSourceEllipse,
+    );
+    const pEnd = computeShapePerimeterPoint(
+      targetBounds,
+      { x: srcCx, y: srcCy },
+      isTargetEllipse,
+    );
+    if (laneOffset !== 0) {
+      // Compute canonical direction vector from smaller center to larger center
+      // so bidirectional edges (A -> B and B -> A) share the same normal frame
+      let canDx = tgtCx - srcCx;
+      let canDy = tgtCy - srcCy;
+      if (canDx < 0 || (canDx === 0 && canDy < 0)) {
+        canDx = -canDx;
+        canDy = -canDy;
+      }
+      const canLen = Math.hypot(canDx, canDy) || 1;
+      const normX = -canDy / canLen;
+      const normY = canDx / canLen;
+      directStartX = pStart.x + normX * laneOffset;
+      directStartY = pStart.y + normY * laneOffset;
+      directEndX = pEnd.x + normX * laneOffset;
+      directEndY = pEnd.y + normY * laneOffset;
+    } else {
+      directStartX = pStart.x;
+      directStartY = pStart.y;
+      directEndX = pEnd.x;
+      directEndY = pEnd.y;
+    }
+  } else if (isHorizontal) {
     if (dx > 0) {
       directStartX = sourceBounds.x + sourceBounds.width;
       directStartY = srcCy + laneOffset;
@@ -194,6 +260,25 @@ export function computeOptimalRoute(
     { x: directStartX, y: directStartY },
     { x: directEndX, y: directEndY },
   ];
+
+  if (options?.preferredRouting === "direct") {
+    return {
+      name: "direct",
+      startX: directStartX,
+      startY: directStartY,
+      endX: directEndX,
+      endY: directEndY,
+      points: [
+        pointFrom(0, 0) as LocalPoint,
+        pointFrom(
+          directEndX - directStartX,
+          directEndY - directStartY,
+        ) as LocalPoint,
+      ],
+      isElbowed: false,
+      cost: 0,
+    };
+  }
 
   let directCost = polylineLength(directWorldPts);
   for (const obs of relevantObstacles) {

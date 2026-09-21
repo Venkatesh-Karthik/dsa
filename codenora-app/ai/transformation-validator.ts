@@ -155,7 +155,15 @@ export function computeSemanticDiff(
         entA.properties?.color !== entB.properties?.color ||
         entA.properties?.fill !== entB.properties?.fill ||
         entA.properties?.left !== entB.properties?.left ||
-        entA.properties?.right !== entB.properties?.right;
+        entA.properties?.right !== entB.properties?.right ||
+        entA.properties?.balanceFactor !== entB.properties?.balanceFactor ||
+        entA.properties?.badge !== entB.properties?.badge ||
+        entA.properties?.highlightRowIndex !==
+          entB.properties?.highlightRowIndex ||
+        JSON.stringify(entA.properties?.rows) !==
+          JSON.stringify(entB.properties?.rows) ||
+        JSON.stringify(entA.properties?.columns) !==
+          JSON.stringify(entB.properties?.columns);
       if (isUpdated) {
         updatedEntities.push(id);
       }

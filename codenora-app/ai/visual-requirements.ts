@@ -156,6 +156,18 @@ export function extractVisualRequirements(params: {
     entArray.some((e) => e.type === "CallFrame" || e.type === "StackFrame") ||
     /\b(recursion|call stack|stack frame)\b/i.test(concept);
 
+  // Detect graph/network topology from structure and metadata
+  const hasGraphTopology =
+    entArray.some(
+      (e) =>
+        e.type === "GraphNode" ||
+        e.type === "Vertex" ||
+        e.semanticRole === "vertex" ||
+        e.semanticRole === "graph-node",
+    ) ||
+    (model.world as any)?.metadata?.conceptType === "graph" ||
+    (model.world as any)?.metadata?.conceptType === "network";
+
   const hasDecisions =
     (model.decisions && model.decisions.length > 0) ||
     model.states.some(
@@ -242,7 +254,13 @@ export function extractVisualRequirements(params: {
       visualType = "Ray";
     } else if (ent.type === "Decision" || ent.semanticRole === "decision") {
       visualType = "Decision";
-    } else if (ent.type === "GraphNode") {
+    } else if (
+      ent.type === "GraphNode" ||
+      ent.type === "Vertex" ||
+      ent.semanticRole === "vertex" ||
+      ent.semanticRole === "graph-node" ||
+      hasGraphTopology
+    ) {
       visualType = "GraphNode";
     }
 

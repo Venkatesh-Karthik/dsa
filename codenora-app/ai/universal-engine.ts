@@ -1822,6 +1822,18 @@ export class UniversalConceptIntelligenceEngine {
       wasSynthesized = true;
     }
 
+    // Baseline World Isolation: if the synthesized lesson has an explicit isBaseline Step 0,
+    // the AI's rawProposal entities (which may carry premature or leaked final values) must NOT
+    // seed initialSemanticState. We wipe the state-0 maps so deriveStatesFromSteps starts
+    // from a genuinely empty world and rebuilds it step-by-step from the synthesized plan.
+    if (wasSynthesized && (rawSteps[0] as any)?.isBaseline) {
+      console.log(
+        `[COGNORA][BASELINE_ISOLATION] Synthesized plan has isBaseline Step 0. Clearing state0Entities/state0Rels to prevent premature information leakage.`,
+      );
+      state0Entities.clear();
+      state0Rels.clear();
+    }
+
     if (rawSteps.length === 0 && filteredEntities.length > 0) {
       const ent0 = filteredEntities[0];
       const ent1 = filteredEntities[1] || filteredEntities[0];

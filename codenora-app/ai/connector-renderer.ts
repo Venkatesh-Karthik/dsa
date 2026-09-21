@@ -396,8 +396,14 @@ export function renderSemanticConnector(
     toRecord.bounds,
     obstacleBoxes,
     {
+      sourceShape: fromShape,
+      targetShape: toShape,
       preferredRouting:
-        spec.elbowed ?? spec.style?.elbowed ? "elbowed" : "auto",
+        spec.role === "hierarchy"
+          ? "direct"
+          : spec.elbowed ?? spec.style?.elbowed
+          ? "elbowed"
+          : "auto",
     },
   );
 

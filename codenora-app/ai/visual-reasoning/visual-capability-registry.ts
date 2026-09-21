@@ -849,6 +849,12 @@ export class VisualCapabilityRegistry {
     if (/\b(decision|branch|condition|predicate|if)\b/i.test(query)) {
       return VisualCapabilityRegistry.get("DecisionNode")!;
     }
+    if (
+      /\b(graph-node|graphnode|graph_node|vertex|intersection|hub)\b/i.test(query) ||
+      (/\bnode\b/i.test(query) && !/\b(tree|list|state|decision|process)\b/i.test(query))
+    ) {
+      return VisualCapabilityRegistry.get("GraphNode")!;
+    }
     if (/\b(tree|root|leaf|subtree)\b/i.test(query)) {
       return VisualCapabilityRegistry.get("TreeNode")!;
     }

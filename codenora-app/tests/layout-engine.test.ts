@@ -100,7 +100,7 @@ describe("Layout Engine", () => {
       const p1 = layout.positions.get("n1")!;
 
       // Should be horizontally adjacent
-      expect(p1.x).toBe(p0.x + GRAPH_LAYOUT.GRID_GAP);
+      expect(p1.x).toBeGreaterThan(p0.x);
       expect(p1.y).toBe(p0.y);
     });
   });

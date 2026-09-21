@@ -19,9 +19,11 @@ import {
   type CounterfactualMutation,
   type CounterfactualResult,
 } from "../counterfactual-engine";
+
+import { type SceneState, cloneSceneState } from "../scene-state";
+
 import type { AuthoritativeSemanticModel } from "../authoritative-model";
 import type { TeachingMoment } from "../teaching-moment";
-import { type SceneState, cloneSceneState } from "../scene-state";
 import type { SemanticState } from "../semantic-world";
 import type { CognoraWorldState, WhatIfBranch } from "./cognora-world-model";
 
@@ -36,11 +38,19 @@ export class BranchManager {
   ): WhatIfBranch | null {
     const currentMoment = worldState.currentMoment;
     const timeline = worldState.timeline;
-    const baseModel = timeline?.model;
+    const baseModel =
+      timeline?.model ||
+      ({
+        id: timeline?.lessonId || "lesson-model",
+        topic: timeline?.topic || "Concept",
+        invariants: [],
+        states: [],
+        transformations: [],
+      } as unknown as AuthoritativeSemanticModel);
 
-    if (!currentMoment || !baseModel) {
+    if (!currentMoment) {
       console.warn(
-        "[COGNORA][BRANCH] Cannot branch: no active TeachingMoment or model.",
+        "[COGNORA][BRANCH] Cannot branch: no active TeachingMoment.",
       );
       return null;
     }
@@ -128,6 +138,37 @@ export class BranchManager {
           observations: [],
         };
 
+    // Populate base state directly from current visual graph if missing
+    const currentGraph = currentMoment.visualState?.graph;
+    if (baseState.entities.size === 0 && currentGraph) {
+      for (const [eid, ent] of currentGraph.entities.entries()) {
+        baseState.entities.set(eid, {
+          id: ent.id,
+          label: ent.label || String(ent.value ?? eid),
+          value: ent.value,
+          state: (ent.properties?.state as any) || "active",
+          type: ent.primitiveType || "node",
+          properties: { ...ent.properties } as any,
+        });
+      }
+      for (const [rid, rel] of currentGraph.relationships.entries()) {
+        baseState.relationships.set(rid, {
+          id: rel.id,
+          type: rel.type,
+          direction: "forward" as const,
+          source: rel.sourceEntityId,
+          target: rel.targetEntityId,
+          label:
+            typeof rel.properties?.label === "string"
+              ? rel.properties.label
+              : rel.properties?.weight !== undefined
+              ? String(rel.properties.weight)
+              : undefined,
+          properties: { ...rel.properties } as any,
+        });
+      }
+    }
+
     const counterfactualResult: CounterfactualResult =
       CounterfactualEngine.evaluateWhatIf(mutation, baseState, baseModel);
 
@@ -160,6 +201,39 @@ export class BranchManager {
             annotations: new Map(),
           },
         };
+
+    // Mutate branch visual state to reflect counterfactual simulation
+    if (counterfactualResult.simulatedState && branchSceneState.graph) {
+      const sim = counterfactualResult.simulatedState;
+      for (const [rid, rel] of sim.relationships.entries()) {
+        const existingRel = branchSceneState.graph.relationships.get(rid);
+        if (existingRel) {
+          existingRel.properties = {
+            ...(existingRel.properties || {}),
+            ...rel.properties,
+            label: String(
+              rel.properties?.weight ??
+                rel.label ??
+                existingRel.properties?.label ??
+                "",
+            ),
+            highlight: "active",
+          };
+        }
+      }
+      for (const [eid, ent] of sim.entities.entries()) {
+        const existingEnt = branchSceneState.graph.entities.get(eid);
+        if (existingEnt) {
+          existingEnt.value = ent.value;
+          existingEnt.label = ent.label;
+          existingEnt.properties = {
+            ...(existingEnt.properties || {}),
+            ...ent.properties,
+            highlight: "active",
+          };
+        }
+      }
+    }
 
     const branchMoment: TeachingMoment = {
       id: `moment-${branchId}-0`,

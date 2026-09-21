@@ -591,11 +591,11 @@ export class ConceptualJourneyOptimizer {
     const textA = `${milestoneA.title} ${milestoneA.explanation}`.toLowerCase();
     const textB = `${stepB.title} ${stepB.explanation}`.toLowerCase();
     const isMutationA =
-      /\b(insert|delete|remove|eliminate|elimination|drop|discard|add|push|pop|dequeue|enqueue|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
+      /\b(insert|delete|remove|eliminate|elimination|drop|discard|add|push|pop|dequeue|enqueue|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble|update|select|choose|finalize|finalized|traverse|explore|balance|imbalance)\b/i.test(
         textA,
       );
     const isMutationB =
-      /\b(insert|delete|remove|eliminate|elimination|drop|discard|add|push|pop|dequeue|enqueue|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble)\b/i.test(
+      /\b(insert|delete|remove|eliminate|elimination|drop|discard|add|push|pop|dequeue|enqueue|swap|rotate|rebalance|pivot|partition|compare|split|merge|relax|visit|extract|sift|bubble|update|select|choose|finalize|finalized|traverse|explore|balance|imbalance)\b/i.test(
         textB,
       );
     if (isMutationA && isMutationB) {
@@ -767,8 +767,13 @@ export class ConceptualJourneyOptimizer {
           return false;
         }
 
-        // Sub-steps of a single mechanism restructuring on the same entity set (e.g. pointer changes in a rotation) merge cleanly
-        return true;
+        // Sub-steps of a single mechanism merge ONLY if stepB is highlight/bookkeeping or internal pointer adjustment
+        if (stepB.isHighlightOnly || stepB.isPureBookkeeping) {
+          return true;
+        }
+
+        // Distinct operational transformations must be preserved as separate teaching moments
+        return false;
       }
       // Both are sub-steps of diagnosis (e.g. check left then check right)
       if (roleA === "diagnosis") {

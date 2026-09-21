@@ -1,0 +1,1513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>COGNORA: Complete System Architecture & Technical Documentation</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 16mm 14mm 16mm 14mm;
+      @bottom-right {
+        content: counter(page);
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 8pt;
+        color: #64748b;
+      }
+      @top-right {
+        content: "COGNORA System Architecture";
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 8pt;
+        color: #94a3b8;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.55;
+      color: #1e293b;
+      background-color: #ffffff;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Typography */
+    .doc-h1 {
+      font-size: 16pt;
+      font-weight: 700;
+      color: #0f172a;
+      border-bottom: 2px solid #0284c7;
+      padding-bottom: 4px;
+      margin-top: 24pt;
+      margin-bottom: 10pt;
+      page-break-after: avoid;
+    }
+
+    .doc-h2 {
+      font-size: 13pt;
+      font-weight: 600;
+      color: #1e293b;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 3px;
+      margin-top: 18pt;
+      margin-bottom: 8pt;
+      page-break-after: avoid;
+    }
+
+    .doc-h3 {
+      font-size: 11pt;
+      font-weight: 600;
+      color: #0369a1;
+      margin-top: 14pt;
+      margin-bottom: 6pt;
+      page-break-after: avoid;
+    }
+
+    .doc-h4 {
+      font-size: 10pt;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 10pt;
+      margin-bottom: 4pt;
+      page-break-after: avoid;
+    }
+
+    .doc-p {
+      margin-top: 0;
+      margin-bottom: 7pt;
+      text-align: justify;
+    }
+
+    .doc-list {
+      margin-top: 0;
+      margin-bottom: 8pt;
+      padding-left: 18pt;
+    }
+
+    .doc-list li {
+      margin-bottom: 3pt;
+    }
+
+    .section-divider {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 16pt 0;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      font-size: 7pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      vertical-align: middle;
+      margin-left: 4px;
+    }
+    .badge-implemented {
+      background-color: #dcfce7;
+      color: #15803d;
+      border: 1px solid #86efac;
+    }
+    .badge-partial {
+      background-color: #fef9c3;
+      color: #a16207;
+      border: 1px solid #fde047;
+    }
+    .badge-experimental {
+      background-color: #f3e8ff;
+      color: #7e22ce;
+      border: 1px solid #d8b4fe;
+    }
+    .badge-planned {
+      background-color: #e0f2fe;
+      color: #0369a1;
+      border: 1px solid #7dd3fc;
+    }
+    .badge-legacy {
+      background-color: #ffedd5;
+      color: #c2410c;
+      border: 1px solid #fdba74;
+    }
+    .badge-deprecated {
+      background-color: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fca5a5;
+    }
+
+    /* Tables */
+    .table-container {
+      width: 100%;
+      margin: 10pt 0;
+      page-break-inside: avoid;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8.5pt;
+    }
+
+    th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      font-weight: 600;
+      text-align: left;
+      padding: 5pt 7pt;
+      border: 1px solid #cbd5e1;
+    }
+
+    td {
+      padding: 4pt 7pt;
+      border: 1px solid #e2e8f0;
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td {
+      background-color: #f8fafc;
+    }
+
+    /* Code Blocks */
+    .code-block {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: Consolas, "Fira Code", Monaco, monospace;
+      font-size: 8pt;
+      line-height: 1.45;
+      padding: 8pt 10pt;
+      border-radius: 4px;
+      margin: 8pt 0;
+      page-break-inside: avoid;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-left: 3px solid #38bdf8;
+    }
+
+    .inline-code {
+      font-family: Consolas, "Fira Code", Monaco, monospace;
+      font-size: 8.5pt;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      padding: 1px 4px;
+      border-radius: 3px;
+      border: 1px solid #e2e8f0;
+    }
+
+    /* Header Banner */
+    .header-banner {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #ffffff;
+      padding: 20pt;
+      border-radius: 6px;
+      margin-bottom: 20pt;
+      page-break-inside: avoid;
+    }
+    .header-banner h1 {
+      margin: 0;
+      font-size: 22pt;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #38bdf8;
+    }
+    .header-banner .subtitle {
+      margin-top: 4pt;
+      font-size: 12pt;
+      color: #94a3b8;
+      font-weight: 500;
+    }
+    .header-banner .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6pt;
+      margin-top: 14pt;
+      font-size: 8.5pt;
+      border-top: 1px solid #334155;
+      padding-top: 10pt;
+    }
+    .header-banner .meta-item strong {
+      color: #cbd5e1;
+    }
+
+    /* Page Breaks */
+    .page-break {
+      page-break-before: always;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header-banner">
+  <h1>COGNORA</h1>
+  <div class="subtitle">Complete System Architecture &amp; Technical Documentation</div>
+  <div class="meta-grid">
+    <div class="meta-item"><strong>Classification:</strong> Authoritative Technical Reference</div>
+    <div class="meta-item"><strong>Target Audience:</strong> Systems Engineers &amp; Core Architects</div>
+    <div class="meta-item"><strong>Repository:</strong> codenora-monorepo (codenora-app)</div>
+    <div class="meta-item"><strong>Baseline Git Commit:</strong> ef503ff9 (Visual Reasoning 5.0)</div>
+    <div class="meta-item"><strong>Verification Status:</strong> 100% Inspected from Active Source</div>
+    <div class="meta-item"><strong>Publication Date:</strong> September 2026</div>
+  </div>
+</div>
+
+<h1 class="doc-h1">COGNORA: Complete System Architecture & Technical Documentation</h1>
+<h2 class="doc-h2">AI-Native Visual Learning Environment</h2>
+<p class="doc-p"><strong>Document Classification</strong>: Comprehensive Technical Reference Manual  </p>
+<p class="doc-p"><strong>Author</strong>: Cognora Core Architectural Engineering Team  </p>
+<p class="doc-p"><strong>Repository</strong>: <code class="inline-code">codenora-monorepo</code> (<code class="inline-code">codenora-app</code>, <code class="inline-code">packages/*</code>)  </p>
+<p class="doc-p"><strong>Target Audience</strong>: Systems Engineers, AI Researchers, Frontend Architects, and New Contributors  </p>
+<p class="doc-p"><strong>Baseline Git Commit</strong>: <code class="inline-code">ef503ff9</code> (Production Stabilization & Visual Reasoning Engine 5.0)  </p>
+<p class="doc-p"><strong>Date of Record</strong>: September 2026  </p>
+<hr class="section-divider"/>
+<h2 class="doc-h2">Source of Truth & Status Classification Taxonomy</h2>
+<p class="doc-p">Every feature, subsystem, and interface described in this technical documentation is classified strictly according to the following truth taxonomy:</p>
+<div class="table-container"><table>
+  <tr>
+    <th>Status Badge</th>
+    <th>Meaning in Repository</th>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+    <td>Fully realized in active source code, covered by automated test suites, actively running in the runtime call path.</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code"><span class="badge badge-partial">PARTIALLY IMPLEMENTED</span></code></strong></td>
+    <td>Core logic or interfaces exist; specific edge cases, UI bindings, or fallbacks are incomplete or in progress.</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code"><span class="badge badge-experimental">EXPERIMENTAL</span></code></strong></td>
+    <td>Active feature branch or opt-in subsystem under evaluation (e.g. WebGL Raymarched Shaders, Voice WebRTC).</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code"><span class="badge badge-planned">PLANNED</span></code></strong></td>
+    <td>Documented in interfaces or architectural roadmaps but not yet wired to active runtime execution.</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code"><span class="badge badge-legacy">LEGACY</span></code></strong></td>
+    <td>Superseded by newer architectures but retained in codebase for backwards compatibility or fallback.</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code"><span class="badge badge-deprecated">DEPRECATED</span></code></strong></td>
+    <td>Scheduled for imminent removal; must not be used in new features.</td>
+  </tr>
+</table></div>
+<hr class="section-divider"/>
+<h1 class="doc-h1">TABLE OF CONTENTS</h1>
+<p class="doc-p">1. [Executive Overview & Pedagogical Philosophy](#1-executive-overview--pedagogical-philosophy)</p>
+<p class="doc-p">2. [System Architecture: Conceptual vs Runtime](#2-system-architecture-conceptual-vs-runtime)</p>
+<p class="doc-p">3. [The Complete Request-to-Canvas Pipeline](#3-the-complete-request-to-canvas-pipeline)</p>
+<p class="doc-p">4. [User Input & Intent Recognition System](#4-user-input--intent-recognition-system)</p>
+<p class="doc-p">5. [Universal Command System](#5-universal-command-system)</p>
+<p class="doc-p">6. [AI Subsystem: NVIDIA Nemotron & Multi-Provider Architecture](#6-ai-subsystem-nvidia-nemotron--multi-provider-architecture)</p>
+<p class="doc-p">7. [AI Response Ingestion & Schema Validation Pipeline](#7-ai-response-ingestion--schema-validation-pipeline)</p>
+<p class="doc-p">8. [Authoritative Semantic World](#8-authoritative-semantic-world)</p>
+<p class="doc-p">9. [Authoritative Correctness Engine & Invariant Verification](#9-authoritative-correctness-engine--invariant-verification)</p>
+<p class="doc-p">10. [Deep Case Study 1: AVL Tree Insertion & Rotations](#10-deep-case-study-1-avl-tree-insertion--rotations)</p>
+<p class="doc-p">11. [Deep Case Study 2: Dijkstra's Shortest Path Algorithm](#11-deep-case-study-2-dijkstras-shortest-path-algorithm)</p>
+<p class="doc-p">12. [Pedagogical Teaching Engine & Teacher Brain](#12-pedagogical-teaching-engine--teacher-brain)</p>
+<p class="doc-p">13. [Adaptive Teaching Loop & Learner State Model](#13-adaptive-teaching-loop--learner-state-model)</p>
+<p class="doc-p">14. [Anatomy of a TeachingMoment](#14-anatomy-of-a-teachingmoment)</p>
+<p class="doc-p">15. [Visual Composition Engine (Visual Reasoning 5.0)](#15-visual-composition-engine-visual-reasoning-50)</p>
+<p class="doc-p">16. [Geometry & Layout Engine](#16-geometry--layout-engine)</p>
+<p class="doc-p">17. [General Graph Layout Engine](#17-general-graph-layout-engine)</p>
+<p class="doc-p">18. [Hierarchical Tree & Ordered Sequence Layouts](#18-hierarchical-tree--ordered-sequence-layouts)</p>
+<p class="doc-p">19. [Connector Routing & Parallel Track Geometry](#19-connector-routing--parallel-track-geometry)</p>
+<p class="doc-p">20. [Relationship Label Placement & Corridor Clearance](#20-relationship-label-placement--corridor-clearance)</p>
+<p class="doc-p">21. [Excalidraw Canvas Integration & Custom Data Bindings](#21-excalidraw-canvas-integration--custom-data-bindings)</p>
+<p class="doc-p">22. [Scene Reconciliation & Stable Identity Conservation](#22-scene-reconciliation--stable-identity-conservation)</p>
+<p class="doc-p">23. [Pure-Local Playback Controller & Interactive Timeline](#23-pure-local-playback-controller--interactive-timeline)</p>
+<p class="doc-p">24. [The Contextual Inspector Subsystem](#24-the-contextual-inspector-subsystem)</p>
+<p class="doc-p">25. [The Tutor Conversational Subsystem](#25-the-tutor-conversational-subsystem)</p>
+<p class="doc-p">26. [Semantic Teaching Callout System](#26-semantic-teaching-callout-system)</p>
+<p class="doc-p">27. [Voice Subsystem: Browser Speech Director & TTS Fallbacks](#27-voice-subsystem-browser-speech-director--tts-fallbacks)</p>
+<p class="doc-p">28. [CognoraOrb: 3D Liquid Glass Physical Presence](#28-cognoraorb-3d-liquid-glass-physical-presence)</p>
+<p class="doc-p">29. [Follow-Up Context & Relative Query Resolution](#29-follow-up-context--relative-query-resolution)</p>
+<p class="doc-p">30. [Counterfactual What-If Branching Engine](#30-counterfactual-what-if-branching-engine)</p>
+<p class="doc-p">31. [History, State Immutability, & Session Memory](#31-history-state-immutability--session-memory)</p>
+<p class="doc-p">32. [Frontend Architecture & React Component Hierarchy](#32-frontend-architecture--react-component-hierarchy)</p>
+<p class="doc-p">33. [Backend Server Architecture & Vite Middleware](#33-backend-server-architecture--vite-middleware)</p>
+<p class="doc-p">34. [Comprehensive Data Flow Maps](#34-comprehensive-data-flow-maps)</p>
+<p class="doc-p">35. [Subsystem Error Isolation & Resilience Architecture](#35-subsystem-error-isolation--resilience-architecture)</p>
+<p class="doc-p">36. [Performance Budgets & Computational Bottlenecks](#36-performance-budgets--computational-bottlenecks)</p>
+<p class="doc-p">37. [Security Architecture & Secret Boundary Isolation](#37-security-architecture--secret-boundary-isolation)</p>
+<p class="doc-p">38. [Complete Repository Directory Map](#38-complete-repository-directory-map)</p>
+<p class="doc-p">39. [Exhaustive File-by-File Architectural Matrix](#39-exhaustive-file-by-file-architectural-matrix)</p>
+<p class="doc-p">40. [Subsystem Dependency & Coupling Architecture](#40-subsystem-dependency--coupling-architecture)</p>
+<p class="doc-p">41. [Testing Architecture & Verification Strategy](#41-testing-architecture--verification-strategy)</p>
+<p class="doc-p">42. [Deployment Architecture & Operational Environment](#42-deployment-architecture--operational-environment)</p>
+<p class="doc-p">43. [Known Limitations & Technical Debt Audit](#43-known-limitations--technical-debt-audit)</p>
+<p class="doc-p">44. [Current Implementation vs Intended Architecture Matrix](#44-current-implementation-vs-intended-architecture-matrix)</p>
+<p class="doc-p">45. [Developer Modification & Extension Guide](#45-developer-modification--extension-guide)</p>
+<p class="doc-p">46. [How to Add a New Domain or Algorithm](#46-how-to-add-a-new-domain-or-algorithm)</p>
+<p class="doc-p">47. [Core Architectural Invariants](#47-core-architectural-invariants)</p>
+<p class="doc-p">48. [End-to-End Walkthrough Trace: Dijkstra Algorithm](#48-end-to-end-walkthrough-trace-dijkstra-algorithm)</p>
+<p class="doc-p">49. [End-to-End Walkthrough Trace: AVL Tree Balancing](#49-end-to-end-walkthrough-trace-avl-tree-balancing)</p>
+<p class="doc-p">50. [Cognora Technical Glossary](#50-cognora-technical-glossary)</p>
+<p class="doc-p">51. [System at a Glance: Definitive Architecture Map](#51-system-at-a-glance-definitive-architecture-map)</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">1. EXECUTIVE OVERVIEW & PEDAGOGICAL PHILOSOPHY</h1>
+<h3 class="doc-h3">What is Cognora? <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p"><strong>Cognora</strong> is an AI-native visual learning environment that transforms complex computer science algorithms, mathematical systems, and architectural relationships into interactive, progressive, spatial teaching experiences rendered on an infinite digital canvas.</p>
+<h3 class="doc-h3">The Problem Space</h3>
+<p class="doc-p">Computer science education suffers from two fundamental failures:</p>
+<p class="doc-p">1. <strong>Static, Unresponsive Visuals</strong>: Traditional textbook diagrams show final states (e.g. a balanced AVL tree or a completed Dijkstra shortest-path tree) without elucidating the progressive mechanical decisions, temporary invariant violations, and causal trade-offs that occurred during execution.</p>
+<p class="doc-p">2. <strong>Hallucinatory Raw LLM Output</strong>: Standard generative AI interfaces output unverified, markdown-heavy walls of text. When asked to draw diagrams, LLMs frequently hallucinate incorrect tree connections, place nodes over one another, violate balance factor invariants, or invent nonexistent graph edges.</p>
+<h3 class="doc-h3">The Central Philosophy: Separation of Meaning, Correctness, and Rendering</h3>
+<p class="doc-p">Cognora solves this by enforcing strict architectural separation of concerns:</p>
+<pre class="code-block language-text"><code>[ AI PROVIDER ]            -&gt; Understands Intent &amp; Natural Language Meaning
+      |
+      v
+[ CORRECTNESS ENGINE ]     -&gt; Formally Verifies Mathematical &amp; Algorithmic Truth
+      |
+      v
+[ SEMANTIC WORLD ]         -&gt; Holds Authoritative Immutable World State &amp; Invariants
+      |
+      v
+[ TEACHER BRAIN ]          -&gt; Decides Cognitive Load, Pacing, &amp; What Learner Sees
+      |
+      v
+[ VISUAL COMPOSITION ]     -&gt; Chooses Semiotic Strategy (Tree vs Graph vs Sequence)
+      |
+      v
+[ LAYOUT ENGINE ]          -&gt; Computes Deterministic Collision-Free 2D Coordinates
+      |
+      v
+[ EXCALIDRAW ENGINE ]      -&gt; Renders Native Elements, Bindings, &amp; Hand-Drawn Strokes
+      |
+      v
+[ MULTIMODAL ACTORS ]      -&gt; Voice Narration, WebGL Liquid Glass Orb, Contextual Inspector</code></pre>
+<ul class="doc-list">
+  <li><strong>AI is NOT authoritative</strong>: The LLM's role is semantic extraction and pedagogical explanation. It is prohibited from calculating raw screen pixel coordinates.</li>
+  <li><strong>Excalidraw is NOT authoritative</strong>: Canvas elements are transient projections of underlying semantic entities. Modifying an arrow or rectangle on the canvas does not corrupt the mathematical state.</li>
+  <li><strong>Code enforces the laws of physics</strong>: A binary search tree cannot violate $Left < Parent < Right$; an AVL tree cannot leave balance factor $|BF| > 1$ unresolved; a Dijkstra edge cannot be relaxed unless $dist[u] + w < dist[v]$.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">2. SYSTEM ARCHITECTURE: CONCEPTUAL VS RUNTIME</h1>
+<p class="doc-p">Cognora maintains two distinct architectural models: the idealized conceptual pipeline and the actual production execution graph.</p>
+<h3 class="doc-h3">2.1 Conceptual Architecture <code class="inline-code">[PLANNED / REFERENCE]</code></h3>
+<p class="doc-p">The conceptual model assumes an entirely asynchronous, event-driven cycle where a student's cognitive state is continuously modeled:</p>
+<pre class="code-block language-mermaid"><code>flowchart TD
+    Student((Student)) --&gt;|Natural Language / Sketch| Intent[Intent &amp; Cognitive State]
+    Intent --&gt; Reasoner[Authoritative World Reasoner]
+    Reasoner --&gt; Invariants{Invariant Checker}
+    Invariants --&gt;|Valid| Moment[Pedagogical Moment Synthesizer]
+    Invariants --&gt;|Violated| Repair[Autonomous Semantic Repair]
+    Repair --&gt; Moment
+    Moment --&gt; Semiotic[Visual Semiotics &amp; Composition]
+    Semiotic --&gt; Spatial[Spatial Layout &amp; Edge Routing]
+    Spatial --&gt; Surface[Infinite Canvas Surface]
+    Surface --&gt; Multimodal[Speech Director &amp; Physical Orb]
+    Multimodal --&gt; Student</code></pre>
+<h3 class="doc-h3">2.2 Actual Runtime Architecture <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">In production, Cognora operates as a hybrid client-server React application embedded in Vite, where the backend runs as embedded dev/preview server middleware and the frontend executes all lesson playback 100% locally:</p>
+<pre class="code-block language-mermaid"><code>flowchart TB
+    subgraph Browser_Client ["Browser Runtime (codenora-app)"]
+        UI[AITeachingAgent.tsx / Stage Layout]
+        Composer[CognoraAIComposer.tsx]
+        Timeline[CognoraTimeline.tsx]
+        Inspector[CognoraContextualPanel.tsx]
+        Orb[CognoraOrb.tsx WebGL Raymarched]
+        Voice[BrowserSpeechProvider / SpeechDirector]
+        
+        Playback[LessonPlaybackController.ts]
+        Reconciler[scene-reconciler.ts]
+        ExcalidrawCore[Excalidraw Canvas / Imperative API]
+        
+        CmdRunner[semantic-command-runner.ts]
+        IntentRouter[intent-router.ts]
+    end
+
+    subgraph Embedded_Server ["Server Runtime (ai/backend)"]
+        Middleware[vite-plugin.ts / server-handler.ts]
+        Router[provider-router.ts]
+        Nemotron[nvidia-provider.ts]
+        Validator[dsl-validator.ts]
+        OrderedEngine[ordered-operation-engine.ts]
+    end
+
+    Composer --&gt;|POST /api/ai/teach| Middleware
+    CmdRunner --&gt;|Deterministic Local Mutate| Playback
+    Middleware --&gt; Router
+    Router --&gt; Nemotron
+    Nemotron --&gt;|Stream / Chat Completion| Validator
+    Validator --&gt;|Validated DSL| Middleware
+    Middleware --&gt;|TeachingResponse| UI
+    UI --&gt; OrderedEngine
+    OrderedEngine --&gt;|Compiled TeachingMoments| Playback
+    Playback --&gt;|Active Moment| Reconciler
+    Playback --&gt;|Narration| Voice
+    Playback --&gt;|Moments State| Timeline
+    Playback --&gt;|Transformation Data| Inspector
+    Reconciler --&gt;|Delta Mutations| ExcalidrawCore
+    Voice --&gt;|Audio State| Orb</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">3. THE COMPLETE REQUEST-TO-CANVAS PIPELINE</h1>
+<p class="doc-p">Tracing a standard user question (e.g. <em>"Explain how an AVL tree balances when inserting 10, 20, 30"</em>) across all 17 stages:</p>
+<div class="table-container"><table>
+  <tr>
+    <th>Stage #</th>
+    <th>Stage Name</th>
+    <th>Implementation Location</th>
+    <th>Input</th>
+    <th>Output</th>
+    <th>Error Boundary</th>
+  </tr>
+  <tr>
+    <td><strong>1</strong></td>
+    <td>Input Capture</td>
+    <td><code class="inline-code">CognoraAIComposer.tsx</code></td>
+    <td>User keystrokes / prompt text</td>
+    <td>Raw prompt string</td>
+    <td>Truncate > 4000 chars</td>
+  </tr>
+  <tr>
+    <td><strong>2</strong></td>
+    <td>Intent Classification</td>
+    <td><code class="inline-code">ai/intent-router.ts</code></td>
+    <td>Raw prompt string</td>
+    <td><code class="inline-code">UserIntent</code> (DSA, meta, cmd)</td>
+    <td>Falls back to <code class="inline-code">"CONCEPT_EXPLANATION"</code></td>
+  </tr>
+  <tr>
+    <td><strong>3</strong></td>
+    <td>Request Construction</td>
+    <td><code class="inline-code">ai/ai-service.ts</code></td>
+    <td>Prompt + Canvas Context</td>
+    <td><code class="inline-code">TeachingRequest</code> JSON</td>
+    <td>Abort on empty string</td>
+  </tr>
+  <tr>
+    <td><strong>4</strong></td>
+    <td>Server Ingestion</td>
+    <td><code class="inline-code">ai/backend/server-handler.ts</code></td>
+    <td>HTTP POST <code class="inline-code">/api/ai/teach</code></td>
+    <td>Sanitized request object</td>
+    <td>413 Payload Too Large / 400 Bad JSON</td>
+  </tr>
+  <tr>
+    <td><strong>5</strong></td>
+    <td>In-Flight Deduplication</td>
+    <td><code class="inline-code">ai/backend/server-handler.ts</code></td>
+    <td><code class="inline-code">generationId</code> + prompt hash</td>
+    <td>Shared Promise / Cached call</td>
+    <td>Prevents parallel duplicate LLM bills</td>
+  </tr>
+  <tr>
+    <td><strong>6</strong></td>
+    <td>Provider Invocation</td>
+    <td><code class="inline-code">ai/backend/nvidia-provider.ts</code></td>
+    <td>System prompt + User query</td>
+    <td>NVIDIA OpenAI-compatible payload</td>
+    <td>502/504 Timeout / Circuit breaker</td>
+  </tr>
+  <tr>
+    <td><strong>7</strong></td>
+    <td>Response Extraction</td>
+    <td><code class="inline-code">ai/backend/response-extractor.ts</code></td>
+    <td>Raw SSE stream / JSON string</td>
+    <td>Parsed JSON object</td>
+    <td>Strip markdown ticks / JSON repair</td>
+  </tr>
+  <tr>
+    <td><strong>8</strong></td>
+    <td>Schema Validation</td>
+    <td><code class="inline-code">ai/backend/dsl-validator.ts</code></td>
+    <td>Parsed JSON object</td>
+    <td><code class="inline-code">ValidTeachingResponse</code></td>
+    <td>502 Bad Gateway if schema invalid</td>
+  </tr>
+  <tr>
+    <td><strong>9</strong></td>
+    <td>Ordered De-collapse</td>
+    <td><code class="inline-code">ai/ordered-operation-engine.ts</code></td>
+    <td>Visual lesson proposal</td>
+    <td>Step-by-step uncollapsed steps</td>
+    <td>Synthesizes baseline State 0 + rotations</td>
+  </tr>
+  <tr>
+    <td><strong>10</strong></td>
+    <td>Correctness Verification</td>
+    <td><code class="inline-code">ai/correctness-engine.ts</code></td>
+    <td>Raw transformations + World</td>
+    <td><code class="inline-code">AuthoritativeSemanticModel</code></td>
+    <td>Repair dangling links / reject bogus steps</td>
+  </tr>
+  <tr>
+    <td><strong>11</strong></td>
+    <td>Moment Compilation</td>
+    <td><code class="inline-code">ai/transformation-timeline.ts</code></td>
+    <td>Validated model + Invariants</td>
+    <td><code class="inline-code">TeachingMoment[]</code> array</td>
+    <td>Throws <code class="inline-code">TimelineCompilationError</code></td>
+  </tr>
+  <tr>
+    <td><strong>12</strong></td>
+    <td>Composition Planning</td>
+    <td><code class="inline-code">ai/visual-reasoning/</code></td>
+    <td><code class="inline-code">SemanticWorld</code> relationships</td>
+    <td><code class="inline-code">VisualCompositionPlan</code></td>
+    <td>Fallback to <code class="inline-code">"network"</code> / <code class="inline-code">"pipeline"</code></td>
+  </tr>
+  <tr>
+    <td><strong>13</strong></td>
+    <td>Spatial Layout</td>
+    <td><code class="inline-code">ai/layout-engine.ts</code></td>
+    <td>Entities + Strategy</td>
+    <td>2D Bounding Boxes (<code class="inline-code">positions</code> Map)</td>
+    <td>Fallback to circular distribution</td>
+  </tr>
+  <tr>
+    <td><strong>14</strong></td>
+    <td>Connector Routing</td>
+    <td><code class="inline-code">ai/visual-reasoning/</code></td>
+    <td>Node perimeters + obstacles</td>
+    <td>Bezier / Direct connector routes</td>
+    <td>Flank routing fallback around obstacles</td>
+  </tr>
+  <tr>
+    <td><strong>15</strong></td>
+    <td>Label Placement</td>
+    <td><code class="inline-code">ai/visual-reasoning/</code></td>
+    <td>Connector routes + labels</td>
+    <td>BoundingBox positions</td>
+    <td>Corridor-clear normal projection</td>
+  </tr>
+  <tr>
+    <td><strong>16</strong></td>
+    <td>Scene Reconciliation</td>
+    <td><code class="inline-code">ai/scene-reconciler.ts</code></td>
+    <td>Visual Elements vs Canvas</td>
+    <td>Excalidraw Element mutations</td>
+    <td>Preserves element identity (<code class="inline-code">customData</code>)</td>
+  </tr>
+  <tr>
+    <td><strong>17</strong></td>
+    <td>Presentation Render</td>
+    <td>Canvas, Panel, Orb, Voice</td>
+    <td>Active <code class="inline-code">TeachingMoment</code></td>
+    <td>Visual render + Voice audio</td>
+    <td>Native speech synthesis with fallback</td>
+  </tr>
+</table></div>
+<hr class="section-divider"/>
+<h1 class="doc-h1">4. USER INPUT & INTENT RECOGNITION SYSTEM</h1>
+<p class="doc-p">Cognora provides four input channels:</p>
+<h3 class="doc-h3">4.1 Natural Language Processing <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<ul class="doc-list">
+  <li>Captured in [<code class="inline-code">CognoraAIComposer.tsx</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/CognoraAIComposer.tsx).</li>
+  <li>Evaluated by [<code class="inline-code">intent-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/intelligence/intent-engine.ts) and [<code class="inline-code">question-understanding.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/question-understanding.ts).</li>
+  <li>Detects concept taxonomy: Data Structures (<code class="inline-code">Tree</code>, <code class="inline-code">Graph</code>, <code class="inline-code">Heap</code>, <code class="inline-code">Linked List</code>, <code class="inline-code">Array</code>), Algorithms (<code class="inline-code">Dijkstra</code>, <code class="inline-code">BFS</code>, <code class="inline-code">DFS</code>, <code class="inline-code">Binary Search</code>, <code class="inline-code">Quick Sort</code>, <code class="inline-code">Merge Sort</code>), Systems (<code class="inline-code">LRU Cache</code>, <code class="inline-code">TCP Handshake</code>, <code class="inline-code">Transactions</code>).</li>
+</ul>
+<h3 class="doc-h3">4.2 Slash Commands (<code class="inline-code">/</code>) <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<ul class="doc-list">
+  <li>Triggered when input begins with <code class="inline-code">/</code>.</li>
+  <li>Autocomplete palette opens via [<code class="inline-code">CognoraCommandPalette.tsx</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/CognoraCommandPalette.tsx).</li>
+  <li>Real-time argument parsing and typing handled by [<code class="inline-code">command-parser.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/commands/command-parser.ts).</li>
+</ul>
+<h3 class="doc-h3">4.3 Handwriting & Ink Drawing <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<ul class="doc-list">
+  <li>Supported via Excalidraw freehand tool.</li>
+  <li>[<code class="inline-code">handwriting-command-detector.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/commands/handwriting-command-detector.ts) analyzes stroke sequences to detect user-drawn gestures (e.g., crossing out a node $\rightarrow$ delete command; drawing an arrow $\rightarrow$ connect command).</li>
+</ul>
+<h3 class="doc-h3">4.4 Follow-Up & Meta Questions <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<ul class="doc-list">
+  <li>Handled by [<code class="inline-code">context-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/intelligence/context-engine.ts).</li>
+  <li>Resolves relative queries ("Why did that happen?", "Show that again", "Go slower") by binding directly to the active <code class="inline-code">TeachingMoment</code> and <code class="inline-code">worldVersion</code>.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">5. UNIVERSAL COMMAND SYSTEM</h1>
+<p class="doc-p">Cognora features a dual-track command architecture: <strong>Deterministic Local Commands</strong> and <strong>AI-Assisted Remote Commands</strong>.</p>
+<pre class="code-block language-mermaid"><code>flowchart TD
+    In[User Input: /insert 42] --&gt; Parser[command-parser.ts]
+    Parser --&gt; Reg[command-registry.ts]
+    Reg --&gt; Decision{Deterministic?}
+    Decision --&gt;|Yes: e.g. /insert, /delete, /rotate, /step| Local[semantic-command-runner.ts]
+    Decision --&gt;|No: e.g. /explain, /compare| AI[ai-service.ts -&gt; /api/ai/teach]
+    Local --&gt; Mutate[Direct Mutation of SemanticWorld]
+    Mutate --&gt; Recomp[Recompile Active TeachingMoment]
+    Recomp --&gt; Canvas[Immediate 0ms Canvas Update]
+    AI --&gt; Remote[AI Response Pipeline]</code></pre>
+<h3 class="doc-h3">5.1 Command Registry Taxonomy <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">Defined in [<code class="inline-code">command-registry.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/commands/command-registry.ts):</p>
+<ul class="doc-list">
+  <li><strong>Structural</strong>: <code class="inline-code">/insert <val></code>, <code class="inline-code">/delete <val></code>, <code class="inline-code">/search <val></code>, <code class="inline-code">/rotate <left|right></code>, <code class="inline-code">/heapify</code>, <code class="inline-code">/relax <u, v, w></code>.</li>
+  <li><strong>Navigation & Playback</strong>: <code class="inline-code">/step <next|prev|index></code>, <code class="inline-code">/play</code>, <code class="inline-code">/pause</code>, <code class="inline-code">/speed <0.5|1|2></code>, <code class="inline-code">/replay</code>, <code class="inline-code">/reset</code>.</li>
+  <li><strong>Visual & Layout</strong>: <code class="inline-code">/align</code>, <code class="inline-code">/compact</code>, <code class="inline-code">/expand</code>, <code class="inline-code">/theme <dark|light></code>, <code class="inline-code">/clear</code>.</li>
+  <li><strong>Pedagogical</strong>: <code class="inline-code">/why</code>, <code class="inline-code">/compare</code>, <code class="inline-code">/whatif <param></code>, <code class="inline-code">/practice</code>, <code class="inline-code">/quiz</code>.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">6. AI SUBSYSTEM: NVIDIA NEMOTRON & MULTI-PROVIDER ARCHITECTURE</h1>
+<h3 class="doc-h3">6.1 Provider Hierarchy & Selection <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">The AI backend is located in <code class="inline-code">codenora-app/ai/backend/</code>. Ingestion is managed by <code class="inline-code">ProviderRouter</code> (<code class="inline-code">provider-router.ts</code>), which routes requests based on environment variables:</p>
+<pre class="code-block language-text"><code>ProviderRouter (Default)
+  ├── 1. NvidiaNemotronProvider (Primary Production Model: nvidia/nemotron-3-ultra-550b-a55b)
+  ├── 2. FeatherlessTeachingProvider (Fallback Serverless Llama/Qwen)
+  ├── 3. OllamaTeachingProvider (Local Offline LLM: e.g. llama3:8b)
+  └── 4. MockTeachingProvider (Zero-Network Synthetic Unit Test Provider)</code></pre>
+<h3 class="doc-h3">6.2 NVIDIA Integration Specifics</h3>
+<ul class="doc-list">
+  <li><strong>Endpoint</strong>: <code class="inline-code">https://integrate.api.nvidia.com/v1/chat/completions</code> (OpenAI compatible).</li>
+  <li><strong>Default Model</strong>: <code class="inline-code">nvidia/nemotron-3-ultra-550b-a55b</code>.</li>
+  <li><strong>Token Budget</strong>: 32,768 tokens (configured via <code class="inline-code">NVIDIA_MAX_TOKENS</code>).</li>
+  <li><strong>Temperature</strong>: <code class="inline-code">0.2</code> (enforces deterministic pedagogical consistency).</li>
+  <li><strong>Deduplication Engine</strong>: <code class="inline-code">inFlightGenerations</code> Map in <code class="inline-code">server-handler.ts</code> coalesces identical in-flight submissions under a single promise to eliminate duplicate token consumption.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">7. AI RESPONSE INGESTION & SCHEMA VALIDATION PIPELINE</h1>
+<p class="doc-p">When NVIDIA Nemotron responds, raw text undergoes a multi-layer validation gate:</p>
+<pre class="code-block language-mermaid"><code>flowchart LR
+    Raw[Raw SSE / JSON Stream] --&gt; Extractor[response-extractor.ts]
+    Extractor --&gt; Strip[Strip Markdown &amp; Extract JSON Object]
+    Strip --&gt; Repair[JSON Syntax Repair]
+    Repair --&gt; Validator[dsl-validator.ts]
+    Validator --&gt; Check{Conforms to Visual DSL?}
+    Check --&gt;|Yes| OK[Return Validated TeachingResponse]
+    Check --&gt;|No: Schema Errors| Fail[HTTP 502 SCHEMA_ERROR]</code></pre>
+<h3 class="doc-h3">7.1 Schema Validation Protocol <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">[<code class="inline-code">dsl-validator.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/backend/dsl-validator.ts) enforces:</p>
+<ul class="doc-list">
+  <li>Presence of valid <code class="inline-code">topic</code>, <code class="inline-code">concept</code>, and <code class="inline-code">initialState</code>.</li>
+  <li>Every step contains an <code class="inline-code">action</code>, <code class="inline-code">semanticFocus</code>, <code class="inline-code">title</code>, and <code class="inline-code">explanation</code>.</li>
+  <li>Entity coordinates are <strong>prohibited</strong>; the LLM is only permitted to specify abstract semantic entities and relationships.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">8. AUTHORITATIVE SEMANTIC WORLD</h1>
+<p class="doc-p">The <strong>Semantic World</strong> is the single source of truth for the educational state.</p>
+<pre class="code-block language-mermaid"><code>classDiagram
+    class SemanticWorld {
+        +string id
+        +Entity[] entities
+        +Relationship[] relationships
+        +SemanticState[] states
+        +number worldVersion
+    }
+    class Entity {
+        +string id
+        +string label
+        +string type
+        +string primitiveType
+        +Record properties
+        +string visualRole
+    }
+    class Relationship {
+        +string id
+        +string source
+        +string target
+        +string label
+        +string relationType
+        +Record properties
+    }
+    class AuthoritativeSemanticModel {
+        +string id
+        +ProblemModel problem
+        +SemanticWorld world
+        +Rule[] rules
+        +Invariant[] invariants
+        +AuthoritativeTransformation[] transformations
+        +number timestamp
+    }
+    SemanticWorld "1" *-- "many" Entity
+    SemanticWorld "1" *-- "many" Relationship
+    AuthoritativeSemanticModel "1" *-- "1" SemanticWorld</code></pre>
+<h3 class="doc-h3">Entity Conservation Law <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">When an entity moves, updates value, or changes highlight state, its <code class="inline-code">id</code> <strong>must remain invariant</strong>. Re-generating entities with new random IDs between steps is strictly prohibited by <code class="inline-code">SemanticRepairEngine</code> (<code class="inline-code">correctness-engine.ts</code>), preventing visual jitter and preserving smooth animations in Excalidraw.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">9. AUTHORITATIVE CORRECTNESS ENGINE & INVARIANT VERIFICATION</h1>
+<p class="doc-p">Located in [<code class="inline-code">correctness-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/correctness-engine.ts), the <strong>Universal Correctness Engine</strong> runs a 16-point validation suite:</p>
+<p class="doc-p">1. <strong>Question Interpretation</strong>: Verifies non-empty pedagogical intent.</p>
+<p class="doc-p">2. <strong>Problem Model</strong>: Validates objective and explicit constraints.</p>
+<p class="doc-p">3. <strong>Assumptions Audit</strong>: Limits implicit assumptions.</p>
+<p class="doc-p">4. <strong>Semantic Entities Check</strong>: Purges orphan identifiers and generates default labels.</p>
+<p class="doc-p">5. <strong>Relationship Integrity</strong>: Prunes dangling edges whose source or target do not exist.</p>
+<p class="doc-p">6. <strong>Rule Evaluation</strong>: Verifies domain rules (e.g. tree is acyclic).</p>
+<p class="doc-p">7. <strong>Constraint Checking</strong>: Ensures value bounds and capacity constraints hold.</p>
+<p class="doc-p">8. <strong>Initial State (State 0) Synthesis</strong>: Guarantees true baseline state exists.</p>
+<p class="doc-p">9. <strong>Derived Value Calculation</strong>: Deterministically calculates depths, heights, and degrees.</p>
+<p class="doc-p">10. <strong>Invariant Verification</strong>: Checks mathematical domain invariants.</p>
+<p class="doc-p">11. <strong>Anti-Fake-Step Validation</strong>: Eliminates zero-diff consecutive identical states.</p>
+<p class="doc-p">12. <strong>Timeline Continuity</strong>: Proves that $S_n = \text{Apply}(S_{n-1}, T_n)$.</p>
+<p class="doc-p">13. <strong>Final State Verification</strong>: Verifies problem goal is achieved.</p>
+<p class="doc-p">14. <strong>Goal Satisfaction Report</strong>: Produces formal report of passed criteria.</p>
+<p class="doc-p">15. <strong>Explanation Consistency</strong>: Ensures prose matches visual state transitions.</p>
+<p class="doc-p">16. <strong>Visual-Semantic Readiness</strong>: Validates all entities are mappable to visual primitives.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">10. DEEP CASE STUDY 1: AVL TREE INSERTION & ROTATIONS</h1>
+<p class="doc-p">To demonstrate how semantic state, invariant validation, and visual composition interact, consider inserting keys <code class="inline-code">[10, 20, 30]</code> into an AVL Tree:</p>
+<pre class="code-block language-mermaid"><code>flowchart TD
+    A1[Insert 10: Root Node] --&gt; A2[Insert 20: Right Child of 10]
+    A2 --&gt; A3[Insert 30: Right Child of 20]
+    A3 --&gt; Imbalance[Diagnose Imbalance: BF of Node 10 = -2]
+    Imbalance --&gt; Rotation[Synthesize Left Rotation RR on Node 10]
+    Rotation --&gt; Balanced[New State: Node 20 is Root, 10 is Left, 30 is Right]</code></pre>
+<h3 class="doc-h3">10.1 Four Progressive Teaching Steps <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">Implemented in [<code class="inline-code">ordered-operation-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/ordered-operation-engine.ts) (<code class="inline-code">synthesizeTreeSteps</code>):</p>
+<p class="doc-p">1. <strong>BST Insertion Step</strong>: Node <code class="inline-code">30</code> is placed as right child of <code class="inline-code">20</code>.</p>
+<p class="doc-p">2. <strong>Height & Balance Factor Update</strong>: Heights recalculate ($h(10)=3, h(20)=2, h(30)=1$). Balance factor of root <code class="inline-code">10</code> violates invariant: $BF(10) = h(left) - h(right) = 0 - 2 = -2$.</p>
+<p class="doc-p">3. <strong>Rotation Diagnosis & Execution</strong>: System classifies violation as <strong>RR Case</strong> (Right-Right skew). Left rotation synthesized at node <code class="inline-code">10</code>.</p>
+<p class="doc-p">4. <strong>Equilibrium State</strong>: Node <code class="inline-code">20</code> becomes root ($BF=0$), <code class="inline-code">10</code> becomes left child ($BF=0$), <code class="inline-code">30</code> becomes right child ($BF=0$). Previous historical canvas trees are cleanly purged from the scene.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">11. DEEP CASE STUDY 2: DIJKSTRA'S SHORTEST PATH ALGORITHM</h1>
+<p class="doc-p">Tracing Dijkstra's algorithm across an undirected weighted graph:</p>
+<pre class="code-block language-text"><code>       ( A )
+      /     \
+    4/       \2
+    /         \
+ ( B )---1---( C )
+  \         /   \
+  5\       /8    \10
+    \     /       \
+     ( D )---2---( E )</code></pre>
+<h3 class="doc-h3">11.1 The Operational Execution Stages <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<p class="doc-p">Synthesized by <code class="inline-code">OrderedOperationEngine.synthesizeDijkstraSteps</code>:</p>
+<p class="doc-p">1. <strong>Baseline State 0</strong>: Graph initialized. $dist[A] = 0$, all other nodes $\infty$. Priority Queue initialized with $(A, 0)$.</p>
+<p class="doc-p">2. <strong>Pop Source Node A</strong>: Mark $A$ as visiting (<code class="inline-code">highlight = "visiting"</code>). Inspect incident edges $(A, B, 4)$ and $(A, C, 2)$.</p>
+<p class="doc-p">3. <strong>Relax Edge $A \rightarrow C$</strong>: $0 + 2 < \infty \implies dist[C] = 2, pred[C] = A$. Push $(C, 2)$ to queue.</p>
+<p class="doc-p">4. <strong>Relax Edge $A \rightarrow B$</strong>: $0 + 4 < \infty \implies dist[B] = 4, pred[B] = A$. Push $(B, 4)$ to queue.</p>
+<p class="doc-p">5. <strong>Pop Minimum Unvisited Node C</strong>: $dist[C] = 2$ is finalized. Evaluate edges to $B, D, E$:</p>
+<ul class="doc-list">
+  <li>Cross-edge $C \rightarrow B$ with weight 1: $2 + 1 = 3 < dist[B] (4)$. <strong>Relax $B$!</strong> $dist[B] \leftarrow 3, pred[B] \leftarrow C$.</li>
+  <li>Edge $C \rightarrow D$ with weight 8: $2 + 8 = 10 < \infty \implies dist[D] = 10, pred[D] = C$.</li>
+  <li>Edge $C \rightarrow E$ with weight 10: $2 + 10 = 12 < \infty \implies dist[E] = 12, pred[E] = C$.</li>
+</ul>
+<p class="doc-p">6. <strong>Pop Node B</strong>: $dist[B] = 3$ is finalized. Edge $B \rightarrow D$ with weight 5: $3 + 5 = 8 < dist[D] (10)$. <strong>Relax $D$!</strong> $dist[D] \leftarrow 8, pred[D] \leftarrow B$.</p>
+<p class="doc-p">7. <strong>Shortest-Path Reconstruction Moment</strong>: System extracts predecessor pointers and renders the authoritative Shortest-Path Tree in high-contrast cyan/emerald.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">12. PEDAGOGICAL TEACHING ENGINE & TEACHER BRAIN</h1>
+<p class="doc-p">The <strong>Teacher Brain</strong> ([<code class="inline-code">teacher-brain.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/intelligence/teacher-brain.ts)) governs cognitive budgeting:</p>
+<ul class="doc-list">
+  <li><strong>Pacing</strong>: Dynamically determines whether an operation requires micro-stepping (e.g. pointer swaps) or macro-stepping.</li>
+  <li><strong>Cognitive Load Controller</strong>: Limits the number of simultaneous visual highlights in a single moment to $\le 3$ elements.</li>
+  <li><strong>Adaptive Strategy</strong>: Adjusts depth based on student feedback ("I don't understand" splits the current transformation into fine-grained atomic steps).</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">13. ADAPTIVE TEACHING LOOP & LEARNER STATE MODEL</h1>
+<pre class="code-block language-mermaid"><code>flowchart LR
+    User[Student] --&gt;|Feedback / Action| State[StudentState]
+    State --&gt; Brain[TeacherBrain]
+    Brain --&gt; Strategy[Strategy Decision]
+    Strategy --&gt; Moment[TeachingMoment]
+    Moment --&gt; Surface[Multimodal Presentation]
+    Surface --&gt; User</code></pre>
+<p class="doc-p">The learner state model ([<code class="inline-code">student-state.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/intelligence/student-state.ts)) tracks:</p>
+<ul class="doc-list">
+  <li><code class="inline-code">comprehensionScore</code>: Moving average of concept mastery $[0.0, 1.0]$.</li>
+  <li><code class="inline-code">confusionIndicators</code>: Counter for repeated pauses, replays, or "why" queries.</li>
+  <li><code class="inline-code">pacePreference</code>: <code class="inline-code">"slower" | "standard" | "faster"</code>.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">14. ANATOMY OF A TEACHINGMOMENT</h1>
+<p class="doc-p">The canonical TypeScript interface defined in [<code class="inline-code">teaching-moment.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/teaching-moment.ts):</p>
+<pre class="code-block language-typescript"><code>export interface TeachingMoment {
+  id: string;
+  transformationId: string;
+  stepIndex: number;
+  totalSteps: number;
+  worldVersion: number;
+  branchId?: string;
+
+  /** Authoritative visual scene state for this moment */
+  visualState: SceneState;
+
+  /** Explicit semantic focus target — no regex guessing from prose */
+  semanticFocus: {
+    type: "entity" | "relationship" | "operation" | "region";
+    entityIds?: string[];
+    relationshipIds?: string[];
+    anchorPreference?: "center" | "top" | "bottom" | "left" | "right";
+    label?: string;
+  };
+
+  title: string;
+  explanation: string;
+  whatChanged?: string;
+  whyItChanged?: string;
+  consequence?: string;
+
+  /** Spoken script for speech synthesis */
+  narration: string;
+
+  /** Contextual Callout configuration */
+  callout?: {
+    text: string;
+    placementPreference?: "above" | "below" | "left" | "right" | "floating";
+  };
+
+  /** Deep inspector content for lateral exploration */
+  inspectorContent?: {
+    why: string;
+    calculations?: string;
+    insight?: string;
+    codeContext?: { code: string; language?: string };
+  };
+
+  playbackMetadata?: {
+    durationHint?: number;
+    importance?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
+  };
+}</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">15. VISUAL COMPOSITION ENGINE (VISUAL REASONING 5.0)</h1>
+<p class="doc-p">Located in [<code class="inline-code">visual-composition-planner.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-reasoning/visual-composition-planner.ts), the composition engine maps semantic relationships to spatial strategies:</p>
+<div class="table-container"><table>
+  <tr>
+    <th>Primary Strategy</th>
+    <th>Detection Criteria</th>
+    <th>Semiotic Layout Form</th>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code">"network"</code></strong></td>
+    <td>Multi-parent in-degree > 1, cycles, weighted connections</td>
+    <td>Topology-Aware Layered Graph (Barycentric crossing reduction)</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code">"hierarchical"</code></strong></td>
+    <td>Single-parent acyclic hierarchy, parent/child relationships</td>
+    <td>Recursive Subtree Bounding Box Tree</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code">"pipeline"</code></strong></td>
+    <td>Sequential predecessor/successor chains, 1D order</td>
+    <td>Linear Sequential Flow (Horizontal Array / Linked List)</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code">"table"</code></strong></td>
+    <td>2D row/column data, matrix structures, distance tables</td>
+    <td>Fixed Pitch Grid Table</td>
+  </tr>
+  <tr>
+    <td><strong><code class="inline-code">"state_machine"</code></strong></td>
+    <td>States, events, and circular transitions</td>
+    <td>Circular Radial Cluster with State Connectors</td>
+  </tr>
+</table></div>
+<hr class="section-divider"/>
+<h1 class="doc-h1">16. GEOMETRY & LAYOUT ENGINE</h1>
+<p class="doc-p">Cognora generates 100% deterministic geometry via [<code class="inline-code">layout-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/layout-engine.ts):</p>
+<ul class="doc-list">
+  <li>AI models produce semantic topology, <strong>never raw pixel coordinates</strong>.</li>
+  <li>Coordinates are computed relative to an origin $(X_0, Y_0)$ with standard clearances.</li>
+  <li>Layout persistence: Unchanged nodes retain coordinates across steps to prevent disorienting camera jumps.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">17. GENERAL GRAPH LAYOUT ENGINE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">The general graph layout algorithm operates in 6 deterministic stages:</p>
+<pre class="code-block language-mermaid"><code>flowchart TD
+    G1[1. Entry Node Selection: Lowest in-degree or focalEntityId] --&gt; G2[2. Topological Level Assignment via BFS]
+    G2 --&gt; G3[3. Barycentric Crossing Minimization: Forward &amp; Backward Passes]
+    G3 --&gt; G4[4. Spacing Allocation: Horizontal &gt;= 180px, Vertical = 140px]
+    G4 --&gt; G5[5. Symmetrical Centering of Tiers]
+    G5 --&gt; G6[6. Force-Relaxation Collision Resolution]</code></pre>
+<p class="doc-p">This guarantees that graphs such as Dijkstra, Bellman-Ford, and state networks never collapse into a single vertical column.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">18. HIERARCHICAL TREE & ORDERED SEQUENCE LAYOUTS <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<h3 class="doc-h3">18.1 Trees</h3>
+<ul class="doc-list">
+  <li>Root placed at top; levels spaced at $\Delta Y = 100\text{px}$.</li>
+  <li>Subtree widths calculated recursively to prevent overlapping leaves.</li>
+  <li>Left and right child slots maintained even when a child is absent.</li>
+</ul>
+<h3 class="doc-h3">18.2 Sequences & Arrays</h3>
+<ul class="doc-list">
+  <li>Linear array cells positioned at uniform horizontal pitch ($W = 60\text{px}, \text{gap} = 4\text{px}$).</li>
+  <li>Doubly-linked lists allocate $40\text{px}$ gap for bidirectional pointer arrows.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">19. CONNECTOR ROUTING & PARALLEL TRACK GEOMETRY <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Implemented in [<code class="inline-code">connector-router.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-reasoning/connector-router.ts):</p>
+<ul class="doc-list">
+  <li><strong>Exact Circular Perimeters</strong>: Connectors terminate at exact perimeter coordinates:</li>
+</ul>
+<p class="doc-p">  $$x = cx + r \cos \theta, \quad y = cy + r \sin \theta$$</p>
+<ul class="doc-list">
+  <li><strong>Bidirectional Edges</strong>: Parallel edges between nodes $A$ and $B$ route along canonical normal perpendicular offsets ($\Delta = 24\text{px}$), preventing collinear overlap.</li>
+  <li><strong>Flank Detours</strong>: Connectors detect intervening node obstacles and route cleanly above, below, or beside them.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">20. RELATIONSHIP LABEL PLACEMENT & CORRIDOR CLEARANCE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Implemented in [<code class="inline-code">relationship-label-planner.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-reasoning/relationship-label-planner.ts):</p>
+<ul class="doc-list">
+  <li>Edge weights project perpendicularly from edge midpoints along normal vectors (<code class="inline-code">mid-normal-pos</code>, <code class="inline-code">mid-normal-neg</code>).</li>
+  <li>Rendered within high-contrast pill capsules to prevent connector stroke strike-through.</li>
+  <li>Evaluates candidate positions against node bounding boxes to ensure zero node overlap.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">21. EXCALIDRAW CANVAS INTEGRATION & CUSTOM DATA BINDINGS</h1>
+<p class="doc-p">Cognora embeds <code class="inline-code">@excalidraw/excalidraw</code> directly in React:</p>
+<ul class="doc-list">
+  <li>Elements are bound using Excalidraw's <code class="inline-code">customData</code> payload:</li>
+</ul>
+<p class="doc-p">  ```json</p>
+<p class="doc-p">  {</p>
+<p class="doc-p">    "cognora": {</p>
+<p class="doc-p">      "entityId": "node-A",</p>
+<p class="doc-p">      "primitiveType": "GraphNode",</p>
+<p class="doc-p">      "worldVersion": 3,</p>
+<p class="doc-p">      "isFocusTarget": true</p>
+<p class="doc-p">    }</p>
+<p class="doc-p">  }</p>
+<p class="doc-p">  ```</p>
+<ul class="doc-list">
+  <li>Excalidraw element IDs remain stable across scene reconciliations.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">22. SCENE RECONCILIATION & STABLE IDENTITY CONSERVATION <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Located in [<code class="inline-code">scene-reconciler.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/scene-reconciler.ts):</p>
+<ul class="doc-list">
+  <li>Instead of wiping and appending elements on each step, Cognora computes element diffs.</li>
+  <li>Existing elements undergo property transitions (fill color, stroke, coordinates).</li>
+  <li>Obsolete temporary elements are removed without disturbing persistent structural nodes.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">23. PURE-LOCAL PLAYBACK CONTROLLER & INTERACTIVE TIMELINE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Located in [<code class="inline-code">lesson-playback-controller.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/lesson-playback-controller.ts):</p>
+<ul class="doc-list">
+  <li>All <code class="inline-code">TeachingMoments</code> are pre-compiled upon lesson generation.</li>
+  <li><strong>Zero Network Round-Trips</strong>: Play, Pause, Next, Previous, and Scrubbing execute in $0\text{ms}$ locally.</li>
+  <li>Synchronizes audio narration, inspector content, camera viewport, and canvas elements.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">24. THE CONTEXTUAL INSPECTOR SUBSYSTEM <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Located in [<code class="inline-code">CognoraContextualPanel.tsx</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/CognoraContextualPanel.tsx):</p>
+<ul class="doc-list">
+  <li>Displays active transformation rationale, invariant validation reports, and code context.</li>
+  <li>Four tabbed perspectives:</li>
+</ul>
+<p class="doc-p">  1. <strong>Analyze</strong>: Invariant health, time/space complexity, operations count.</p>
+<p class="doc-p">  2. <strong>Explain</strong>: Pedagogical prose, what changed, why it changed, consequence.</p>
+<p class="doc-p">  3. <strong>Code</strong>: Live synchronized syntax-highlighted code with active line highlighting.</p>
+<p class="doc-p">  4. <strong>Practice</strong>: Interactive self-check challenges generated for the current step.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">25. THE TUTOR CONVERSATIONAL SUBSYSTEM <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Implemented in [<code class="inline-code">AITeachingAgent.tsx</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/AITeachingAgent.tsx):</p>
+<ul class="doc-list">
+  <li>Provides contextual chat interface embedded alongside the canvas.</li>
+  <li>Automatically injects the active <code class="inline-code">TeachingMoment</code>, selected canvas entities, and world version into follow-up prompts.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">26. SEMANTIC TEACHING CALLOUT SYSTEM <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Located in [<code class="inline-code">SemanticTeachingCallout.tsx</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/SemanticTeachingCallout.tsx) and [<code class="inline-code">CognoraOverlayPlacement.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/CognoraOverlayPlacement.ts):</p>
+<ul class="doc-list">
+  <li>Renders an educational floating card anchored to the active focal entity.</li>
+  <li>Computes collision-free placement and draws dynamic SVG leader lines from callout to target.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">27. VOICE SUBSYSTEM: BROWSER SPEECH DIRECTOR & TTS FALLBACKS <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<ul class="doc-list">
+  <li><strong>Primary Provider</strong>: [<code class="inline-code">BrowserSpeechProvider</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/voice/browser-speech-provider.ts) uses native browser <code class="inline-code">window.speechSynthesis</code>.</li>
+  <li><strong>Speech Director</strong>: [<code class="inline-code">speech-director.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/voice/speech-director.ts) segments narrative text into natural sentence-level phrases.</li>
+  <li><strong>Failure Isolation</strong>: Speech synthesis failures never block visual timeline transitions.</li>
+  <li><strong>Legacy Fallback</strong>: Local Python FastAPI service (<code class="inline-code">FastRTC</code> / <code class="inline-code">Chatterbox</code>) at <code class="inline-code">http://127.0.0.1:5005</code> is retained as an optional fallback provider (<code class="inline-code">chatterbox-provider.ts</code>).</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">28. COGNORAORB: 3D LIQUID GLASS PHYSICAL PRESENCE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Located in [<code class="inline-code">codenora-app/components/CognoraOrb/</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/CognoraOrb/):</p>
+<ul class="doc-list">
+  <li><strong>WebGL Raymarched Sphere</strong>: Custom GLSL fragment shader renders a fluid liquid glass sphere.</li>
+  <li><strong>State Machine</strong>: Visual pulsation and color shift across states: <code class="inline-code">idle</code> (ambient indigo), <code class="inline-code">listening</code> (cyan glow), <code class="inline-code">thinking</code> (turbulent violet swirl), <code class="inline-code">speaking</code> (audio-reactive wave displacement), <code class="inline-code">paused</code> (muted amber).</li>
+  <li><strong>Physics Engine</strong>: Smooth spring-damper tracking follows conversational focus.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">29. FOLLOW-UP CONTEXT & RELATIVE QUERY RESOLUTION <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Handled by [<code class="inline-code">context-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/intelligence/context-engine.ts):</p>
+<ul class="doc-list">
+  <li>Resolves implicit pronouns (<em>"Why did it pick that node?"</em> $\rightarrow$ looks up <code class="inline-code">moment.semanticFocus.entityIds[0]</code>).</li>
+  <li>Reconstructs delta context between step $N-1$ and step $N$.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">30. COUNTERFACTUAL WHAT-IF BRANCHING ENGINE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Implemented in [<code class="inline-code">branch-manager.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/intelligence/branch-manager.ts) and [<code class="inline-code">counterfactual-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/counterfactual-engine.ts):</p>
+<ul class="doc-list">
+  <li>User asks: <em>"What if edge C -> D had weight 1 instead of 8?"</em></li>
+  <li>Clones current semantic state into an isolated branch (<code class="inline-code">branchId = "branch-xyz"</code>).</li>
+  <li>Re-executes algorithm forward from current step.</li>
+  <li>Mounts branch scene directly on Excalidraw.</li>
+  <li>Exiting branch restores main timeline without reloading lesson.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">31. HISTORY, STATE IMMUTABILITY, & SESSION MEMORY <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<ul class="doc-list">
+  <li>Semantic states are stored as immutable snapshots in <code class="inline-code">SemanticWorld.states</code>.</li>
+  <li>Timeline scrubber simply points <code class="inline-code">currentStepIndex</code> to pre-calculated snapshots.</li>
+  <li>No history is stored as canvas element duplicates.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">32. FRONTEND ARCHITECTURE & REACT COMPONENT HIERARCHY <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<pre class="code-block language-mermaid"><code>flowchart TD
+    App[App.tsx] --&gt; TeachingAgent[AITeachingAgent.tsx]
+    TeachingAgent --&gt; Header[CognoraHeader.tsx]
+    TeachingAgent --&gt; CanvasArea[Excalidraw Core Stage]
+    TeachingAgent --&gt; Toolbar[CognoraDrawingToolbar.tsx]
+    TeachingAgent --&gt; TimelineUI[CognoraTimeline.tsx]
+    TeachingAgent --&gt; ComposerUI[CognoraAIComposer.tsx]
+    TeachingAgent --&gt; PanelUI[CognoraContextualPanel.tsx]
+    TeachingAgent --&gt; OrbUI[CognoraOrb.tsx WebGL]
+    TeachingAgent --&gt; CalloutUI[SemanticTeachingCallout.tsx]
+    TeachingAgent --&gt; Zoom[CognoraZoomControls.tsx]
+    TeachingAgent --&gt; Palette[CognoraToolsPalette.tsx]</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">33. BACKEND SERVER ARCHITECTURE & VITE MIDDLEWARE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">The backend is zero-dependency, zero-CORS middleware mounted directly into Vite via [<code class="inline-code">vite-plugin.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/backend/vite-plugin.ts) and [<code class="inline-code">server-handler.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/backend/server-handler.ts):</p>
+<ul class="doc-list">
+  <li><strong><code class="inline-code">/api/ai/teach</code></strong>: Main generation endpoint.</li>
+  <li><strong><code class="inline-code">/api/ai/provider-info</code></strong>: Active model configuration reporting.</li>
+  <li><strong><code class="inline-code">/api/voice/synthesize</code></strong>: Chatterbox voice bridge.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">34. COMPREHENSIVE DATA FLOW MAPS</h1>
+<h3 class="doc-h3">34.1 Normal Lesson Generation Flow</h3>
+<pre class="code-block language-text"><code>User Prompt -&gt; AIComposer -&gt; /api/ai/teach -&gt; ProviderRouter -&gt; NvidiaProvider
+  -&gt; Nemotron API -&gt; ResponseExtractor -&gt; DSLValidator -&gt; OrderedOperationEngine
+  -&gt; CorrectnessEngine -&gt; TransformationTimeline -&gt; PlaybackController -&gt; Canvas</code></pre>
+<h3 class="doc-h3">34.2 Deterministic Slash Command Flow</h3>
+<pre class="code-block language-text"><code>User /command -&gt; CommandParser -&gt; CommandRegistry -&gt; SemanticCommandRunner
+  -&gt; Mutate SemanticWorld -&gt; Recompile Moment -&gt; SceneReconciler -&gt; Excalidraw (0ms)</code></pre>
+<h3 class="doc-h3">34.3 Counterfactual What-If Flow</h3>
+<pre class="code-block language-text"><code>What-if query -&gt; BranchManager -&gt; Clone State -&gt; Mutate Edge -&gt; Recompute Invariants
+  -&gt; Compile Branch Moments -&gt; Mount to Canvas -&gt; User exits -&gt; Restore Main State</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">35. SUBSYSTEM ERROR ISOLATION & RESILIENCE ARCHITECTURE <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<p class="doc-p">Cognora guarantees that a failure in one subsystem never crashes the entire application:</p>
+<ul class="doc-list">
+  <li><strong>Voice Failure</strong>: If browser speech synthesis or Chatterbox fails, visual timeline playback continues unimpeded.</li>
+  <li><strong>AI Failure</strong>: If NVIDIA Nemotron times out or returns malformed JSON, system returns structured HTTP error and suggests local mock lessons.</li>
+  <li><strong>Layout Failure</strong>: If layout crossing reduction encounters degenerate graphs, system falls back to circular distribution.</li>
+  <li><strong>React Boundary</strong>: Handled by [<code class="inline-code">CognoraErrorBoundary.tsx</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/components/CognoraErrorBoundary.tsx).</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">36. PERFORMANCE BUDGETS & COMPUTATIONAL BOTTLENECKS</h1>
+<ul class="doc-list">
+  <li><strong>Timeline Step Transition</strong>: Budget $\le 16\text{ms}$ (60 FPS local execution).</li>
+  <li><strong>Layout Calculation</strong>: Budget $\le 50\text{ms}$ for graphs with $\le 50$ nodes.</li>
+  <li><strong>AI Round-Trip</strong>: Budget $\le 10\text{s}$ for initial lesson compilation.</li>
+  <li><strong>Canvas Rendering</strong>: Uses Excalidraw canvas double-buffering and dirty rect updates.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">37. SECURITY ARCHITECTURE & SECRET BOUNDARY ISOLATION <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h1>
+<ul class="doc-list">
+  <li><strong>API Keys</strong>: <code class="inline-code">NVIDIA_API_KEY</code> is loaded strictly on the server side via <code class="inline-code">.env.local</code>. It is <strong>never bundled</strong> into client-facing Vite bundles or sent over the wire.</li>
+  <li><strong>Sanitization</strong>: All user inputs undergo length checks ($\le 4000$ chars) and JSON payload restrictions ($\le 1\text{MB}$).</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">38. COMPLETE REPOSITORY DIRECTORY MAP</h1>
+<pre class="code-block language-text"><code>codenora-monorepo/
+├── codenora-app/                         # Primary application package
+│   ├── ai/                              # Cognora Core Visual &amp; Pedagogical Engine
+│   │   ├── backend/                     # Server handlers, Vite plugin, LLM providers
+│   │   ├── commands/                    # Universal command system &amp; parsers
+│   │   ├── domain-knowledge/            # Domain-specific curriculum knowledge
+│   │   ├── intelligence/                # TeacherBrain, StudentState, BranchManager
+│   │   ├── visual-grammar/              # Domain grammars (Tree, Array, Graph)
+│   │   ├── visual-primitives/           # Visual design tokens, tables, compound shapes
+│   │   ├── visual-reasoning/            # Visual Reasoning 5.0 (Composition, Routing, Labels)
+│   │   ├── voice/                       # SpeechDirector, BrowserSpeechProvider, TTS
+│   │   ├── authoritative-model.ts       # AuthoritativeSemanticModel interface
+│   │   ├── correctness-engine.ts        # 16-point invariant validation pipeline
+│   │   ├── layout-engine.ts             # Deterministic spatial layout engine
+│   │   ├── ordered-operation-engine.ts  # Operation un-collapsing &amp; synthesis
+│   │   ├── scene-reconciler.ts          # Excalidraw element diffing &amp; reconciliation
+│   │   └── teaching-moment.ts           # Authoritative TeachingMoment definition
+│   ├── components/                      # React UI &amp; Canvas Stage components
+│   │   ├── CognoraOrb/                  # WebGL Liquid Glass Orb implementation
+│   │   ├── AITeachingAgent.tsx          # Main workspace orchestrator component
+│   │   ├── CognoraAIComposer.tsx        # Bottom prompt dock with slash autocomplete
+│   │   ├── CognoraContextualPanel.tsx   # Educational Inspector panel
+│   │   ├── CognoraTimeline.tsx          # Step navigation &amp; scrubbing slider
+│   │   └── SemanticTeachingCallout.tsx  # Dynamic floating callout with leader line
+│   └── tests/                           # 73 Vitest test suites
+├── packages/                            # Excalidraw core monorepo packages
+│   ├── common/                          # Shared utilities
+│   ├── element/                         # Excalidraw element geometry &amp; primitives
+│   ├── excalidraw/                      # Core canvas component &amp; rendering engine
+│   ├── fractional-indexing/             # Ordering algorithms
+│   ├── laser-pointer/                   # Real-time pointer gestures
+│   ├── math/                            # 2D matrix, vector, and polygon geometry
+│   └── utils/                           # General helper functions
+├── docs/                                # Technical documentation &amp; PDF artifacts
+└── package.json                         # Root yarn workspace configuration</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">39. EXHAUSTIVE FILE-BY-FILE ARCHITECTURAL MATRIX</h1>
+<div class="table-container"><table>
+  <tr>
+    <th>File Path</th>
+    <th>Core Responsibility</th>
+    <th>Key Inputs</th>
+    <th>Key Outputs</th>
+    <th>Dependents</th>
+    <th>Status</th>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/teaching-moment.ts</code></td>
+    <td>Defines <code class="inline-code">TeachingMoment</code> interface</td>
+    <td>SceneState, prose</td>
+    <td>Moment contract</td>
+    <td>All subsystems</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/authoritative-model.ts</code></td>
+    <td>Single source of truth model</td>
+    <td>Problem, World, Rules</td>
+    <td>Validated model</td>
+    <td>CorrectnessEngine</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/correctness-engine.ts</code></td>
+    <td>16-point invariant validation</td>
+    <td>Raw transformations</td>
+    <td>Validated model</td>
+    <td>Timeline compiler</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/ordered-operation-engine.ts</code></td>
+    <td>Uncollapses coarse plans into steps</td>
+    <td>Operations, Prompt</td>
+    <td>Synthesized steps</td>
+    <td>Transformation timeline</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/layout-engine.ts</code></td>
+    <td>Generates 2D layout coordinates</td>
+    <td>Semantic entities</td>
+    <td>BoundingBox positions</td>
+    <td>Scene reconciler</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/visual-reasoning/connector-router.ts</code></td>
+    <td>Routes clean collision-free edges</td>
+    <td>Node bounds, Obstacles</td>
+    <td>CandidateRoute</td>
+    <td>Scene reconciler</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/visual-reasoning/relationship-label-planner.ts</code></td>
+    <td>Places edge weight labels</td>
+    <td>Route, Node bounds</td>
+    <td>Label placement</td>
+    <td>Scene reconciler</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/visual-reasoning/visual-composition-planner.ts</code></td>
+    <td>Determines visual strategy</td>
+    <td>SemanticWorld</td>
+    <td>VisualCompositionPlan</td>
+    <td>Element planner</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/scene-reconciler.ts</code></td>
+    <td>Reconciles Excalidraw elements</td>
+    <td>Visual elements</td>
+    <td>Element mutations</td>
+    <td>Excalidraw API</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/lesson-playback-controller.ts</code></td>
+    <td>Manages 0ms local step playback</td>
+    <td>TeachingMoments</td>
+    <td>Playback state</td>
+    <td>Timeline, Panel</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/backend/server-handler.ts</code></td>
+    <td>Dispatches <code class="inline-code">/api/ai/teach</code></td>
+    <td>Incoming HTTP req</td>
+    <td>Validated response</td>
+    <td>Vite server</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/backend/nvidia-provider.ts</code></td>
+    <td>NVIDIA Nemotron-3 Ultra driver</td>
+    <td>TeachingRequest</td>
+    <td>Raw LLM stream</td>
+    <td>ProviderRouter</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/backend/dsl-validator.ts</code></td>
+    <td>Visual DSL schema validation</td>
+    <td>Raw parsed JSON</td>
+    <td>Validated DSL</td>
+    <td>ServerHandler</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/voice/speech-director.ts</code></td>
+    <td>Sentence-level narration chunking</td>
+    <td>Moment narration</td>
+    <td>Text segments</td>
+    <td>VoiceEngine</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">ai/voice/browser-speech-provider.ts</code></td>
+    <td>Native SpeechSynthesis provider</td>
+    <td>Speech segments</td>
+    <td>Browser audio</td>
+    <td>VoiceEngine</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">components/AITeachingAgent.tsx</code></td>
+    <td>Main Stage layout orchestrator</td>
+    <td>User events</td>
+    <td>Stage view</td>
+    <td>App.tsx</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">components/CognoraContextualPanel.tsx</code></td>
+    <td>Educational Inspector view</td>
+    <td>Active moment</td>
+    <td>Tabbed inspector</td>
+    <td>AITeachingAgent</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">components/CognoraOrb/CognoraOrb.tsx</code></td>
+    <td>3D WebGL Liquid Glass Sphere</td>
+    <td>Voice/Audio state</td>
+    <td>WebGL canvas</td>
+    <td>Stage Layout</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">components/CognoraTimeline.tsx</code></td>
+    <td>Interactive timeline slider</td>
+    <td>Playback state</td>
+    <td>Step navigation</td>
+    <td>Stage Layout</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><code class="inline-code">components/CognoraAIComposer.tsx</code></td>
+    <td>Pill prompt dock with slash cmds</td>
+    <td>Keystrokes</td>
+    <td>Dispatched prompts</td>
+    <td>Stage Layout</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+</table></div>
+<hr class="section-divider"/>
+<h1 class="doc-h1">40. SUBSYSTEM DEPENDENCY & COUPLING ARCHITECTURE</h1>
+<pre class="code-block language-mermaid"><code>flowchart TD
+    subgraph Layer_1_UI ["1. Presentation Layer"]
+        AITeachingAgent --&gt; CognoraContextualPanel
+        AITeachingAgent --&gt; CognoraTimeline
+        AITeachingAgent --&gt; CognoraAIComposer
+        AITeachingAgent --&gt; CognoraOrb
+    end
+
+    subgraph Layer_2_Orchestration ["2. Local Orchestration Layer"]
+        AITeachingAgent --&gt; LessonPlaybackController
+        LessonPlaybackController --&gt; SceneReconciler
+        LessonPlaybackController --&gt; VoiceExplanationEngine
+    end
+
+    subgraph Layer_3_VisualReasoning ["3. Visual Reasoning &amp; Layout Layer"]
+        SceneReconciler --&gt; LayoutEngine
+        SceneReconciler --&gt; ConnectorRouter
+        SceneReconciler --&gt; RelationshipLabelPlanner
+        LayoutEngine --&gt; VisualCompositionPlanner
+    end
+
+    subgraph Layer_4_SemanticAuthority ["4. Semantic Authority &amp; Correctness Layer"]
+        LessonPlaybackController --&gt; TransformationTimeline
+        TransformationTimeline --&gt; CorrectnessEngine
+        TransformationTimeline --&gt; OrderedOperationEngine
+        CorrectnessEngine --&gt; AuthoritativeModel
+        CorrectnessEngine --&gt; SemanticWorld
+    end
+
+    subgraph Layer_5_Backend ["5. AI Backend &amp; Providers Layer"]
+        AITeachingAgent --&gt;|HTTP /api/ai/teach| ServerHandler
+        ServerHandler --&gt; ProviderRouter
+        ProviderRouter --&gt; NvidiaNemotronProvider
+        ServerHandler --&gt; DSLValidator
+    end</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">41. TESTING ARCHITECTURE & VERIFICATION STRATEGY</h1>
+<p class="doc-p">Cognora maintains <strong>73 automated test suites</strong> in <code class="inline-code">codenora-app/tests/</code> executed via Vitest:</p>
+<ul class="doc-list">
+  <li><strong>Correctness Tests</strong>: <code class="inline-code">avl-correctness.test.ts</code>, <code class="inline-code">authoritative-world-orchestration.test.ts</code></li>
+  <li><strong>Visual & Layout Tests</strong>: <code class="inline-code">graph-visual-layout.test.ts</code>, <code class="inline-code">universal-semantic-layout.test.ts</code>, <code class="inline-code">layout-stability.test.ts</code></li>
+  <li><strong>Voice & Multimodal Tests</strong>: <code class="inline-code">browser-speech-provider.test.ts</code>, <code class="inline-code">voice-engine.test.ts</code>, <code class="inline-code">cognora-orb.test.ts</code></li>
+  <li><strong>Command & Intent Tests</strong>: <code class="inline-code">commands.test.ts</code>, <code class="inline-code">universal-commands.test.ts</code>, <code class="inline-code">intent-router.test.ts</code></li>
+  <li><strong>Backend & Provider Tests</strong>: <code class="inline-code">teaching-backend.test.ts</code>, <code class="inline-code">nvidia-provider.test.ts</code>, <code class="inline-code">dsl-validator.test.ts</code></li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">42. DEPLOYMENT ARCHITECTURE & OPERATIONAL ENVIRONMENT</h1>
+<h3 class="doc-h3">42.1 Development Mode <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<ul class="doc-list">
+  <li>Run: <code class="inline-code">yarn start</code> (executes <code class="inline-code">yarn --cwd ./codenora-app start</code>).</li>
+  <li>Vite dev server starts on port <code class="inline-code">3000</code> with hot-module reloading and embedded AI middleware on <code class="inline-code">/api/ai/*</code>.</li>
+</ul>
+<h3 class="doc-h3">42.2 Production Build <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></h3>
+<ul class="doc-list">
+  <li>Run: <code class="inline-code">yarn build</code> (compiles all packages and runs <code class="inline-code">vite build</code>).</li>
+  <li>Outputs static single-page application into <code class="inline-code">codenora-app/build/</code>.</li>
+  <li>In production, <code class="inline-code">/api/ai/*</code> endpoints must be proxied to a Node.js runtime executing <code class="inline-code">server-handler.ts</code>.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">43. KNOWN LIMITATIONS & TECHNICAL DEBT AUDIT</h1>
+<div class="table-container"><table>
+  <tr>
+    <th>Severity</th>
+    <th>Subsystem</th>
+    <th>Issue Description</th>
+    <th>Current Mitigation</th>
+    <th>Permanent Solution</th>
+  </tr>
+  <tr>
+    <td><strong>MEDIUM</strong></td>
+    <td>Layout Engine</td>
+    <td>Large dense graphs ($N > 30$) can experience crossing congestion.</td>
+    <td>Barycentric sorting and generous clearances.</td>
+    <td>Integrate WebAssembly-compiled Sugiyama / Force-directed layout.</td>
+  </tr>
+  <tr>
+    <td><strong>MEDIUM</strong></td>
+    <td>Voice Engine</td>
+    <td>Python Chatterbox service requires separate manual launch script.</td>
+    <td>Defaulted to native <code class="inline-code">BrowserSpeechProvider</code>.</td>
+    <td>Containerize Chatterbox as sidecar or cloud microservice.</td>
+  </tr>
+  <tr>
+    <td><strong>LOW</strong></td>
+    <td>Excalidraw</td>
+    <td>Deep component tree re-renders during active canvas pan/zoom.</td>
+    <td>Memoized hooks and throttled zoom listeners.</td>
+    <td>Implement fine-grained Jotai atomic subscriptions.</td>
+  </tr>
+</table></div>
+<hr class="section-divider"/>
+<h1 class="doc-h1">44. CURRENT IMPLEMENTATION VS INTENDED ARCHITECTURE MATRIX</h1>
+<div class="table-container"><table>
+  <tr>
+    <th>Subsystem Dimension</th>
+    <th>Current Implementation <code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></th>
+    <th>Intended Future Architecture <code class="inline-code"><span class="badge badge-planned">PLANNED</span></code></th>
+    <th>Status</th>
+  </tr>
+  <tr>
+    <td><strong>Primary AI Provider</strong></td>
+    <td>NVIDIA Nemotron-3 Ultra via REST API</td>
+    <td>Streaming token reasoning with speculative local draft models</td>
+    <td><strong><code class="inline-code"><span class="badge badge-partial">PARTIALLY IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><strong>Voice Narration</strong></td>
+    <td>Native browser <code class="inline-code">SpeechSynthesis</code> with sentence chunking</td>
+    <td>Neural low-latency WebRTC streaming voice with real-time pitch</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><strong>Visual Reasoning</strong></td>
+    <td>Visual Reasoning Engine 5.0 (Heuristic + Barycentric)</td>
+    <td>Learned neural semiotic graph layout models</td>
+    <td><strong><code class="inline-code"><span class="badge badge-implemented">IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><strong>What-If Exploration</strong></td>
+    <td>Local scene graph cloning and in-place timeline mounting</td>
+    <td>Multi-timeline divergent canvas trees with visual diff merge</td>
+    <td><strong><code class="inline-code"><span class="badge badge-partial">PARTIALLY IMPLEMENTED</span></code></strong></td>
+  </tr>
+  <tr>
+    <td><strong>Deployment</strong></td>
+    <td>Vite SPA + Node.js Connect Middleware</td>
+    <td>Edge-deployed serverless functions + WebAssembly execution core</td>
+    <td><strong><code class="inline-code"><span class="badge badge-partial">PARTIALLY IMPLEMENTED</span></code></strong></td>
+  </tr>
+</table></div>
+<hr class="section-divider"/>
+<h1 class="doc-h1">45. DEVELOPER MODIFICATION & EXTENSION GUIDE</h1>
+<p class="doc-p">A practical reference for engineers modifying Cognora:</p>
+<h3 class="doc-h3">45.1 Adding a New Visual Primitive</h3>
+<p class="doc-p">1. Register primitive token in [<code class="inline-code">visual-primitives/design-tokens.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-primitives/design-tokens.ts).</p>
+<p class="doc-p">2. Add capability descriptor in [<code class="inline-code">visual-capabilities.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-capabilities.ts).</p>
+<p class="doc-p">3. Map semantic role in [<code class="inline-code">visual-capability-registry.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-reasoning/visual-capability-registry.ts).</p>
+<p class="doc-p">4. Implement Excalidraw renderer in [<code class="inline-code">visual-renderer.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/visual-renderer.ts).</p>
+<h3 class="doc-h3">45.2 Adding a New Slash Command</h3>
+<p class="doc-p">1. Define command metadata and arguments in [<code class="inline-code">command-registry.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/commands/command-registry.ts).</p>
+<p class="doc-p">2. If deterministic, implement semantic execution in [<code class="inline-code">semantic-command-runner.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/commands/semantic-command-runner.ts).</p>
+<p class="doc-p">3. Add autocomplete keywords in <code class="inline-code">command-registry.ts</code>.</p>
+<p class="doc-p">4. Add verification test in <code class="inline-code">codenora-app/tests/commands.test.ts</code>.</p>
+<h3 class="doc-h3">45.3 Adding a New Invariant Check</h3>
+<p class="doc-p">1. Add rule definition in [<code class="inline-code">rules-invariants.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/rules-invariants.ts).</p>
+<p class="doc-p">2. Wire evaluation into [<code class="inline-code">correctness-engine.ts</code>](file:///c:/Users/venka/Desktop/excalidraw/codenora-app/ai/correctness-engine.ts).</p>
+<p class="doc-p">3. Surface violation code in <code class="inline-code">CorrectnessValidationReport</code>.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">46. HOW TO ADD A NEW DOMAIN OR ALGORITHM</h1>
+<p class="doc-p">Follow this standard pipeline:</p>
+<pre class="code-block language-text"><code>1. Formal Problem Definition (problem-model.ts)
+   -&gt; 2. Semantic World Invariants (rules-invariants.ts)
+      -&gt; 3. Ordered Operation Synthesis (ordered-operation-engine.ts)
+         -&gt; 4. Visual Composition Mapping (visual-composition-planner.ts)
+            -&gt; 5. Layout Engine Geometry (layout-engine.ts)
+               -&gt; 6. Automated Unit Tests (tests/&lt;domain&gt;.test.ts)</code></pre>
+<hr class="section-divider"/>
+<h1 class="doc-h1">47. CORE ARCHITECTURAL INVARIANTS</h1>
+<p class="doc-p">1. <strong>Semantic Over Geometric</strong>: Coordinates exist only to serve semantic relationships.</p>
+<p class="doc-p">2. <strong>Correctness Before Presentation</strong>: A beautiful diagram of an incorrect algorithm is a critical system defect.</p>
+<p class="doc-p">3. <strong>AI for Understanding, Code for Truth</strong>: Never trust an LLM to balance a tree or find a shortest path; verify with code.</p>
+<p class="doc-p">4. <strong>Zero-Lag Local Playback</strong>: Once a lesson is compiled, student scrubbing must execute at $0\text{ms}$ with zero network calls.</p>
+<p class="doc-p">5. <strong>Element Conservation</strong>: Never destroy and recreate canvas elements when a property transition suffices.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">48. END-TO-END WALKTHROUGH TRACE: DIJKSTRA ALGORITHM</h1>
+<p class="doc-p">Trace of user submitting: <em>"Dijkstra algorithm on a 5-node graph from A"</em>:</p>
+<p class="doc-p">1. <code class="inline-code">CognoraAIComposer.tsx</code>: Input captured $\rightarrow$ POST <code class="inline-code">/api/ai/teach</code>.</p>
+<p class="doc-p">2. <code class="inline-code">server-handler.ts</code>: Validates request, calls <code class="inline-code">NvidiaNemotronProvider</code>.</p>
+<p class="doc-p">3. <code class="inline-code">prompts.ts</code>: Nemotron receives Dijkstra pedagogical prompt $\rightarrow$ returns JSON DSL with vertices $A, B, C, D, E$ and weighted edges.</p>
+<p class="doc-p">4. <code class="inline-code">ordered-operation-engine.ts</code>: Synthesizes progressive relaxation steps: State 0 (distances $\infty$), visiting $A$, relaxing $C$ ($dist=2$), relaxing $B$ ($dist=4$), visiting $C$, relaxing $B$ ($dist=3$), visiting $B$, relaxing $D$ ($dist=8$), final shortest-path tree.</p>
+<p class="doc-p">5. <code class="inline-code">visual-composition-planner.ts</code>: Detects multi-parent converging paths and weighted edges $\rightarrow$ selects <code class="inline-code">"network"</code> strategy.</p>
+<p class="doc-p">6. <code class="inline-code">layout-engine.ts</code>: Computes topological tiers: $A$ at Level 0, $B, C$ at Level 1, $D, E$ at Level 2. Applies barycentric crossing reduction.</p>
+<p class="doc-p">7. <code class="inline-code">connector-router.ts</code>: Connects circular perimeters with radial vectors.</p>
+<p class="doc-p">8. <code class="inline-code">relationship-label-planner.ts</code>: Positions weight labels ($4, 2, 1, 8, 10$) in corridors without touching nodes.</p>
+<p class="doc-p">9. <code class="inline-code">scene-reconciler.ts</code>: Mounts nodes and connectors onto Excalidraw with stable IDs.</p>
+<p class="doc-p">10. <code class="inline-code">AITeachingAgent.tsx</code>: Mounts timeline; <code class="inline-code">BrowserSpeechProvider</code> speaks sentence 1: <em>"We begin at source vertex A with initial distance zero..."</em>.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">49. END-TO-END WALKTHROUGH TRACE: AVL TREE BALANCING</h1>
+<p class="doc-p">Trace of user submitting: <em>"Insert 10, 20, 30 into an AVL tree"</em>:</p>
+<p class="doc-p">1. <code class="inline-code">ordered-operation-engine.ts</code> detects AVL insertion sequence $\rightarrow$ synthesizes 4 explicit teaching moments.</p>
+<p class="doc-p">2. Moment 1: Insert 10 (Root).</p>
+<p class="doc-p">3. Moment 2: Insert 20 (Right child).</p>
+<p class="doc-p">4. Moment 3: Insert 30 (Right child of 20). Root 10 violates balance factor ($BF = -2$).</p>
+<p class="doc-p">5. Moment 4: Left rotation at 10. Node 20 promoted to root; 10 becomes left child. Equilibrium restored ($BF=0$). Previous tree elements purged from canvas.</p>
+<p class="doc-p">6. <code class="inline-code">CognoraContextualPanel.tsx</code>: Displays balance factor equation: $BF(10) = h(L) - h(R) = 0 - 2 = -2 \implies \text{Left Rotation Required}$.</p>
+<hr class="section-divider"/>
+<h1 class="doc-h1">50. COGNORA TECHNICAL GLOSSARY</h1>
+<ul class="doc-list">
+  <li><strong>Authoritative Semantic Model</strong>: The verified mathematical ground truth of a lesson.</li>
+  <li><strong>TeachingMoment</strong>: An immutable atomic step synchronizing canvas, voice, inspector, and callouts.</li>
+  <li><strong>Teacher Brain</strong>: The pedagogical decision engine governing cognitive load and step granularity.</li>
+  <li><strong>Semantic World</strong>: The state container holding semantic entities, relationships, and world versions.</li>
+  <li><strong>Visual Composition</strong>: The process of choosing a semiotic layout strategy (network, tree, pipeline, table).</li>
+  <li><strong>Scene Reconciliation</strong>: The diffing algorithm that mutates Excalidraw canvas elements in place.</li>
+  <li><strong>Speech Director</strong>: The voice preprocessor that splits narrative text into sentence-level utterances.</li>
+  <li><strong>CognoraOrb</strong>: The 3D liquid glass WebGL presence reflecting system state and voice audio.</li>
+  <li><strong>Entity Conservation</strong>: The invariant that entity IDs remain persistent across transformations.</li>
+  <li><strong>Counterfactual Branch</strong>: An isolated sandbox that allows exploring what-if scenarios without corrupting the main lesson timeline.</li>
+</ul>
+<hr class="section-divider"/>
+<h1 class="doc-h1">51. SYSTEM AT A GLANCE: DEFINITIVE ARCHITECTURE MAP</h1>
+
+
+</body>
+</html>

@@ -110,13 +110,13 @@ export class VisualCompositionPlanner {
         );
       });
 
-    // 3. Tree hierarchy check
-    const hasTreeHierarchy =
+    // 3. Tree hierarchy check (strictly single-parent acyclic without cross-edges)
+    const hasTreeIndicators =
       entityTypes.has("treenode") ||
-      entityRoles.has("root") ||
       relTypes.has("leftof") ||
       relTypes.has("rightof") ||
-      relTypes.has("parentof");
+      relTypes.has("parentof") ||
+      relTypes.has("childof");
 
     // 4. Sequential list / array check
     const hasSequence =
@@ -133,7 +133,7 @@ export class VisualCompositionPlanner {
       entityRoles.has("top") ||
       entityRoles.has("stack-frame");
 
-    // 6. Cyclic / closed loop check
+    // 6. Degree analysis, cycles, and graph topology check
     const inDegrees = new Map<string, number>();
     const outDegrees = new Map<string, number>();
     for (const e of entities) {
@@ -152,6 +152,61 @@ export class VisualCompositionPlanner {
       entities.length >= 3 &&
       Array.from(inDegrees.values()).every((d) => d >= 1) &&
       Array.from(outDegrees.values()).every((d) => d >= 1);
+
+    // Count nodes with in-degree > 1 (converging/multi-parent paths)
+    const multiParentCount = Array.from(inDegrees.values()).filter((d) => d > 1).length;
+
+    // Check for bidirectional / reverse edges
+    let hasBidirectionalEdges = false;
+    const edgeSet = new Set<string>();
+    for (const r of relationships) {
+      const fwd = `${r.source}->${r.target}`;
+      const rev = `${r.target}->${r.source}`;
+      if (edgeSet.has(rev)) {
+        hasBidirectionalEdges = true;
+      }
+      edgeSet.add(fwd);
+    }
+
+    // A true tree must be strictly single-parent and acyclic
+    const hasTreeHierarchy =
+      hasTreeIndicators &&
+      multiParentCount === 0 &&
+      !hasBidirectionalEdges &&
+      !isCycle;
+
+    // General Graph / Network topology detection from relationships and semantic structure
+    const hasExplicitGraphEntities =
+      entityTypes.has("graphnode") ||
+      entityTypes.has("vertex") ||
+      entityRoles.has("graph-node") ||
+      entityRoles.has("vertex");
+
+    const hasWeightedEdges = relationships.some(
+      (r) =>
+        r.properties?.weight !== undefined ||
+        Boolean(r.label && !isNaN(Number(r.label)) && r.label.trim() !== ""),
+    );
+
+    const hasGraphRelationships =
+      relTypes.has("connects") ||
+      relTypes.has("edge") ||
+      relTypes.has("adjacent") ||
+      relTypes.has("path") ||
+      relTypes.has("transition");
+
+    const hasGraphTopology =
+      !hasTreeHierarchy &&
+      !hasSequence &&
+      !hasTables &&
+      entities.length >= 3 &&
+      relationships.length >= 2 &&
+      (hasExplicitGraphEntities ||
+        hasWeightedEdges ||
+        hasBidirectionalEdges ||
+        multiParentCount >= 1 ||
+        hasGraphRelationships ||
+        (relationships.length >= entities.length && !isCycle));
 
     // 7. Decision / Branching check
     const hasDecisions =
@@ -212,6 +267,13 @@ export class VisualCompositionPlanner {
       rankAxis = "vertical";
       rationale =
         "Identified hierarchical tree topology: composing vertical level ranks with child connectors.";
+    } else if (hasGraphTopology) {
+      primaryStrategy = "network";
+      secondaryStrategies.push("structural", "causal");
+      readingDirection = "left_to_right";
+      rankAxis = "horizontal";
+      rationale =
+        "Identified network graph topology: composing topology-aware 2D graph layout with crossing minimization.";
     } else if (isCycle) {
       primaryStrategy = "cycle";
       secondaryStrategies.push("process", "causal");

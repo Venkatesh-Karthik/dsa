@@ -63,7 +63,7 @@ export class OrderedOperationEngine {
 
     // 3. Check for Positional Linked List Insertion
     if (
-      corpus.includes("between") &&
+      (corpus.includes("between") || corpus.includes("linked list") || /->|→/.test(prompt)) &&
       (parsedOperations.some((op) => op.op === "insert") ||
         corpus.includes("insert"))
     ) {
@@ -74,7 +74,21 @@ export class OrderedOperationEngine {
 
     // 4. Check for Dijkstra specifically
     if (corpus.includes("dijkstra") || corpus.includes("shortest path")) {
-      if (!existingSteps || existingSteps.length < 4) {
+      const hasRelaxSteps =
+        existingSteps &&
+        existingSteps.some((s: any) =>
+          /\b(relax|relaxation|distance table|finalized)\b/i.test(
+            `${s.title || ""} ${s.explanation || ""}`,
+          ),
+        );
+      const edgeMatches = prompt.match(
+        /([A-Za-z0-9_-]+)\s*(->|→|-)\s*([A-Za-z0-9_-]+)/g,
+      );
+      const minRequired =
+        edgeMatches && edgeMatches.length >= 4
+          ? Math.max(8, edgeMatches.length + 2)
+          : 6;
+      if (!hasRelaxSteps || !existingSteps || existingSteps.length < minRequired) {
         return true;
       }
     }
@@ -88,6 +102,32 @@ export class OrderedOperationEngine {
       parsedOperations.some((op) => op.op === "partition" || op.op === "sort")
     ) {
       if (!existingSteps || existingSteps.length < 6) {
+        return true;
+      }
+    }
+
+    // 6. Check for AVL / Self-Balancing Tree operations
+    if (
+      corpus.includes("avl") ||
+      (corpus.includes("balance") && corpus.includes("tree"))
+    ) {
+      const hasRotationSteps =
+        existingSteps &&
+        existingSteps.some((s: any) =>
+          /\b(rotat|rotate|rotation|imbalance|balance factor)\b/i.test(
+            `${s.title || ""} ${s.explanation || ""}`,
+          ),
+        );
+      const promptNums = prompt.match(/\b\d+\b/g);
+      const expectedOperations = Math.max(
+        parsedOperations.length,
+        promptNums ? promptNums.length : 0,
+      );
+      if (
+        !hasRotationSteps ||
+        !existingSteps ||
+        existingSteps.length < Math.max(expectedOperations, 5)
+      ) {
         return true;
       }
     }
@@ -175,7 +215,7 @@ export class OrderedOperationEngine {
 
     // 3. Check for Positional Linked List Insertion
     if (
-      corpus.includes("between") &&
+      (corpus.includes("between") || corpus.includes("linked list") || /->|→/.test(prompt)) &&
       (parsedOperations.some((op) => op.op === "insert") ||
         corpus.includes("insert"))
     ) {
@@ -237,7 +277,12 @@ export class OrderedOperationEngine {
       prompt.includes("->") ||
       prompt.includes("→")
     ) {
-      return this.synthesizeLinearSteps(concept, parsedOperations, inputs, prompt);
+      return this.synthesizeLinearSteps(
+        concept,
+        parsedOperations,
+        inputs,
+        prompt,
+      );
     }
 
     // 9. Universal General Operations Fallback
@@ -536,6 +581,36 @@ export class OrderedOperationEngine {
     const getBalance = (n?: TreeNode): number =>
       n ? getHeight(n.left) - getHeight(n.right) : 0;
 
+    const validateAVLTree = (): {
+      invalidNodes: number[];
+      balanceFailures: number[];
+    } => {
+      const invalidNodes: number[] = [];
+      const balanceFailures: number[] = [];
+      if (!root) {
+        return { invalidNodes, balanceFailures };
+      }
+
+      const checkNode = (n: TreeNode, minVal: number, maxVal: number) => {
+        if (n.value <= minVal || n.value >= maxVal) {
+          invalidNodes.push(n.value);
+        }
+        const bf = getBalance(n);
+        if (Math.abs(bf) > 1) {
+          balanceFailures.push(n.value);
+        }
+        if (n.left) {
+          checkNode(n.left, minVal, n.value);
+        }
+        if (n.right) {
+          checkNode(n.right, n.value, maxVal);
+        }
+      };
+
+      checkNode(root, -Infinity, Infinity);
+      return { invalidNodes, balanceFailures };
+    };
+
     // Helper to generate tree snapshot operations
     const emitTreeSnapshot = (
       activeNodeId?: string,
@@ -565,8 +640,29 @@ export class OrderedOperationEngine {
         }
       }
 
+      if (isAVL) {
+        const val = validateAVLTree();
+        console.info(
+          `[COGNORA][AVL][VALIDATION] root=${root.value} nodeCount=${
+            nodes.length
+          } height=${getHeight(root)} invalidNodes=${
+            val.invalidNodes.length
+          } balanceFailures=${val.balanceFailures.length}`,
+        );
+      }
+
       return [{ type: "create_tree", id: "tree-main", root: root.id, nodes }];
     };
+
+    // Step 0: Initial empty tree baseline
+    steps.push({
+      title: `Initial Empty ${isAVL ? "AVL Tree" : "Binary Search Tree"} Baseline`,
+      explanation: `Initial empty ${isAVL ? "AVL tree" : "BST"} baseline before inserting elements. Root pointer is null.`,
+      role: "setup",
+      isBaseline: true,
+      operations: [],
+      calculations: "root = null, height = 0",
+    });
 
     // Process operations in strict chronological order
     for (let opIdx = 0; opIdx < operations.length; opIdx++) {
@@ -1068,6 +1164,7 @@ export class OrderedOperationEngine {
     const steps: RawProposalStep[] = [];
     let vertices = ["A", "B", "C", "D", "E"];
     let startVertex = "A";
+    let targetVertex: string | undefined;
 
     let graphEdges = [
       { from: "A", to: "B", weight: 4 },
@@ -1080,30 +1177,42 @@ export class OrderedOperationEngine {
     ];
 
     if (prompt) {
-      const edgeMatches = [
-        ...prompt.matchAll(/([A-Za-z]+)\s*-\s*([A-Za-z]+)\s*\((\d+)\)/g),
-      ];
+      const edgeRegex =
+        /([A-Za-z0-9_-]+)\s*(->|→|-)\s*([A-Za-z0-9_-]+)\s*\((\d+)\)/g;
+      const edgeMatches = [...prompt.matchAll(edgeRegex)];
       if (edgeMatches.length > 0) {
         graphEdges = [];
         const vertexSet = new Set<string>();
         for (const m of edgeMatches) {
           const u = m[1].toUpperCase();
-          const v = m[2].toUpperCase();
-          const w = Number(m[3]);
+          const sep = m[2];
+          const v = m[3].toUpperCase();
+          const w = Number(m[4]);
           graphEdges.push({ from: u, to: v, weight: w });
-          graphEdges.push({ from: v, to: u, weight: w });
+          if (sep === "-") {
+            graphEdges.push({ from: v, to: u, weight: w });
+          }
           vertexSet.add(u);
           vertexSet.add(v);
         }
         vertices = Array.from(vertexSet).sort();
       }
-      const stMatch = prompt.match(/from\s+([A-Za-z]+)\s+to\s+([A-Za-z]+)/i);
-      if (stMatch) {
+      const stMatch = prompt.match(
+        /\b(?:start|starting|from)\s+(?:at\s+|from\s+)?([A-Za-z0-9_-]+)/i,
+      );
+      if (stMatch && vertices.includes(stMatch[1].toUpperCase())) {
         startVertex = stMatch[1].toUpperCase();
+      }
+      const endMatch = prompt.match(
+        /\b(?:to|destination|target|reconstruct.*?to)\s+([A-Za-z0-9_-]+)/i,
+      );
+      if (endMatch && vertices.includes(endMatch[1].toUpperCase())) {
+        targetVertex = endMatch[1].toUpperCase();
       }
     }
 
     const dist: Record<string, number> = {};
+    const predecessor: Record<string, string | undefined> = {};
     const visited = new Set<string>();
     for (const v of vertices) {
       dist[v] = v === startVertex ? 0 : Infinity;
@@ -1145,19 +1254,53 @@ export class OrderedOperationEngine {
         {
           type: "create_table",
           id: "dist-table",
+          tableName: "Distance Table",
           headers: ["Vertex", "Shortest Distance", "Status"],
           rows,
         },
       ];
     };
 
-    // Step 0: Initial state
+    // Step 0: True unrelaxed baseline — all distances = Infinity
+    const baselineNodes = vertices.map((v) => ({
+      id: `node-${v}`,
+      label: `${v} (∞)`,
+      value: Infinity,
+      highlight: undefined,
+    }));
+    const baselineEdges = graphEdges.map((e) => ({
+      id: `edge-${e.from}-${e.to}`,
+      from: `node-${e.from}`,
+      to: `node-${e.to}`,
+      label: String(e.weight),
+      weight: e.weight,
+    }));
+    const baselineRows = vertices.map((v) => [v, "∞", "Unvisited"]);
     steps.push({
-      title: `Initialize Dijkstra Shortest Path from Source ${startVertex}`,
-      explanation: `Set dist[${startVertex}] = 0 and all other vertices to Infinity. Priority queue holds (${startVertex}, 0). Distance table initialized.`,
+      title: `Dijkstra Baseline — Graph with ${vertices.length} Vertices, ${graphEdges.length} Edges`,
+      explanation: `Initial graph snapshot before Dijkstra begins. All vertex distances are ∞ (unrelaxed). No vertex has been visited. Source is ${startVertex}.`,
+      role: "setup",
+      isBaseline: true,
+      operations: [
+        { type: "create_graph", id: "graph-main", nodes: baselineNodes, edges: baselineEdges },
+        {
+          type: "create_table",
+          id: "dist-table",
+          tableName: "Distance Table",
+          headers: ["Vertex", "Shortest Distance", "Status"],
+          rows: baselineRows,
+        },
+      ],
+      calculations: `All dist[v] = ∞, visited = {}`,
+    });
+
+    // Step 1: Initialization — set source distance to 0
+    steps.push({
+      title: `Initialize Dijkstra — Set dist[${startVertex}] = 0`,
+      explanation: `Set dist[${startVertex}] = 0 (source vertex). All other vertices remain at ∞. Priority queue initialized with (${startVertex}, 0). The algorithm will always extract the vertex with minimum tentative distance.`,
       role: "setup",
       operations: emitGraphAndTable(startVertex),
-      calculations: `dist[A] = 0, dist[B..E] = inf`,
+      calculations: `dist[${startVertex}] = 0, dist[others] = ∞, PQ = {(${startVertex}, 0)}`,
     });
 
     // Progressive relaxation simulation
@@ -1194,6 +1337,7 @@ export class OrderedOperationEngine {
         if (newDist < dist[edge.to]) {
           const oldDist = dist[edge.to];
           dist[edge.to] = newDist;
+          predecessor[edge.to] = minV;
 
           steps.push({
             title: `Relax Edge (${edge.from} -> ${edge.to}, w = ${edge.weight})`,
@@ -1218,6 +1362,34 @@ export class OrderedOperationEngine {
       role: "proof",
       operations: emitGraphAndTable(),
     });
+
+    // Path reconstruction if a destination target was specified
+    if (
+      targetVertex &&
+      targetVertex !== startVertex &&
+      dist[targetVertex] !== undefined &&
+      dist[targetVertex] < Infinity
+    ) {
+      const path: string[] = [];
+      let curr: string | undefined = targetVertex;
+      while (curr) {
+        path.unshift(curr);
+        curr = predecessor[curr];
+      }
+      if (path.length > 1 && path[0] === startVertex) {
+        steps.push({
+          title: `Reconstruct Shortest Path from ${startVertex} to ${targetVertex}`,
+          explanation: `Backtracking predecessors from ${targetVertex} to source ${startVertex}: final optimal path is ${path.join(
+            " → ",
+          )} with total path distance ${dist[targetVertex]}.`,
+          role: "proof",
+          operations: emitGraphAndTable(targetVertex),
+          calculations: `Shortest Path: ${path.join(" → ")} (Distance = ${
+            dist[targetVertex]
+          })`,
+        });
+      }
+    }
 
     return steps;
   }
@@ -1313,7 +1485,9 @@ export class OrderedOperationEngine {
     if (elements.length > 0) {
       steps.push({
         title: `Initial ${concept}`,
-        explanation: `Baseline state of the ${concept} with initial elements: [${elements.join(", ")}].`,
+        explanation: `Baseline state of the ${concept} with initial elements: [${elements.join(
+          ", ",
+        )}].`,
         role: "baseline",
         operations: [
           {
@@ -1337,7 +1511,8 @@ export class OrderedOperationEngine {
         const idx = elements.indexOf(val);
         if (idx !== -1) {
           const pred = idx > 0 ? elements[idx - 1] : undefined;
-          const succ = idx + 1 < elements.length ? elements[idx + 1] : undefined;
+          const succ =
+            idx + 1 < elements.length ? elements[idx + 1] : undefined;
 
           // MOMENT A: Focus / Identify target element before mutating
           const focusElements = elements.map((v) => ({
@@ -1389,9 +1564,10 @@ export class OrderedOperationEngine {
               : `Element ${val} removed from ${concept}. Remaining elements shifted to maintain continuity.`;
 
           steps.push({
-            title: isLinkedList && pred !== undefined && succ !== undefined
-              ? `Remove Node ${val}: Pointer ${pred} -> ${succ}`
-              : `Remove Element ${val}`,
+            title:
+              isLinkedList && pred !== undefined && succ !== undefined
+                ? `Remove Node ${val}: Pointer ${pred} -> ${succ}`
+                : `Remove Element ${val}`,
             explanation: removalExplanation,
             role: "mechanism",
             operations: [
@@ -1405,13 +1581,19 @@ export class OrderedOperationEngine {
         }
       } else if (op.op === "insert" && !isNaN(val)) {
         const atIdx =
-          typeof op.index === "number" && op.index >= 0 && op.index <= elements.length
+          typeof op.index === "number" &&
+          op.index >= 0 &&
+          op.index <= elements.length
             ? op.index
             : elements.length;
         elements.splice(atIdx, 0, val);
         steps.push({
-          title: `Insert Element ${val}${typeof op.index === "number" ? ` at Index ${op.index}` : ""}`,
-          explanation: `Element ${val} added to ${concept}${typeof op.index === "number" ? ` at index ${op.index}` : ""}. Structure updated maintaining order.`,
+          title: `Insert Element ${val}${
+            typeof op.index === "number" ? ` at Index ${op.index}` : ""
+          }`,
+          explanation: `Element ${val} added to ${concept}${
+            typeof op.index === "number" ? ` at index ${op.index}` : ""
+          }. Structure updated maintaining order.`,
           role: "mechanism",
           operations: [
             {
@@ -1442,7 +1624,8 @@ export class OrderedOperationEngine {
                 id: structId,
                 elements: elements.map((v) => ({
                   value: v,
-                  highlight: v === a || v === b ? ("accent" as const) : undefined,
+                  highlight:
+                    v === a || v === b ? ("accent" as const) : undefined,
                 })),
               },
             ],
@@ -1925,18 +2108,40 @@ export class OrderedOperationEngine {
 
     // Extract inserted value and boundary values
     const betweenMatch = prompt.match(
-      /\b(?:insert(?:ing)?|add(?:ing)?)\s+(\d+|[A-Za-z0-9_-]+)\s+between\s+(\d+|[A-Za-z0-9_-]+)\s+and\s+(\d+|[A-Za-z0-9_-]+)/i,
+      /\b(?:insert(?:ing)?|add(?:ing)?)\s+(?:node\s+)?(\d+|[A-Za-z0-9_-]+)\s+between\s+(\d+|[A-Za-z0-9_-]+)\s+and\s+(\d+|[A-Za-z0-9_-]+)/i,
     );
-    const insertVal = betweenMatch ? betweenMatch[1] : "25";
-    const predVal = betweenMatch ? betweenMatch[2] : "10";
-    const succVal = betweenMatch ? betweenMatch[3] : "40";
+    const intoMatch = prompt.match(
+      /\b(?:insert(?:ing)?|add(?:ing)?)\s+(?:node\s+)?(\d+|[A-Za-z0-9_-]+)\s+into\b/i,
+    );
 
     const chainMatch = prompt.match(
-      /([A-Za-z0-9_-]+(?:\s*->\s*[A-Za-z0-9_-]+)+)/,
+      /([A-Za-z0-9_-]+(?:\s*(?:->|→)\s*[A-Za-z0-9_-]+)+)/,
     );
     const initialNodes = chainMatch
-      ? chainMatch[1].split("->").map((s) => s.trim())
-      : [predVal, succVal, "60"];
+      ? chainMatch[1].split(/->|→/).map((s) => s.trim())
+      : ["10", "40", "60"];
+
+    let insertVal = "25";
+    let predVal = initialNodes[0] || "10";
+    let succVal = initialNodes[1] || "40";
+
+    if (betweenMatch) {
+      insertVal = betweenMatch[1];
+      predVal = betweenMatch[2];
+      succVal = betweenMatch[3];
+    } else if (intoMatch) {
+      insertVal = intoMatch[1];
+      const numInsert = Number(insertVal);
+      if (!isNaN(numInsert)) {
+        for (let i = 0; i < initialNodes.length; i++) {
+          const numCur = Number(initialNodes[i]);
+          if (!isNaN(numCur) && numCur < numInsert) {
+            predVal = initialNodes[i];
+            succVal = initialNodes[i + 1] || initialNodes[i];
+          }
+        }
+      }
+    }
 
     // Step 1: Baseline Initial State
     steps.push({
@@ -1997,12 +2202,13 @@ export class OrderedOperationEngine {
     });
 
     // Step 4: Rewire Predecessor -> Final State
-    const finalNodes = [
-      predVal,
-      insertVal,
-      succVal,
-      ...initialNodes.filter((v) => v !== predVal && v !== succVal),
-    ];
+    const finalNodes: string[] = [];
+    for (const v of initialNodes) {
+      finalNodes.push(v);
+      if (v === predVal) {
+        finalNodes.push(insertVal);
+      }
+    }
 
     steps.push({
       title: `Rewire Predecessor: ${predVal} -> ${insertVal} (Insertion Complete)`,

@@ -129,7 +129,10 @@
   // Radial dot grid pattern from Stitch for Excalidraw workspace background
   .canvas-bg,
   canvas.interactive {
-    background-image: radial-gradient(#cbd5e1 1.25px, transparent 1.25px) !important;
+    background-image: radial-gradient(
+      #cbd5e1 1.25px,
+      transparent 1.25px
+    ) !important;
     background-size: 24px 24px !important;
   }
 

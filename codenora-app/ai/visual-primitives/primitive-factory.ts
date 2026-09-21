@@ -468,13 +468,25 @@ export function createVisualPrimitive(
     }
 
     case "Table": {
-      const tableName =
+      const rawTableName =
         (entity.properties?.tableName as string | undefined) ||
         (entity.label && !entity.label.startsWith("Component ")
           ? entity.label
           : undefined) ||
         (typeof entity.value === "string" ? entity.value : undefined) ||
         entity.id;
+
+      // Internal Metadata Firewall: ensure clean human-readable table titles
+      let tableName = sanitizeDisplayLabel(undefined, rawTableName, rawId);
+      if (/^dist[-_]table/i.test(rawTableName) || rawTableName === "dist-table") {
+        tableName = "Distance Table";
+      } else if (/^freq[-_]table/i.test(rawTableName)) {
+        tableName = "Frequency Table";
+      } else if (/^state[-_]table/i.test(rawTableName)) {
+        tableName = "State Table";
+      } else if (/^table[-_]main$/i.test(rawTableName)) {
+        tableName = "Data Table";
+      }
       const columns =
         (entity.properties?.columns as any) ||
         (entity.properties?.headers as any);

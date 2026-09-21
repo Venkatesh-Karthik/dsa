@@ -179,6 +179,8 @@ export class VisualReasoningEngine {
     const layoutStrat =
       plan.compositionPlan.primaryStrategy === "hierarchical"
         ? "tree"
+        : plan.compositionPlan.primaryStrategy === "network"
+        ? "graph"
         : plan.compositionPlan.primaryStrategy;
 
     const graph = createEmptySceneGraph({

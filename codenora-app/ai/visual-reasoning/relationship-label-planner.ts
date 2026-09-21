@@ -175,7 +175,13 @@ export function planRelationshipLabel(params: {
     height: pillH,
   });
 
-  // Candidate A: Direct Midpoint Candidates
+  // Candidate A: Direct Midpoint Candidates (with cardinal and perpendicular normal offsets)
+  const edgeDx = route.endX - route.startX;
+  const edgeDy = route.endY - route.startY;
+  const edgeLen = Math.hypot(edgeDx, edgeDy) || 1;
+  const normX = -edgeDy / edgeLen;
+  const normY = edgeDx / edgeLen;
+
   candidates.push({
     cx: midPt.x,
     cy: midPt.y - pillH / 2 - 8,
@@ -184,10 +190,10 @@ export function planRelationshipLabel(params: {
   });
 
   candidates.push({
-    cx: midPt.x,
-    cy: midPt.y + pillH / 2 + 8,
-    cost: 15,
-    description: "mid-below",
+    cx: midPt.x + normX * (pillH / 2 + 8),
+    cy: midPt.y + normY * (pillH / 2 + 8),
+    cost: 11,
+    description: "mid-normal-pos",
   });
 
   candidates.push({
@@ -195,6 +201,20 @@ export function planRelationshipLabel(params: {
     cy: midPt.y,
     cost: 12,
     description: "mid-center",
+  });
+
+  candidates.push({
+    cx: midPt.x - normX * (pillH / 2 + 8),
+    cy: midPt.y - normY * (pillH / 2 + 8),
+    cost: 14,
+    description: "mid-normal-neg",
+  });
+
+  candidates.push({
+    cx: midPt.x,
+    cy: midPt.y + pillH / 2 + 8,
+    cost: 15,
+    description: "mid-below",
   });
 
   candidates.push({

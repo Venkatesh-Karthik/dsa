@@ -6,13 +6,13 @@
  */
 
 import { AudioPlayer } from "./audio-player";
+import { BrowserSpeechProvider } from "./browser-speech-provider";
 import { ChatterboxProvider } from "./chatterbox-provider";
 import { SpeechDirector } from "./speech-director";
 import { SpeechPreprocessor } from "./speech-preprocessor";
 import { VoiceCache } from "./voice-cache";
 import { VoiceQueue } from "./voice-queue";
 
-import type { TTSProvider } from "./tts-provider";
 import {
   type TTSAudio,
   type TTSOptions,
@@ -21,6 +21,8 @@ import {
   type VoiceExplanationContext,
   type VoiceState,
 } from "./voice-contract";
+
+import type { TTSProvider } from "./tts-provider";
 
 export type VoiceStateListener = (
   state: VoiceState,
@@ -53,7 +55,7 @@ export class VoiceExplanationEngine {
   private activeBranchId: string = "MAIN";
 
   constructor(customProvider?: TTSProvider) {
-    this.ttsProvider = customProvider || new ChatterboxProvider();
+    this.ttsProvider = customProvider || new BrowserSpeechProvider();
     this.cache = new VoiceCache(100);
     this.queue = new VoiceQueue(this.ttsProvider, this.cache);
     this.player = new AudioPlayer({
@@ -129,6 +131,12 @@ export class VoiceExplanationEngine {
 
   public getProvider(): TTSProvider {
     return this.ttsProvider;
+  }
+
+  public setOwnerWindow(win: Window): void {
+    if (this.ttsProvider instanceof BrowserSpeechProvider) {
+      this.ttsProvider.setOwnerWindow(win);
+    }
   }
 
   public addOnAudioEndedListener(
@@ -226,6 +234,83 @@ export class VoiceExplanationEngine {
     console.info(
       `[COGNORA][VOICE][PREPARE] session=${sessionToken} spokenText="${prep.spokenText}"`,
     );
+
+    // If using BrowserSpeechProvider, directly drive speech synthesis
+    if (
+      this.ttsProvider instanceof BrowserSpeechProvider ||
+      this.ttsProvider.name === "browser-speech"
+    ) {
+      const browserProvider = this.ttsProvider as BrowserSpeechProvider;
+      this.setState("preparing");
+
+      const spokenText = prep.spokenText;
+      const opts = {
+        speed: options?.speed ?? 1.0,
+        voiceId: options?.voiceId,
+        transformationId: context.transformationId,
+        worldVersion: context.worldVersion,
+        branchId: context.branchId,
+        semanticFocus: context.semanticFocus,
+        onStart: () => {
+          if (this.activeSessionToken === sessionToken) {
+            this.setState("PLAYING");
+            console.info(
+              `[COGNORA][VOICE][AUDIO][PLAY] session=${sessionToken}`,
+            );
+          }
+        },
+        onEnd: () => {
+          if (this.activeSessionToken === sessionToken) {
+            this.setState("READY");
+            console.info(
+              `[COGNORA][VOICE][AUDIO][FINISH] session=${sessionToken}`,
+            );
+            const currentToken = this.activeSessionToken;
+            for (const cb of this.onAudioEndedListeners) {
+              try {
+                cb(currentToken);
+              } catch (err) {
+                console.error("[COGNORA][VOICE] onAudioEnded error:", err);
+              }
+            }
+          }
+        },
+        onError: (errType: string) => {
+          if (this.activeSessionToken === sessionToken) {
+            console.warn(
+              `[COGNORA][VOICE][AUDIO][ERROR] session=${sessionToken} error="${errType}"`,
+            );
+            this.errorMessage = errType;
+            this.setState("FAILED");
+            const currentToken = this.activeSessionToken;
+            for (const cb of this.onAudioEndedListeners) {
+              try {
+                cb(currentToken);
+              } catch {
+                // safe ignore
+              }
+            }
+          }
+        },
+      };
+
+      try {
+        await browserProvider.speak(spokenText, opts);
+      } catch (err: any) {
+        if (this.activeSessionToken === sessionToken) {
+          console.warn("[COGNORA][VOICE][BROWSER] speak error:", err);
+          this.setState("FAILED");
+          for (const cb of this.onAudioEndedListeners) {
+            try {
+              cb(sessionToken);
+            } catch {
+              // safe ignore
+            }
+          }
+        }
+      }
+      return;
+    }
 
     // 3. Check voice cache
     const cacheKey = VoiceCache.generateKey(
@@ -330,21 +415,36 @@ export class VoiceExplanationEngine {
   }
 
   public pause(): void {
+    if (this.ttsProvider instanceof BrowserSpeechProvider) {
+      this.ttsProvider.pause();
+    }
     this.player.pause();
   }
 
   public resume(): void {
+    if (this.ttsProvider instanceof BrowserSpeechProvider) {
+      this.ttsProvider.resume();
+    }
     this.player.resume();
   }
 
   public stop(): void {
     this.activeSessionToken++;
     this.cancelPendingRequest();
+    if (this.ttsProvider instanceof BrowserSpeechProvider) {
+      this.ttsProvider.cancel();
+    }
     this.player.stop();
     this.setState("stopped");
   }
 
   public replay(): void {
+    if (this.ttsProvider instanceof BrowserSpeechProvider) {
+      if (this.currentContext) {
+        this.play(this.currentContext);
+      }
+      return;
+    }
     if (this.currentAudio && this.currentAudio.audioUrl) {
       console.info(
         `[COGNORA][VOICE][REPLAY] session=${this.activeSessionToken}`,
@@ -379,6 +479,9 @@ export class VoiceExplanationEngine {
     // Invalidate current session
     this.activeSessionToken++;
     this.cancelPendingRequest();
+    if (this.ttsProvider instanceof BrowserSpeechProvider) {
+      this.ttsProvider.cancel();
+    }
     this.player.stop();
     this.currentContext = newContext || null;
     this.setState("idle");
@@ -429,6 +532,14 @@ export class VoiceExplanationEngine {
     const branch = timeline.branchId || this.activeBranchId;
     this.setAuthoritativeContext(genId, worldVer, branch);
 
+    // If using BrowserSpeechProvider, synthesis is local, instant, and non-blocking
+    if (
+      this.ttsProvider instanceof BrowserSpeechProvider ||
+      this.ttsProvider.name === "browser-speech"
+    ) {
+      return;
+    }
+
     // Convert metas to items for the prioritized, bounded queue
     const items = timeline.meta.map((m, idx) => {
       const ctx: VoiceExplanationContext = {
@@ -466,6 +577,13 @@ export class VoiceExplanationEngine {
     transformationIdOrOptions?: string | TTSOptions,
     options?: TTSOptions,
   ): boolean {
+    if (
+      this.ttsProvider instanceof BrowserSpeechProvider ||
+      this.ttsProvider.name === "browser-speech"
+    ) {
+      return true;
+    }
+
     if (typeof contextOrLessonId === "string") {
       const lessonId = contextOrLessonId;
       const transformationId = transformationIdOrOptions as string;

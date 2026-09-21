@@ -42,6 +42,8 @@ export interface TeachingMoment {
   transformationId: string;
   stepId?: string;
   worldVersion?: number;
+  beforeWorldVersion?: number;
+  afterWorldVersion?: number;
   branchId?: string;
   stepIndex: number;
   totalSteps: number;
@@ -72,6 +74,11 @@ export interface TeachingMoment {
   whyItChanged?: string;
   why?: string;
   consequence?: string;
+
+  /** Pedagogical role for this moment per Cognora architectural requirements */
+  teachingRole?: "TRANSFORMATION" | "EXPLANATION-ONLY" | "PREDICTION-PAUSE";
+  isExplanationOnly?: boolean;
+  isStateChange?: boolean;
 
   /** Spoken script for Chatterbox-Turbo TTS */
   narration: string;
@@ -155,7 +162,19 @@ export class TeachingMomentCompiler {
         return (
           bEnt?.state !== aEnt?.state ||
           bEnt?.properties?.highlight !== aEnt?.properties?.highlight ||
-          bEnt?.value !== aEnt?.value
+          bEnt?.value !== aEnt?.value ||
+          bEnt?.label !== aEnt?.label ||
+          bEnt?.semanticRole !== aEnt?.semanticRole ||
+          bEnt?.properties?.color !== aEnt?.properties?.color ||
+          bEnt?.properties?.balanceFactor !== aEnt?.properties?.balanceFactor ||
+          bEnt?.properties?.highlightRowIndex !==
+            aEnt?.properties?.highlightRowIndex ||
+          bEnt?.properties?.left !== aEnt?.properties?.left ||
+          bEnt?.properties?.right !== aEnt?.properties?.right ||
+          JSON.stringify(bEnt?.properties?.rows) !==
+            JSON.stringify(aEnt?.properties?.rows) ||
+          JSON.stringify(bEnt?.properties?.columns) !==
+            JSON.stringify(aEnt?.properties?.columns)
         );
       });
 
@@ -167,6 +186,19 @@ export class TeachingMomentCompiler {
       const removedRelationships = Array.from(beforeRels).filter(
         (id) => !afterRels.has(id),
       );
+      const updatedRelationships = Array.from(afterRels).filter((id) => {
+        if (!beforeRels.has(id)) {
+          return false;
+        }
+        const bRel = beforeState.graph.relationships.get(id);
+        const aRel = afterState.graph.relationships.get(id);
+        return (
+          bRel?.label !== aRel?.label ||
+          bRel?.properties?.weight !== aRel?.properties?.weight ||
+          bRel?.properties?.highlight !== aRel?.properties?.highlight ||
+          bRel?.type !== aRel?.type
+        );
+      });
 
       const trans = sIdx > 0 ? model.transformations[sIdx - 1] : undefined;
       const semState = model.states[sIdx];
@@ -193,6 +225,53 @@ export class TeachingMomentCompiler {
         why = trans?.whyChanged || trans?.cause || "";
         consequence = trans?.learnerObservation || "";
       }
+
+      // Check if this step represents a real visual/semantic mutation or an intentional pedagogical pause
+      const isStateChange =
+        sIdx === 0 ||
+        addedEntities.length > 0 ||
+        removedEntities.length > 0 ||
+        updatedEntities.length > 0 ||
+        addedRelationships.length > 0 ||
+        removedRelationships.length > 0 ||
+        updatedRelationships.length > 0;
+
+      const isPredictionPause = Boolean(
+        (trans as any)?.isPrediction ||
+        (trans as any)?.decision ||
+        (trans as any)?.role === "prediction"
+      );
+      const isExplanationPause = Boolean(
+        (trans as any)?.isExplanationOnly ||
+        (trans as any)?.role === "diagnosis"
+      );
+      const isPedagogicalPause = isPredictionPause || isExplanationPause;
+
+      // ELIMINATE IDENTICAL CONSECUTIVE STATES (Cognora Part 3 requirement)
+      if (sIdx > 0 && !isStateChange && !isPedagogicalPause) {
+        console.info(
+          `[COGNORA][TEACH][PRUNE] Pruning identical consecutive state at step ${sIdx + 1} (${stepTitle}) with zero semantic difference. Merging insights into previous moment.`,
+        );
+        const prevMoment = moments[moments.length - 1];
+        if (prevMoment) {
+          if (stepExplanation && !prevMoment.explanation.includes(stepExplanation)) {
+            prevMoment.explanation = `${prevMoment.explanation} ${stepExplanation}`;
+            prevMoment.whatChanged = prevMoment.explanation;
+          }
+          if (why && !prevMoment.why?.includes(why)) {
+            prevMoment.why = `${prevMoment.why || ""} ${why}`.trim();
+            prevMoment.whyItChanged = prevMoment.why;
+          }
+        }
+        continue;
+      }
+
+      const teachingRole: "TRANSFORMATION" | "EXPLANATION-ONLY" | "PREDICTION-PAUSE" =
+        isStateChange
+          ? "TRANSFORMATION"
+          : isPredictionPause
+          ? "PREDICTION-PAUSE"
+          : "EXPLANATION-ONLY";
 
       // 2. Resolve Affected Entities & Relationships
       const affectedEntities: string[] = trans?.affectedEntities?.length
@@ -235,18 +314,23 @@ export class TeachingMomentCompiler {
           }
         : undefined;
 
-      moments.push({
+      const beforeWorldVersion =
+        options?.worldVersion !== undefined
+          ? options.worldVersion + moments.length
+          : moments.length;
+      const afterWorldVersion = beforeWorldVersion + 1;
+
+      const momentObj: TeachingMoment = {
         id: trans?.id || (sIdx === 0 ? "moment-initial" : `moment-${sIdx}`),
         lessonId,
         generationId,
         transformationId: trans?.id || (sIdx === 0 ? "initial" : `t-${sIdx}`),
         stepId: trans?.id || `step-${sIdx}`,
-        worldVersion:
-          options?.worldVersion !== undefined
-            ? options.worldVersion + sIdx
-            : sIdx + 1,
+        worldVersion: afterWorldVersion,
+        beforeWorldVersion,
+        afterWorldVersion,
         branchId,
-        stepIndex: sIdx,
+        stepIndex: moments.length,
         totalSteps,
         beforeState,
         afterState,
@@ -267,6 +351,9 @@ export class TeachingMomentCompiler {
         whyItChanged: why,
         why,
         consequence,
+        teachingRole,
+        isExplanationOnly: !isStateChange,
+        isStateChange,
         narration,
         voiceState: "IDLE",
         visualStrategy:
@@ -304,11 +391,34 @@ export class TeachingMomentCompiler {
         codeContext,
         calculations: trans?.calculations,
         insight: trans?.insight,
-      });
+      };
+
+      moments.push(momentObj);
+
+      console.info(
+        `[COGNORA][TEACH][TRANSFORMATION] id=${momentObj.transformationId} beforeWorld=${beforeWorldVersion} afterWorld=${afterWorldVersion} changedEntities=[${addedEntities.concat(updatedEntities).join(", ")}] changedRelationships=[${addedRelationships.concat(updatedRelationships).join(", ")}] importance=${momentObj.importance}`,
+      );
+      console.info(
+        `[COGNORA][TEACH][MOMENT] step=${moments.length} transformationId=${momentObj.transformationId} worldVersion=${afterWorldVersion} isStateChange=${isStateChange} isExplanationOnly=${!isStateChange}`,
+      );
+      if (sIdx > 0) {
+        console.info(
+          `[COGNORA][LESSON][TRANSITION] fromWorld=${beforeWorldVersion} toWorld=${afterWorldVersion} changedEntities=[${addedEntities.concat(updatedEntities).join(", ")}] changedRelationships=[${addedRelationships.concat(removedRelationships).join(", ")}]`,
+        );
+      }
+    }
+
+    // Strictly re-index stepIndex, totalSteps, and conserve sequential world versions
+    for (let i = 0; i < moments.length; i++) {
+      moments[i].stepIndex = i;
+      moments[i].totalSteps = moments.length;
+      moments[i].beforeWorldVersion = i;
+      moments[i].afterWorldVersion = i + 1;
+      moments[i].worldVersion = i + 1;
     }
 
     console.info(
-      `[COGNORA][LESSON][COMPILE] Compiled ${moments.length} authoritative TeachingMoments with 1-to-1 visual synchronization.`,
+      `[COGNORA][LESSON][PLAN] lessonId=${lessonId} transformationCount=${model.transformations.length} teachingMomentCount=${moments.length}`,
     );
 
     return moments;

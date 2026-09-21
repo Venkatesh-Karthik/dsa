@@ -52,11 +52,19 @@ export class VisualElementPlanner {
       }
 
       // Dynamically resolve visual capability
-      const cap = VisualCapabilityRegistry.resolveMatchingCapability(
+      let cap = VisualCapabilityRegistry.resolveMatchingCapability(
         ent.semanticRole,
         ent.type,
         ent.label,
       );
+
+      // In a network graph composition, generic entities default to circular GraphNodes
+      if (compositionPlan.primaryStrategy === "network" && cap.id === "GenericEntity") {
+        const graphCap = VisualCapabilityRegistry.get("GraphNode");
+        if (graphCap) {
+          cap = graphCap;
+        }
+      }
 
       // Sizing rules based on capability and content
       const label = ent.label || ent.id;

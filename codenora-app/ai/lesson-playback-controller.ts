@@ -295,17 +295,24 @@ export class LessonPlaybackController {
     cancelActiveSceneAnimation();
 
     // Invalidate/stop active voice playback and synchronize transformation change
-    if (this.voiceEngine && typeof this.voiceEngine.onTransformationChange === "function") {
+    if (
+      this.voiceEngine &&
+      typeof this.voiceEngine.onTransformationChange === "function"
+    ) {
       const targetMoment = this.timeline.moments?.[targetIndex];
       const targetMeta = this.timeline.meta[targetIndex];
       this.voiceEngine.onTransformationChange({
         lessonId: this.timeline.lessonId,
-        generationId: targetMoment?.generationId || (this.timeline as any).generationId,
+        generationId:
+          targetMoment?.generationId || (this.timeline as any).generationId,
         transformationId:
-          targetMoment?.transformationId || targetMeta?.id || `t-${targetIndex}`,
+          targetMoment?.transformationId ||
+          targetMeta?.id ||
+          `t-${targetIndex}`,
         stepIndex: targetIndex,
         totalSteps: this.timeline.meta.length,
-        title: targetMoment?.title || targetMeta?.title || `Step ${targetIndex + 1}`,
+        title:
+          targetMoment?.title || targetMeta?.title || `Step ${targetIndex + 1}`,
         explanation: targetMoment?.explanation || targetMeta?.explanation || "",
       });
     }
@@ -402,6 +409,30 @@ export class LessonPlaybackController {
       this.clearPlaybackTimers();
       this.coordinateCurrentPlaybackStep();
     }
+  }
+
+  /**
+   * Mounts an active What-If branch moment onto the canvas and syncs authoritative visual state.
+   */
+  public mountBranchMoment(moment: TeachingMoment): void {
+    if (!moment.visualState) {
+      return;
+    }
+    this.pause();
+    this.clearPlaybackTimers();
+    const currentElements = this.excalidrawAPI.getSceneElements();
+    const reconcileRes = reconcileSceneState(
+      moment.visualState,
+      currentElements,
+      this.timeline.lessonId,
+      false,
+    );
+    this.authoritativeState = moment.visualState;
+    this.excalidrawAPI.updateScene({
+      elements: reconcileRes.elements,
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    this.emitStateChange();
   }
 
   private isPlaybackActive(): boolean {
@@ -506,8 +537,10 @@ export class LessonPlaybackController {
     const moment = this.timeline.moments?.[currentStep];
     const voiceContext: VoiceExplanationContext = {
       lessonId: this.timeline.lessonId,
-      generationId: moment?.generationId || (this.timeline as any).generationId || "GEN-1",
-      worldVersion: moment?.worldVersion || (this.timeline as any).worldVersion || 1,
+      generationId:
+        moment?.generationId || (this.timeline as any).generationId || "GEN-1",
+      worldVersion:
+        moment?.worldVersion || (this.timeline as any).worldVersion || 1,
       branchId: moment?.branchId || (this.timeline as any).branchId || "MAIN",
       transformationId:
         moment?.transformationId || meta?.id || `t-${currentStep}`,
@@ -543,8 +576,17 @@ export class LessonPlaybackController {
     // Dynamic bounded timeout: if audio is not cached yet, allow comfortable visual reading time (2.5s-4s)
     // and do NOT block playback for 15+ seconds if Chatterbox is slow!
     const fallbackAdvanceMs = isAudioCached
-      ? Math.max(4000, Math.round(((moment?.narration?.length ?? 60) * 80) / this.speed))
-      : Math.max(2200, Math.min(4500, Math.round(((moment?.narration?.length ?? 60) * 35) / this.speed)));
+      ? Math.max(
+          4000,
+          Math.round(((moment?.narration?.length ?? 60) * 80) / this.speed),
+        )
+      : Math.max(
+          2200,
+          Math.min(
+            4500,
+            Math.round(((moment?.narration?.length ?? 60) * 35) / this.speed),
+          ),
+        );
 
     this.safetyTimer = setTimeout(() => {
       if (
@@ -557,13 +599,18 @@ export class LessonPlaybackController {
     }, fallbackAdvanceMs);
 
     // Trigger non-blocking prefetch for next step
-    if (this.voiceEngine.prepareLessonAudio && currentStep < this.timeline.meta.length - 1) {
-      this.voiceEngine.prepareLessonAudio({
-        lessonId: this.timeline.lessonId,
-        topic: this.timeline.topic,
-        currentIndex: currentStep,
-        meta: this.timeline.meta,
-      }).catch(() => {});
+    if (
+      this.voiceEngine.prepareLessonAudio &&
+      currentStep < this.timeline.meta.length - 1
+    ) {
+      this.voiceEngine
+        .prepareLessonAudio({
+          lessonId: this.timeline.lessonId,
+          topic: this.timeline.topic,
+          currentIndex: currentStep,
+          meta: this.timeline.meta,
+        })
+        .catch(() => {});
     }
 
     // Speak asynchronously (plays immediately from cache if prepared, attaches smoothly when ready)

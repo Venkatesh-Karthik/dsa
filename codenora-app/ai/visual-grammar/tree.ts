@@ -62,6 +62,8 @@ export function renderTreeGrammar(
   const layoutNodes = action.nodes.map((n) => ({
     id: n.id,
     value: n.value,
+    left: n.left,
+    right: n.right,
     children: n.children || ([n.left, n.right].filter(Boolean) as string[]),
   }));
 

@@ -79,7 +79,7 @@ export interface TablePrimitiveResult {
 /**
  * Normalizes input column specifications.
  */
-function normalizeColumns(
+export function normalizeColumns(
   rawColumns?: (string | TableColumn)[],
   rows?: (TableRow | (string | number)[] | Record<string, any>)[],
 ): TableColumn[] {
@@ -127,7 +127,7 @@ function normalizeColumns(
 /**
  * Normalizes input row specifications.
  */
-function normalizeRows(
+export function normalizeRows(
   rawRows?: (TableRow | (string | number)[] | Record<string, any>)[],
   columns?: TableColumn[],
 ): TableRow[] {

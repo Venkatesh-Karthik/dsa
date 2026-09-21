@@ -227,11 +227,29 @@ export class ExplanationEngine {
       )
       .replace(/\bmerge[-_]array[-_]element[-_][a-zA-Z0-9_-]+\b/gi, "element")
       .replace(/\barray[-_]item[-_][a-zA-Z0-9_-]+\b/gi, "element")
+      .replace(/\bdist[-_]table(?:[-_][a-zA-Z0-9_-]+)?\b/gi, "distance table")
+      .replace(/\bpq[-_](?:before|after|[a-zA-Z0-9_-]+)\b/gi, "priority queue")
+      .replace(
+        /\bpriority[-_]queue(?:[-_][a-zA-Z0-9_-]+)?\b/gi,
+        "priority queue",
+      )
+      .replace(/\bgraph[-_]main\b/gi, "graph")
+      .replace(/\bdijkstra[-_]graph[-_][a-zA-Z0-9_-]+\b/gi, "graph")
+      .replace(/\btree[-_]main\b/gi, "tree")
+      .replace(/\btree[-_]root\b/gi, "root")
+      .replace(/\bavl[-_]tree[-_]n(\d+)\b/gi, "Node $1")
+      .replace(/\bavl[-_]node[-_](\d+)\b/gi, "Node $1")
+      .replace(/\bavl[-_]tree[-_][a-zA-Z0-9_-]+\b/gi, "AVL tree")
+      .replace(
+        /\bedge[-_]node[-_]([a-zA-Z0-9]+)[-_]node[-_]([a-zA-Z0-9]+)\b/gi,
+        "edge $1→$2",
+      )
+      .replace(/\bedge[-_]([a-zA-Z0-9]+)[-_]([a-zA-Z0-9]+)\b/gi, "edge $1→$2")
       .replace(
         /\b(?:dll[-_](?:e|node[-_]?)?|node[-_]|tree[-_]n|tree[-_]node[-_]|avl[-_]tree[-_]n|avl[-_]node[-_]|avl[-_]|n)(\d+)\b/gi,
-        "$1",
+        "Node $1",
       )
-      .replace(/\bnode[-_]([a-zA-Z0-9]+)\b/gi, "$1")
+      .replace(/\bnode[-_]([a-zA-Z0-9]+)\b/gi, "Node $1")
       .replace(/\bfocusComponent\b/gi, "target element")
       .replace(/\bactiveComponents\b/gi, "active components")
       .replace(/\bActive Components\b/gi, "Components")
@@ -240,7 +258,10 @@ export class ExplanationEngine {
       .replace(/\brel[-_][a-zA-Z0-9_-]+\b/gi, "relationship")
       .replace(/\bconn[-_][a-zA-Z0-9_-]+\b/gi, "connection")
       .replace(/\bop[-_]\d+\b/gi, "operation")
-      .replace(/\b(?:Component|Node)\s+(\w+)/gi, "$1")
+      .replace(/\binvariant[-_]text(?:[-_][a-zA-Z0-9_-]+)?\b/gi, "invariant")
+      .replace(/\btrans(?:formation)?[-_][a-zA-Z0-9_-]+\b/gi, "step")
+      .replace(/\bmoment[-_][a-zA-Z0-9_-]+\b/gi, "moment")
+      .replace(/\bbranch[-_][a-zA-Z0-9_-]+\b/gi, "branch")
       .replace(/\barrow\d+[-_]\d+\b/gi, "connection")
       .replace(/\bent[-_][a-zA-Z0-9_-]+\b/gi, "element")
       .trim();

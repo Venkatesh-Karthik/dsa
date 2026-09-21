@@ -394,6 +394,8 @@ export function reconcileSceneState(
         targetBounds,
         obstacleBoxes,
         {
+          sourceShape,
+          targetShape,
           laneIndex: laneInfo.laneIndex,
           totalLanes: laneInfo.totalLanes,
           preferredRouting: rel.properties?.elbowed ? "elbowed" : "auto",

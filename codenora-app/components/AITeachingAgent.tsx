@@ -90,6 +90,23 @@ import { AudioAnalyzer } from "../ai/voice/audio-analyzer";
 import { SpeechDirector } from "../ai/voice/speech-director";
 import { isVisualDebugEnabled } from "../ai/visual-reasoning/debug-diagnostics";
 
+import {
+  CognoraWorldModel,
+  type CognoraWorldState,
+} from "../ai/intelligence/cognora-world-model";
+
+import { IntentEngine } from "../ai/intelligence/intent-engine";
+
+import { ContextEngine } from "../ai/intelligence/context-engine";
+
+import { TeacherBrain } from "../ai/intelligence/teacher-brain";
+
+import { TeacherBrainOrchestrator } from "../ai/intelligence/teacher-brain-orchestrator";
+
+import { BranchManager } from "../ai/intelligence/branch-manager";
+
+import { VoiceListener } from "../ai/voice/voice-listener";
+
 import { resolveSemanticFocus } from "./semantic-focus-resolver";
 import { computeLeaderLineGeometry } from "./leader-line-geometry";
 import {
@@ -129,16 +146,6 @@ import {
 } from "./CognoraDrawingToolbar";
 import { CognoraHeader } from "./CognoraHeader";
 import { CognoraVoiceOrb, type VoiceOrbState } from "./CognoraVoiceOrb";
-import {
-  CognoraWorldModel,
-  type CognoraWorldState,
-} from "../ai/intelligence/cognora-world-model";
-import { IntentEngine } from "../ai/intelligence/intent-engine";
-import { ContextEngine } from "../ai/intelligence/context-engine";
-import { TeacherBrain } from "../ai/intelligence/teacher-brain";
-import { TeacherBrainOrchestrator } from "../ai/intelligence/teacher-brain-orchestrator";
-import { BranchManager } from "../ai/intelligence/branch-manager";
-import { VoiceListener } from "../ai/voice/voice-listener";
 
 import "./AITeachingAgent.scss";
 
@@ -429,6 +436,13 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
   useEffect(() => {
     return worldModelRef.current.subscribe(setWorldState);
   }, []);
+
+  useEffect(() => {
+    const win = getOwnerWindow();
+    if (win) {
+      voiceEngineRef.current.setOwnerWindow(win);
+    }
+  }, [getOwnerWindow]);
 
   // Voice 2: Live Listener with VAD & Streaming Interruption
   const voiceListenerRef = useRef<VoiceListener | null>(null);
@@ -885,16 +899,25 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
       (window as any).__cognoraWorldModel = worldModelRef.current;
       (window as any).__cognoraAuthoritativeWorld = () =>
         worldModelRef.current.getAuthoritativeWorld();
-      worldModelRef.current.setLesson(processed.visualLesson || lesson, timeline, {
-        generationId: options.messageId,
-        worldVersion: 1,
-        branchId: "MAIN",
-      });
-      orchestratorRef.current = new TeacherBrainOrchestrator(worldModelRef.current);
+      worldModelRef.current.setLesson(
+        processed.visualLesson || lesson,
+        timeline,
+        {
+          generationId: options.messageId,
+          worldVersion: 1,
+          branchId: "MAIN",
+        },
+      );
+      orchestratorRef.current = new TeacherBrainOrchestrator(
+        worldModelRef.current,
+      );
 
       // Pre-synthesize and cache speech asynchronously in background immediately upon lesson load (non-blocking)
       voiceEngineRef.current.prepareLessonAudio(timeline).catch((err) => {
-        console.warn("[COGNORA][VOICE] Non-blocking prepareLessonAudio notice:", err);
+        console.warn(
+          "[COGNORA][VOICE] Non-blocking prepareLessonAudio notice:",
+          err,
+        );
       });
 
       // 4. Render initial scene state immediately
@@ -1511,8 +1534,14 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
     }
 
     // 3e. Teacher Brain Local Decisions (Misconception Detection, Simplify, Why, What-If, Focus, Detours)
-    if (transformationLesson && worldModelRef.current.getState().currentMoment) {
-      const orchResult = orchestratorRef.current.orchestrate(trimmed, inputSource);
+    if (
+      transformationLesson &&
+      worldModelRef.current.getState().currentMoment
+    ) {
+      const orchResult = orchestratorRef.current.orchestrate(
+        trimmed,
+        inputSource,
+      );
       const decision = orchResult.decision;
 
       if (decision.isLocal) {
@@ -1545,20 +1574,36 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
           }
         }
 
+        // If What-If branch created, mount branch scene onto canvas
+        if (decision.branchToCreate?.branchMoments?.[0]) {
+          playbackControllerRef.current?.mountBranchMoment(
+            decision.branchToCreate.branchMoments[0],
+          );
+        } else if (decision.detourToCreate?.detourMoment) {
+          playbackControllerRef.current?.mountBranchMoment(
+            decision.detourToCreate.detourMoment,
+          );
+        }
+
         // Speak decision narration if available and voice is enabled
         if (decision.narration && isVoiceEnabled) {
-          voiceEngineRef.current.play({
-            lessonId: transformationLesson.lessonId,
-            transformationId: `local-decision-${Date.now()}`,
-            stepIndex:
-              worldModelRef.current.getState().currentMoment?.stepIndex ?? 0,
-            totalSteps:
-              worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
-            title: decision.strategy,
-            explanation: decision.narration,
-          }).catch((err) => {
-            console.warn("[COGNORA][VOICE] Non-blocking decision play notice:", err);
-          });
+          voiceEngineRef.current
+            .play({
+              lessonId: transformationLesson.lessonId,
+              transformationId: `local-decision-${Date.now()}`,
+              stepIndex:
+                worldModelRef.current.getState().currentMoment?.stepIndex ?? 0,
+              totalSteps:
+                worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
+              title: decision.strategy,
+              explanation: decision.narration,
+            })
+            .catch((err) => {
+              console.warn(
+                "[COGNORA][VOICE] Non-blocking decision play notice:",
+                err,
+              );
+            });
         }
 
         activeRequestLockRef.current = null;
@@ -2035,18 +2080,23 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
 
       // Speak follow-up answer if voice is enabled and this was an answer to a question (not a full visual lesson replay)
       if (assistantMessage.content && isVoiceEnabled && !visualLesson) {
-        voiceEngineRef.current.play({
-          lessonId: transformationLesson?.lessonId || "live",
-          transformationId: `follow-up-${Date.now()}`,
-          stepIndex:
-            worldModelRef.current.getState().currentMoment?.stepIndex ?? 0,
-          totalSteps:
-            worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
-          title: response.topic || "Explanation",
-          explanation: assistantMessage.content,
-        }).catch((err) => {
-          console.warn("[COGNORA][VOICE] Non-blocking follow-up voice notice:", err);
-        });
+        voiceEngineRef.current
+          .play({
+            lessonId: transformationLesson?.lessonId || "live",
+            transformationId: `follow-up-${Date.now()}`,
+            stepIndex:
+              worldModelRef.current.getState().currentMoment?.stepIndex ?? 0,
+            totalSteps:
+              worldModelRef.current.getState().currentMoment?.totalSteps ?? 1,
+            title: response.topic || "Explanation",
+            explanation: assistantMessage.content,
+          })
+          .catch((err) => {
+            console.warn(
+              "[COGNORA][VOICE] Non-blocking follow-up voice notice:",
+              err,
+            );
+          });
       }
 
       // Settle cleanly before returning to idle
@@ -3310,89 +3360,87 @@ export const AITeachingAgent: React.FC<AITeachingAgentProps> = ({
               ? 0.35
               : 0.0
           }
-            semanticFocusLabel={
-              currentMoment?.semanticFocus?.label ||
-              currentMoment?.semanticFocus?.entityIds?.[0]
-            }
-            obstacles={[
-              {
-                id: "navbar",
-                name: "Navbar",
-                bounds: {
-                  left: 0,
-                  top: 0,
-                  right:
-                    typeof window !== "undefined" ? window.innerWidth : 1200,
-                  bottom: 60,
-                },
-                priority: "critical",
+          semanticFocusLabel={
+            currentMoment?.semanticFocus?.label ||
+            currentMoment?.semanticFocus?.entityIds?.[0]
+          }
+          obstacles={[
+            {
+              id: "navbar",
+              name: "Navbar",
+              bounds: {
+                left: 0,
+                top: 0,
+                right: typeof window !== "undefined" ? window.innerWidth : 1200,
+                bottom: 60,
               },
-              ...(isContextualPanelOpen
-                ? [
-                    {
-                      id: "contextual-panel",
-                      name: "Inspector",
-                      bounds: {
-                        left:
-                          (typeof window !== "undefined"
-                            ? window.innerWidth
-                            : 1200) - 400,
-                        top: 60,
-                        right:
-                          typeof window !== "undefined"
-                            ? window.innerWidth
-                            : 1200,
-                        bottom:
-                          typeof window !== "undefined"
-                            ? window.innerHeight
-                            : 800,
-                      },
-                      priority: "high" as const,
+              priority: "critical",
+            },
+            ...(isContextualPanelOpen
+              ? [
+                  {
+                    id: "contextual-panel",
+                    name: "Inspector",
+                    bounds: {
+                      left:
+                        (typeof window !== "undefined"
+                          ? window.innerWidth
+                          : 1200) - 400,
+                      top: 60,
+                      right:
+                        typeof window !== "undefined"
+                          ? window.innerWidth
+                          : 1200,
+                      bottom:
+                        typeof window !== "undefined"
+                          ? window.innerHeight
+                          : 800,
                     },
-                  ]
-                : []),
-              {
-                id: "bottom-controls",
-                name: "Bottom Controls",
-                bounds: {
-                  left:
-                    (typeof window !== "undefined" ? window.innerWidth : 1200) *
-                    0.2,
-                  top:
-                    (typeof window !== "undefined" ? window.innerHeight : 800) -
-                    140,
-                  right:
-                    (typeof window !== "undefined" ? window.innerWidth : 1200) *
-                    0.8,
-                  bottom:
-                    typeof window !== "undefined" ? window.innerHeight : 800,
-                },
-                priority: "critical",
+                    priority: "high" as const,
+                  },
+                ]
+              : []),
+            {
+              id: "bottom-controls",
+              name: "Bottom Controls",
+              bounds: {
+                left:
+                  (typeof window !== "undefined" ? window.innerWidth : 1200) *
+                  0.2,
+                top:
+                  (typeof window !== "undefined" ? window.innerHeight : 800) -
+                  140,
+                right:
+                  (typeof window !== "undefined" ? window.innerWidth : 1200) *
+                  0.8,
+                bottom:
+                  typeof window !== "undefined" ? window.innerHeight : 800,
               },
-              ...(overlayPlacement
-                ? [
-                    {
-                      id: "callout",
-                      name: "Callout",
-                      bounds: {
-                        left: overlayPlacement.x,
-                        top: overlayPlacement.y,
-                        right: overlayPlacement.x + overlayPlacement.cardWidth,
-                        bottom:
-                          overlayPlacement.y + overlayPlacement.cardHeight,
-                      },
-                      priority: "medium" as const,
+              priority: "critical",
+            },
+            ...(overlayPlacement
+              ? [
+                  {
+                    id: "callout",
+                    name: "Callout",
+                    bounds: {
+                      left: overlayPlacement.x,
+                      top: overlayPlacement.y,
+                      right: overlayPlacement.x + overlayPlacement.cardWidth,
+                      bottom: overlayPlacement.y + overlayPlacement.cardHeight,
                     },
-                  ]
-                : []),
-            ]}
-            isVoiceEnabled={isVoiceEnabled}
-            onVoiceToggle={handleToggleVoice}
-            onPause={() => playbackControllerRef.current?.pause()}
-            onResume={() => playbackControllerRef.current?.resume()}
-            onReplay={() => playbackControllerRef.current?.replay()}
-          />
-        </CognoraErrorBoundary>
+                    priority: "medium" as const,
+                  },
+                ]
+              : []),
+          ]}
+          isVoiceEnabled={isVoiceEnabled}
+          onVoiceToggle={handleToggleVoice}
+          onPause={() => playbackControllerRef.current?.pause()}
+          onResume={() => playbackControllerRef.current?.resume()}
+          onReplay={() => playbackControllerRef.current?.replay()}
+        />
+      </CognoraErrorBoundary>
 
       {/* Dedicated Floating Bottom Control Region (Layer 4 & Layer 5) */}
       <div

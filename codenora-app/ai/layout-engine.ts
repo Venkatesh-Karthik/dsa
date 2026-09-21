@@ -4,6 +4,77 @@
  */
 
 import type { SceneGraph, SemanticEntity } from "./scene-graph";
+import {
+  normalizeColumns,
+  normalizeRows,
+  computeTableColumnWidths,
+} from "./visual-primitives/table-primitive";
+
+export interface EntityVisualBounds {
+  width: number;
+  height: number;
+}
+
+/**
+ * Content-aware bounds measurement for semantic entities before layout coordinates are committed.
+ */
+export function measureEntityBounds(entity: SemanticEntity): EntityVisualBounds {
+  switch (entity.primitiveType) {
+    case "Table": {
+      const rawCols =
+        (entity.properties?.columns as any) ||
+        (entity.properties?.headers as any);
+      const rawRows = entity.properties?.rows as any;
+      const columns = normalizeColumns(rawCols, rawRows);
+      const rows = normalizeRows(rawRows, columns);
+      const colWidths = computeTableColumnWidths(columns, rows);
+      const totalWidth = colWidths.reduce((sum, w) => sum + w, 0);
+      const hasTitle = Boolean(
+        entity.properties?.tableName ||
+          (entity.label && !entity.label.startsWith("Component ")),
+      );
+      const titleHeight = hasTitle ? 30 : 0;
+      const headerHeight = 32;
+      const rowHeight = 30;
+      const totalHeight =
+        titleHeight + headerHeight + rows.length * rowHeight + 16;
+      return {
+        width: Math.max(260, Math.min(650, totalWidth)),
+        height: Math.max(100, totalHeight),
+      };
+    }
+    case "GraphNode":
+    case "TreeNode":
+    case "StateNode": {
+      const diameter = (entity.properties?.diameter as number) || 64;
+      return { width: diameter, height: diameter };
+    }
+    case "ArrayCell": {
+      const w = (entity.properties?.width as number) || 64;
+      const h = (entity.properties?.height as number) || 64;
+      return { width: w, height: h };
+    }
+    case "LinkedListNode": {
+      return { width: 80, height: 40 };
+    }
+    case "StackFrame":
+    case "CallFrame": {
+      return { width: 160, height: 40 };
+    }
+    case "EquationBlock": {
+      return { width: 160, height: 44 };
+    }
+    case "DatabaseNode": {
+      return { width: 130, height: 70 };
+    }
+    default: {
+      return {
+        width: (entity.properties?.width as number) || 64,
+        height: (entity.properties?.height as number) || 64,
+      };
+    }
+  }
+}
 
 // ==========================================
 // Types
@@ -358,115 +429,306 @@ export function computeGraphLayout(
   nodes: GraphNodeInput[],
   edges: GraphEdgeInput[],
   origin: LayoutPoint,
+  focalNodeId?: string,
 ): GraphLayoutResult {
   const positions = new Map<string, LayoutPoint>();
   const n = nodes.length;
+
+  if (n === 0) {
+    return {
+      positions,
+      bounds: { x: origin.x, y: origin.y, width: 0, height: 0 },
+    };
+  }
+
+  const nodeDiameter = GRAPH_LAYOUT.NODE_DIAMETER;
+
+  if (n === 1) {
+    positions.set(nodes[0].id, { x: origin.x, y: origin.y });
+    return {
+      positions,
+      bounds: {
+        x: origin.x,
+        y: origin.y,
+        width: nodeDiameter,
+        height: nodeDiameter,
+      },
+    };
+  }
+
+  if (n === 2) {
+    const gap = 200;
+    positions.set(nodes[0].id, { x: origin.x, y: origin.y });
+    positions.set(nodes[1].id, { x: origin.x + nodeDiameter + gap, y: origin.y });
+    return {
+      positions,
+      bounds: {
+        x: origin.x,
+        y: origin.y,
+        width: nodeDiameter * 2 + gap,
+        height: nodeDiameter,
+      },
+    };
+  }
+
+  // 1. Build Adjacency & Degree structures
+  const inDegree = new Map<string, number>();
+  const outDegree = new Map<string, number>();
+  const adj = new Map<string, string[]>(); // directed
+  const undirectedAdj = new Map<string, string[]>(); // undirected for level assignment
+
+  for (const node of nodes) {
+    inDegree.set(node.id, 0);
+    outDegree.set(node.id, 0);
+    adj.set(node.id, []);
+    undirectedAdj.set(node.id, []);
+  }
+
+  for (const edge of edges) {
+    const src = edge.from || (edge as any).source;
+    const tgt = edge.to || (edge as any).target;
+    if (src && tgt && inDegree.has(tgt) && outDegree.has(src)) {
+      inDegree.set(tgt, (inDegree.get(tgt) || 0) + 1);
+      outDegree.set(src, (outDegree.get(src) || 0) + 1);
+      adj.get(src)!.push(tgt);
+      undirectedAdj.get(src)!.push(tgt);
+      undirectedAdj.get(tgt)!.push(src);
+    }
+  }
+
+  // 2. Identify Root / Source Node(s)
+  let startNodeId: string | undefined =
+    focalNodeId && inDegree.has(focalNodeId) ? focalNodeId : undefined;
+
+  if (!startNodeId) {
+    let minIn = Infinity;
+    let maxOut = -1;
+    for (const node of nodes) {
+      const inDeg = inDegree.get(node.id) || 0;
+      const outDeg = outDegree.get(node.id) || 0;
+      if (inDeg < minIn || (inDeg === minIn && outDeg > maxOut)) {
+        minIn = inDeg;
+        maxOut = outDeg;
+        startNodeId = node.id;
+      }
+    }
+  }
+
+  if (!startNodeId) {
+    startNodeId = nodes[0].id;
+  }
+
+  // 3. Assign Topological Levels via BFS
+  const levels = new Map<string, number>();
+  const visited = new Set<string>();
+  const queue: string[] = [];
+
+  // Seed with root
+  levels.set(startNodeId, 0);
+  visited.add(startNodeId);
+  queue.push(startNodeId);
+
+  // Also include any other nodes with 0 in-degree at level 0 (e.g. multi-source DAG)
+  for (const node of nodes) {
+    if (node.id !== startNodeId && (inDegree.get(node.id) || 0) === 0) {
+      levels.set(node.id, 0);
+      visited.add(node.id);
+      queue.push(node.id);
+    }
+  }
+
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    const currLevel = levels.get(curr)!;
+    const directedNeighbors = adj.get(curr) || [];
+    for (const nxt of directedNeighbors) {
+      if (!visited.has(nxt)) {
+        visited.add(nxt);
+        levels.set(nxt, currLevel + 1);
+        queue.push(nxt);
+      }
+    }
+  }
+
+  // If there are unvisited nodes, use undirected neighbors to connect them
+  for (const node of nodes) {
+    if (!visited.has(node.id)) {
+      const uNeighbors = undirectedAdj.get(node.id) || [];
+      const visitedNeighbor = uNeighbors.find((nbr) => visited.has(nbr));
+      if (visitedNeighbor) {
+        const neighborLevel = levels.get(visitedNeighbor)!;
+        levels.set(node.id, neighborLevel + 1);
+        visited.add(node.id);
+        queue.push(node.id);
+        while (queue.length > 0) {
+          const c = queue.shift()!;
+          const cLvl = levels.get(c)!;
+          for (const nxt of undirectedAdj.get(c) || []) {
+            if (!visited.has(nxt)) {
+              visited.add(nxt);
+              levels.set(nxt, cLvl + 1);
+              queue.push(nxt);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback for any disconnected components
+  let currentMaxLevel = 0;
+  for (const lvl of levels.values()) {
+    currentMaxLevel = Math.max(currentMaxLevel, lvl);
+  }
+  for (const node of nodes) {
+    if (!levels.has(node.id)) {
+      currentMaxLevel += 1;
+      levels.set(node.id, currentMaxLevel);
+    }
+  }
+
+  // Group nodes by level
+  const levelMap = new Map<number, string[]>();
+  for (const [id, lvl] of levels.entries()) {
+    const group = levelMap.get(lvl) || [];
+    group.push(id);
+    levelMap.set(lvl, group);
+  }
+
+  const sortedLevels = Array.from(levelMap.keys()).sort((a, b) => a - b);
+
+  // 4. Crossing Minimization (Barycenter Heuristic)
+  // Forward pass (level 1 to max)
+  for (let idx = 1; idx < sortedLevels.length; idx++) {
+    const prevLvl = sortedLevels[idx - 1];
+    const currLvl = sortedLevels[idx];
+    const prevNodes = levelMap.get(prevLvl)!;
+    const currNodes = levelMap.get(currLvl)!;
+
+    const prevPosMap = new Map<string, number>();
+    prevNodes.forEach((id, pos) => prevPosMap.set(id, pos));
+
+    const barycenters = new Map<string, number>();
+    for (const u of currNodes) {
+      const nbrs = (undirectedAdj.get(u) || []).filter((v) => prevPosMap.has(v));
+      if (nbrs.length > 0) {
+        const avg =
+          nbrs.reduce((sum, v) => sum + prevPosMap.get(v)!, 0) / nbrs.length;
+        barycenters.set(u, avg);
+      } else {
+        barycenters.set(u, currNodes.indexOf(u));
+      }
+    }
+
+    currNodes.sort((a, b) => barycenters.get(a)! - barycenters.get(b)!);
+  }
+
+  // Backward pass (max - 1 down to 0)
+  for (let idx = sortedLevels.length - 2; idx >= 0; idx--) {
+    const nextLvl = sortedLevels[idx + 1];
+    const currLvl = sortedLevels[idx];
+    const nextNodes = levelMap.get(nextLvl)!;
+    const currNodes = levelMap.get(currLvl)!;
+
+    const nextPosMap = new Map<string, number>();
+    nextNodes.forEach((id, pos) => nextPosMap.set(id, pos));
+
+    const barycenters = new Map<string, number>();
+    for (const u of currNodes) {
+      const nbrs = (undirectedAdj.get(u) || []).filter((v) => nextPosMap.has(v));
+      if (nbrs.length > 0) {
+        const avg =
+          nbrs.reduce((sum, v) => sum + nextPosMap.get(v)!, 0) / nbrs.length;
+        barycenters.set(u, avg);
+      } else {
+        barycenters.set(u, currNodes.indexOf(u));
+      }
+    }
+
+    currNodes.sort((a, b) => barycenters.get(a)! - barycenters.get(b)!);
+  }
+
+  // 5. Compute 2D Coordinates with Generous Spacing
+  // Horizontal gap between nodes in the same level:
+  // Must be >= 180px so horizontal edges (e.g. B---1---C) have ample room for weights
+  const horizontalGap = Math.max(180, 240 - Math.min(n, 10) * 6);
+  // Vertical gap between levels:
+  // Must be >= 140px so diagonal corridors are clear and comfortable
+  const verticalGap = 140;
+
+  let maxLevelWidth = 0;
+  for (const lvl of sortedLevels) {
+    const count = levelMap.get(lvl)!.length;
+    const width = count * nodeDiameter + Math.max(0, count - 1) * horizontalGap;
+    maxLevelWidth = Math.max(maxLevelWidth, width);
+  }
+
+  const centerX = origin.x + maxLevelWidth / 2;
+
+  let currentY = origin.y;
+  for (const lvl of sortedLevels) {
+    const lvlNodes = levelMap.get(lvl)!;
+    const count = lvlNodes.length;
+    const lvlWidth =
+      count * nodeDiameter + Math.max(0, count - 1) * horizontalGap;
+    let currentX = centerX - lvlWidth / 2;
+
+    for (const nodeId of lvlNodes) {
+      positions.set(nodeId, { x: currentX, y: currentY });
+      currentX += nodeDiameter + horizontalGap;
+    }
+
+    currentY += nodeDiameter + verticalGap;
+  }
+
+  // 6. Deterministic Collision Detection & Force Relaxation Pass
+  const minDistance = nodeDiameter + 40; // 100px center-to-center minimum
+  const posArray = Array.from(positions.entries()).map(([id, p]) => ({
+    id,
+    x: p.x,
+    y: p.y,
+  }));
+
+  for (let iter = 0; iter < 20; iter++) {
+    let moved = false;
+    for (let i = 0; i < posArray.length; i++) {
+      for (let j = i + 1; j < posArray.length; j++) {
+        const pA = posArray[i];
+        const pB = posArray[j];
+        const dx = pB.x - pA.x;
+        const dy = pB.y - pA.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < minDistance && dist > 0.001) {
+          const overlap = (minDistance - dist) / 2;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          pA.x -= nx * overlap;
+          pA.y -= ny * overlap;
+          pB.x += nx * overlap;
+          pB.y += ny * overlap;
+          moved = true;
+        } else if (dist <= 0.001) {
+          pB.x += minDistance / 2;
+          pA.x -= minDistance / 2;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
 
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
 
-  // Topology-aware node ordering: arrange nodes by connectivity flow to minimize edge crossings
-  let orderedNodes = [...nodes];
-  if (edges.length > 0 && n > 2) {
-    const inDegree = new Map<string, number>();
-    const adj = new Map<string, string[]>();
-    for (const node of nodes) {
-      inDegree.set(node.id, 0);
-      adj.set(node.id, []);
-    }
-    for (const edge of edges) {
-      const src = edge.from || (edge as any).source;
-      const tgt = edge.to || (edge as any).target;
-      if (tgt && inDegree.has(tgt)) {
-        inDegree.set(tgt, (inDegree.get(tgt) || 0) + 1);
-      }
-      if (src && adj.has(src) && tgt) {
-        adj.get(src)!.push(tgt);
-      }
-    }
-
-    // Find start node: lowest in-degree (root/source node)
-    let startNodeId = nodes[0].id;
-    let minIn = Infinity;
-    for (const node of nodes) {
-      const deg = inDegree.get(node.id) || 0;
-      if (/^(?:node[-_]?)?a$/i.test(node.id)) {
-        startNodeId = node.id;
-        break;
-      }
-      if (deg < minIn) {
-        minIn = deg;
-        startNodeId = node.id;
-      }
-    }
-
-    const visited = new Set<string>();
-    const queue = [startNodeId];
-    visited.add(startNodeId);
-    const sortedIds: string[] = [];
-
-    while (queue.length > 0) {
-      const curr = queue.shift()!;
-      sortedIds.push(curr);
-      const neighbors = adj.get(curr) || [];
-      for (const nxt of neighbors) {
-        if (!visited.has(nxt)) {
-          visited.add(nxt);
-          queue.push(nxt);
-        }
-      }
-    }
-    for (const node of nodes) {
-      if (!visited.has(node.id)) {
-        sortedIds.push(node.id);
-      }
-    }
-
-    const nodeById = new Map(nodes.map((nd) => [nd.id, nd]));
-    orderedNodes = sortedIds
-      .map((id) => nodeById.get(id)!)
-      .filter((nd): nd is GraphNodeInput => !!nd);
-  }
-
-  if (n <= GRAPH_LAYOUT.MAX_CIRCLE_NODES) {
-    // Circle Layout: dynamically size radius to prevent overlaps.
-    // Use NODE_SEPARATION_FACTOR (2.5) to ensure readable arc spacing.
-    const dynamicRadius = Math.max(
-      GRAPH_LAYOUT.CIRCLE_RADIUS,
-      (n * GRAPH_LAYOUT.NODE_DIAMETER * GRAPH_LAYOUT.NODE_SEPARATION_FACTOR) /
-        (2 * Math.PI),
-    );
-    const cx = origin.x + dynamicRadius;
-    const cy = origin.y + dynamicRadius;
-
-    for (let i = 0; i < n; i++) {
-      const angle = (2 * Math.PI * i) / n - Math.PI / 2; // Start top, go clockwise
-      const x = cx + dynamicRadius * Math.cos(angle) - GRAPH_LAYOUT.NODE_RADIUS;
-      const y = cy + dynamicRadius * Math.sin(angle) - GRAPH_LAYOUT.NODE_RADIUS;
-      positions.set(orderedNodes[i].id, { x, y });
-
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x + GRAPH_LAYOUT.NODE_DIAMETER);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y + GRAPH_LAYOUT.NODE_DIAMETER);
-    }
-  } else {
-    // Grid Layout Fallback
-    const cols = Math.ceil(Math.sqrt(n));
-    for (let i = 0; i < n; i++) {
-      const r = Math.floor(i / cols);
-      const c = i % cols;
-      const x = origin.x + c * GRAPH_LAYOUT.GRID_GAP;
-      const y = origin.y + r * GRAPH_LAYOUT.GRID_GAP;
-      positions.set(orderedNodes[i].id, { x, y });
-
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x + GRAPH_LAYOUT.NODE_DIAMETER);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y + GRAPH_LAYOUT.NODE_DIAMETER);
-    }
+  for (const item of posArray) {
+    positions.set(item.id, { x: Math.round(item.x), y: Math.round(item.y) });
+    minX = Math.min(minX, item.x);
+    maxX = Math.max(maxX, item.x + nodeDiameter);
+    minY = Math.min(minY, item.y);
+    maxY = Math.max(maxY, item.y + nodeDiameter);
   }
 
   return {
@@ -925,8 +1187,176 @@ export function computeSceneGraphLayout(
     };
   }
 
+  // =========================================================================
+  // GENERIC MULTI-REGION COMPOSITION PLANNER (Cognora Architecture Rule)
+  // Classifies entities: PRIMARY vs SUPPORTING vs TEMPORARY/OVERLAY.
+  // When both PRIMARY and SUPPORTING entities exist in the same scene
+  // (e.g. Graph + Table, Tree + Table, Array + Table, Sequence + Table),
+  // reserves non-overlapping regions so supporting objects (tables, etc.) NEVER
+  // collide with or distort primary visualizations.
+  // =========================================================================
+  const isPrimarySubGraph = Boolean(graph.metadata?._isPrimarySubGraph);
+
+  const isSupportingEntity = (e: SemanticEntity): boolean => {
+    return (
+      e.primitiveType === "Table" ||
+      e.semanticRole === "table" ||
+      e.primitiveType === "Metrics" ||
+      e.properties?.isSupporting === true ||
+      /^table[-_]|dist[-_]table|freq[-_]table|state[-_]table/i.test(e.id)
+    );
+  };
+
+  const isTemporaryOrAnnotation = (e: SemanticEntity): boolean => {
+    return (
+      e.primitiveType === "Annotation" ||
+      e.primitiveType === "Callout" ||
+      e.primitiveType === "Pointer" ||
+      e.semanticRole === "pointer" ||
+      /^(?:pointer|temp|marker|callout[-_]temp)/i.test(e.id) ||
+      /^(low|high|mid|left|right|i|j|k|head|tail|pivot)$/i.test(e.label || "")
+    );
+  };
+
+  const supportingEntities = entityList.filter(isSupportingEntity);
+  const compositionPrimaryEntities = entityList.filter(
+    (e) => !isSupportingEntity(e) && !isTemporaryOrAnnotation(e),
+  );
+
+  if (
+    !isPrimarySubGraph &&
+    supportingEntities.length > 0 &&
+    compositionPrimaryEntities.length > 0
+  ) {
+    // 1. Primary Region: Run domain layout strictly on primary entities
+    const primaryEntityMap = new Map<string, SemanticEntity>();
+    for (const ent of compositionPrimaryEntities) {
+      primaryEntityMap.set(ent.id, ent);
+    }
+    // Retain annotations and pointers associated with primary entities
+    for (const ent of entityList.filter(isTemporaryOrAnnotation)) {
+      primaryEntityMap.set(ent.id, ent);
+    }
+    const primaryRelMap = new Map<string, any>();
+    for (const [rId, rel] of graph.relationships.entries()) {
+      if (
+        primaryEntityMap.has(rel.sourceEntityId) &&
+        primaryEntityMap.has(rel.targetEntityId)
+      ) {
+        primaryRelMap.set(rId, rel);
+      }
+    }
+    const primaryGraph: SceneGraph = {
+      ...graph,
+      metadata: { ...graph.metadata, _isPrimarySubGraph: true },
+      entities: primaryEntityMap,
+      relationships: primaryRelMap,
+    };
+
+    const primaryLayout = computeSceneGraphLayout(
+      primaryGraph,
+      origin,
+      previousLayout,
+    );
+    for (const [id, pt] of primaryLayout.positions.entries()) {
+      positions.set(id, pt);
+    }
+    const pBounds = primaryLayout.bounds;
+
+    // 2. Supporting Region: Content-aware placement
+    let currentSuppX = pBounds.x + pBounds.width + 80;
+    let currentSuppY = pBounds.y;
+    let strategy = "SIDE_BY_SIDE";
+
+    // If placing side-by-side exceeds standard viewport width (1450px) or primary is very wide, stack below
+    if (currentSuppX > 1450 || pBounds.width > 900) {
+      strategy = "STACKED";
+      currentSuppX = Math.max(origin.x, pBounds.x);
+      currentSuppY = pBounds.y + pBounds.height + 64;
+    }
+
+    let maxSuppX = currentSuppX;
+    let maxSuppY = currentSuppY;
+
+    for (const suppEnt of supportingEntities) {
+      const b = measureEntityBounds(suppEnt);
+      const prev = previousLayout?.get(suppEnt.id);
+      const pos: LayoutPoint = prev ?? { x: currentSuppX, y: currentSuppY };
+      positions.set(suppEnt.id, pos);
+
+      maxSuppX = Math.max(maxSuppX, pos.x + b.width);
+      maxSuppY = Math.max(maxSuppY, pos.y + b.height);
+
+      if (strategy === "SIDE_BY_SIDE") {
+        currentSuppY += b.height + 32;
+      } else {
+        currentSuppX += b.width + 48;
+      }
+    }
+
+    console.info(
+      `[COGNORA][LAYOUT][COMPOSITION] primaryRegion=${JSON.stringify(pBounds)} supportingRegions=${JSON.stringify({ x: currentSuppX, y: currentSuppY, width: maxSuppX - currentSuppX, height: maxSuppY - currentSuppY })} strategy=${strategy}`,
+    );
+
+    // 3. Collision Resolution Safety Net (AABB check against primary bounding box)
+    for (const suppEnt of supportingEntities) {
+      const pos = positions.get(suppEnt.id)!;
+      const b = measureEntityBounds(suppEnt);
+      const suppBox = {
+        x1: pos.x,
+        y1: pos.y,
+        x2: pos.x + b.width,
+        y2: pos.y + b.height,
+      };
+      const pBox = {
+        x1: pBounds.x,
+        y1: pBounds.y,
+        x2: pBounds.x + pBounds.width,
+        y2: pBounds.y + pBounds.height,
+      };
+
+      const overlaps = !(
+        suppBox.x2 < pBox.x1 ||
+        suppBox.x1 > pBox.x2 ||
+        suppBox.y2 < pBox.y1 ||
+        suppBox.y1 > pBox.y2
+      );
+      if (overlaps) {
+        const shiftX = pBox.x2 + 80 - suppBox.x1;
+        pos.x += shiftX;
+        positions.set(suppEnt.id, pos);
+        maxSuppX = Math.max(maxSuppX, pos.x + b.width);
+        console.info(
+          `[COGNORA][LAYOUT][COLLISION] componentA=primary componentB=${suppEnt.id} resolution=nudged_${shiftX}px`,
+        );
+      }
+    }
+
+    const minX = Math.min(
+      pBounds.x,
+      ...Array.from(positions.values()).map((p) => p.x),
+    );
+    const minY = Math.min(
+      pBounds.y,
+      ...Array.from(positions.values()).map((p) => p.y),
+    );
+    const maxX = Math.max(pBounds.x + pBounds.width, maxSuppX);
+    const maxY = Math.max(pBounds.y + pBounds.height, maxSuppY);
+
+    return {
+      positions,
+      bounds: {
+        x: minX,
+        y: minY,
+        width: Math.max(300, maxX - minX),
+        height: Math.max(160, maxY - minY),
+      },
+    };
+  }
+
   const conceptType = graph.metadata?.conceptType;
   const explicitStrategy = graph.metadata?.layoutStrategy;
+
 
   // 1. Universal Topological Analysis from Semantic Relationships & Entities
   const treeRelTypes = new Set([
@@ -967,18 +1397,80 @@ export function computeSceneGraphLayout(
   const isCompositeTreeAndArray =
     treeEntities.length > 0 && arrayCells.length > 0;
 
-  const isTree =
-    !isCompositeTreeAndArray &&
+  // 1b. Structural graph & tree topology analysis
+  const topoInDegrees = new Map<string, number>();
+  for (const ent of entityList) {
+    topoInDegrees.set(ent.id, 0);
+  }
+  let bidirPairCount = 0;
+  const edgePairSet = new Set<string>();
+  for (const rel of graph.relationships.values()) {
+    const src = rel.sourceEntityId;
+    const tgt = rel.targetEntityId;
+    if (topoInDegrees.has(tgt)) {
+      topoInDegrees.set(tgt, (topoInDegrees.get(tgt) || 0) + 1);
+    }
+    const fwd = `${src}->${tgt}`;
+    const rev = `${tgt}->${src}`;
+    if (edgePairSet.has(rev)) {
+      bidirPairCount++;
+    }
+    edgePairSet.add(fwd);
+  }
+  const multiParentNodes = Array.from(topoInDegrees.values()).filter((d) => d > 1).length;
+  const hasWeightedRel = Array.from(graph.relationships.values()).some(
+    (r) =>
+      r.properties?.weight !== undefined ||
+      Boolean(r.label && !isNaN(Number(r.label)) && r.label.trim() !== ""),
+  );
+
+  const isStrictTree =
+    treeEntities.length > 0 &&
+    multiParentNodes === 0 &&
+    bidirPairCount === 0;
+
+  const hasStructuralGraphTopology =
+    !isStrictTree &&
+    entityList.length >= 3 &&
+    graph.relationships.size >= 2 &&
+    (multiParentNodes >= 1 ||
+      bidirPairCount >= 1 ||
+      hasWeightedRel ||
+      graph.relationships.size >= entityList.length);
+
+  const isGraph =
+    (explicitStrategy === "graph" ||
+      explicitStrategy === "network" ||
+      explicitStrategy === "radial" ||
+      conceptType === "graph" ||
+      conceptType === "network" ||
+      (!explicitStrategy &&
+        entityList.some((e) => e.primitiveType === "GraphNode")) ||
+      hasStructuralGraphTopology) &&
     explicitStrategy !== "dag" &&
     explicitStrategy !== "flow" &&
+    explicitStrategy !== "pipeline" &&
+    explicitStrategy !== "tree" &&
+    explicitStrategy !== "hierarchical";
+
+  const isTree =
+    !isCompositeTreeAndArray &&
+    !isGraph &&
+    explicitStrategy !== "dag" &&
+    explicitStrategy !== "flow" &&
+    explicitStrategy !== "graph" &&
+    explicitStrategy !== "network" &&
+    conceptType !== "graph" &&
+    conceptType !== "network" &&
     (explicitStrategy === "tree" ||
       explicitStrategy === "hierarchy" ||
       explicitStrategy === "hierarchical" ||
       conceptType === "tree" ||
-      treeEntities.length > 0);
+      isStrictTree);
 
   const isArray =
     !isCompositeTreeAndArray &&
+    !isGraph &&
     explicitStrategy !== "dag" &&
     explicitStrategy !== "flow" &&
     (explicitStrategy === "array" ||
@@ -986,10 +1478,11 @@ export function computeSceneGraphLayout(
       arrayCells.length > 0);
 
   const isLinkedList =
-    (explicitStrategy === "linear" &&
+    !isGraph &&
+    ((explicitStrategy === "linear" &&
       entityList.some((e) => e.primitiveType === "LinkedListNode")) ||
-    conceptType === "linked_list" ||
-    entityList.some((e) => e.primitiveType === "LinkedListNode");
+      conceptType === "linked_list" ||
+      entityList.some((e) => e.primitiveType === "LinkedListNode"));
 
   const isStack =
     (explicitStrategy === "memory" &&
@@ -999,15 +1492,6 @@ export function computeSceneGraphLayout(
       )) ||
     conceptType === "stack" ||
     entityList.some((e) => e.primitiveType === "StackFrame");
-
-  const isGraph =
-    (explicitStrategy === "graph" ||
-      explicitStrategy === "radial" ||
-      conceptType === "graph" ||
-      (!explicitStrategy &&
-        entityList.some((e) => e.primitiveType === "GraphNode"))) &&
-    explicitStrategy !== "dag" &&
-    explicitStrategy !== "flow";
 
   // -------------------------------------------------------------
   // STRATEGY A: Multi-Region Composite Layout (Tree + Array, e.g. Heap)
@@ -1843,12 +2327,35 @@ export function computeSceneGraphLayout(
   }
 
   if (isGraph) {
+    // Include all primary structural entities participating in the graph (strictly excluding tables/supporting panels)
     const graphNodes = entityList.filter(
-      (e) => e.primitiveType === "GraphNode",
+      (e) =>
+        e.primitiveType !== "Annotation" &&
+        e.primitiveType !== "Callout" &&
+        e.primitiveType !== "Table" &&
+        e.semanticRole !== "table" &&
+        !isSupportingEntity(e) &&
+        !e.properties?.isAliasOf,
     );
+    const entityIdMap = new Map<string, string>();
+    for (const ent of graphNodes) {
+      entityIdMap.set(ent.id, ent.id);
+      if (ent.label) {
+        entityIdMap.set(ent.label, ent.id);
+        entityIdMap.set(ent.label.toLowerCase(), ent.id);
+      }
+    }
+    const resolveEntityId = (idOrLabel: string): string => {
+      return (
+        entityIdMap.get(idOrLabel) ||
+        entityIdMap.get(idOrLabel.toLowerCase()) ||
+        idOrLabel
+      );
+    };
+
     const graphEdges = Array.from(graph.relationships.values()).map((r) => ({
-      from: r.sourceEntityId,
-      to: r.targetEntityId,
+      from: resolveEntityId(r.sourceEntityId),
+      to: resolveEntityId(r.targetEntityId),
       weight: r.properties?.weight as number | undefined,
       label: r.label,
       directed: r.properties?.directed !== false,
@@ -1861,6 +2368,7 @@ export function computeSceneGraphLayout(
       })),
       graphEdges,
       origin,
+      graph.metadata?.focalEntityId as string | undefined,
     );
 
     let minX = Infinity;
@@ -1881,15 +2389,33 @@ export function computeSceneGraphLayout(
       maxY = Math.max(maxY, pos.y + GRAPH_LAYOUT.NODE_DIAMETER);
     }
 
-    // Ensure auxiliary entities also have positions
+    // Ensure auxiliary entities also have positions without occluding graph nodes
     for (const entity of entityList) {
       if (!positions.has(entity.id)) {
-        const pos = previousLayout?.get(entity.id) ?? {
-          x: minX === Infinity ? origin.x : minX,
-          y: (maxY === -Infinity ? origin.y : maxY) + 40,
-        };
-        positions.set(entity.id, pos);
+        const targetId = entity.properties?.targetEntityId as
+          | string
+          | undefined;
+        const targetPos = targetId ? positions.get(targetId) : undefined;
+        if (targetPos) {
+          positions.set(entity.id, {
+            x: targetPos.x + GRAPH_LAYOUT.NODE_DIAMETER + 16,
+            y: targetPos.y - 8,
+          });
+        } else {
+          const pos = previousLayout?.get(entity.id) ?? {
+            x: minX === Infinity ? origin.x : minX,
+            y: (maxY === -Infinity ? origin.y : maxY) + 40,
+          };
+          positions.set(entity.id, pos);
+        }
       }
+    }
+
+    for (const [id, pos] of positions.entries()) {
+      minX = Math.min(minX, pos.x);
+      maxX = Math.max(maxX, pos.x + GRAPH_LAYOUT.NODE_DIAMETER);
+      minY = Math.min(minY, pos.y);
+      maxY = Math.max(maxY, pos.y + GRAPH_LAYOUT.NODE_DIAMETER);
     }
 
     return {
@@ -2279,6 +2805,77 @@ export function computeSceneGraphLayout(
       }
     }
 
+    // Topology classification: detect dense/cyclic network graphs that should NOT use rank layout.
+    // A topology qualifies as a "network graph" (not a DAG/pipeline) when:
+    //  1. It has many edges relative to nodes (dense connectivity), OR
+    //  2. It has bidirectional edges (undirected network), OR
+    //  3. After propagation, a large majority of nodes land at rank-0 in a connected graph with edges.
+    // In these cases, a circular force-directed layout is vastly more readable than a rank column.
+    const relCount = Array.from(graph.relationships.values()).length;
+    const n = activeEntities.length;
+    const isDense = n >= 3 && relCount >= n; // edges >= nodes ⟹ cycles likely
+    // Count bidirectional pairs
+    const edgePairs = new Set<string>();
+    let bidirCount = 0;
+    for (const rel of graph.relationships.values()) {
+      const src = resolveEntityId(rel.sourceEntityId);
+      const tgt = resolveEntityId(rel.targetEntityId);
+      const fwd = `${src}→${tgt}`;
+      const rev = `${tgt}→${src}`;
+      if (edgePairs.has(rev)) {
+        bidirCount++;
+      }
+      edgePairs.add(fwd);
+    }
+    const hasManyBidirEdges = bidirCount >= Math.ceil(n / 2);
+
+    // Use network-graph (circular) layout when topology is clearly non-DAG
+    const useNetworkLayout =
+      (isDense || hasManyBidirEdges) &&
+      // Don't override explicit pipeline/sequence/swimlane strategies
+      explicitStrategy !== "pipeline" &&
+      explicitStrategy !== "sequence" &&
+      explicitStrategy !== "swimlane" &&
+      explicitStrategy !== "interaction" &&
+      graph.metadata?.readingDirection !== "top_to_bottom";
+
+    if (useNetworkLayout) {
+      // Circular network-graph layout: uses same algorithm as computeGraphLayout
+      // but operates directly on SemanticEntity list so no primitiveType filter is needed.
+      const graphNodeInputs: GraphNodeInput[] = activeEntities.map((e) => ({
+        id: e.id,
+        label: e.label || String(e.value ?? e.id),
+      }));
+      const graphEdgeInputs: GraphEdgeInput[] = Array.from(
+        graph.relationships.values(),
+      ).map((r) => ({
+        from: resolveEntityId(r.sourceEntityId),
+        to: resolveEntityId(r.targetEntityId),
+        weight: r.properties?.weight as number | undefined,
+        label: r.label,
+        directed: r.properties?.directed !== false,
+      }));
+
+      const networkLayout = computeGraphLayout(
+        graphNodeInputs,
+        graphEdgeInputs,
+        origin,
+        graph.metadata?.focalEntityId as string | undefined,
+      );
+
+      for (const entity of activeEntities) {
+        const prevPos = previousLayout?.get(entity.id);
+        if (prevPos) {
+          positions.set(entity.id, prevPos);
+        } else {
+          const pos = networkLayout.positions.get(entity.id);
+          if (pos) {
+            positions.set(entity.id, pos);
+          }
+        }
+      }
+    } else {
+
     // Group by rank
     const rankGroups = new Map<number, SemanticEntity[]>();
     for (const entity of activeEntities) {
@@ -2468,6 +3065,7 @@ export function computeSceneGraphLayout(
         }
 
         currentX += colW + colGap;
+      }
       }
     }
   }

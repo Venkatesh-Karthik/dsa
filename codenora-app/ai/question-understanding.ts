@@ -595,12 +595,16 @@ export function understandQuestion(
     baselineElements:
       inputs.length > 0 && Array.isArray(inputs[0])
         ? (inputs[0] as unknown[])
-        : (parsedOperations[0]?.metadata?.baselineElements as unknown[] | undefined),
+        : (parsedOperations[0]?.metadata?.baselineElements as
+            | unknown[]
+            | undefined),
     metadata: {
       baselineElements:
         inputs.length > 0 && Array.isArray(inputs[0])
           ? (inputs[0] as unknown[])
-          : (parsedOperations[0]?.metadata?.baselineElements as unknown[] | undefined),
+          : (parsedOperations[0]?.metadata?.baselineElements as
+              | unknown[]
+              | undefined),
     },
     confidence: ambiguity.length > 0 ? CONFIDENCE_ASSUMED : CONFIDENCE_INFERRED,
   };
@@ -769,12 +773,16 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
   // --------------------------------------------------------------------------
   // 4. Dijkstra / Shortest Path Requests (e.g. Shortest path from A to F in graph)
   // --------------------------------------------------------------------------
-  const shortestPathMatch = prompt.match(
-    /\b(?:shortest\s+path|dijkstra)\b.*?(?:from\s+([A-Za-z0-9_-]+)\s+to\s+([A-Za-z0-9_-]+))/i,
-  );
-  if (shortestPathMatch) {
-    const startV = shortestPathMatch[1].trim();
-    const endV = shortestPathMatch[2].trim();
+  const isDijkstra = /\b(dijkstra|shortest\s+path)\b/i.test(prompt);
+  if (isDijkstra) {
+    const startMatch = prompt.match(
+      /\b(?:start|starting|from)\s+(?:at\s+|from\s+)?([A-Za-z0-9_-]+)/i,
+    );
+    const endMatch = prompt.match(
+      /\b(?:destination|target|reconstruct.*?to|shortest path to|path to)\s+([A-Za-z0-9_-]+)/i,
+    );
+    const startV = startMatch ? startMatch[1].trim() : "A";
+    const endV = endMatch ? endMatch[1].trim() : "E";
     return [
       {
         op: "shortest_path",
@@ -790,8 +798,9 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
   // --------------------------------------------------------------------------
   // 5. Explicit Count Sequential Insertions (e.g. Insert: 30, 20, 10, 25, 28, 27, 50, 60, 55)
   // --------------------------------------------------------------------------
+  let promptToProcess = prompt;
   const countHeaderMatch = prompt.match(
-    /\b(?:insert(?:ing|s|ion)?|add(?:ing|s)?)\s*(?:\d+\s+(?:elements?|nodes?|values?|numbers?|items?))?(?:\s+(?:into|in|to)\s+[^:;.,]+)?[:\s]+((?:\d+[\s,and.-]+){2,}\d+)/i,
+    /\b(?:insert(?:ing|s|ion)?|add(?:ing|s)?)\s*(?:\d+\s+(?:elements?|nodes?|values?|numbers?|items?))?(?:\s+(?:into|in|to|for|of|with)(?:\s+[^:;.,\n]+)?)?[:\s]+((?:\d+[\s,and.-]+){2,}\d+)/i,
   );
   if (countHeaderMatch && countHeaderMatch[1]) {
     const numbers = countHeaderMatch[1].match(/\b\d+\b/g);
@@ -806,12 +815,39 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
           metadata: { sequentialInsertion: true },
         });
       }
+      promptToProcess = prompt.slice(
+        (countHeaderMatch.index ?? 0) + countHeaderMatch[0].length,
+      );
+    }
+  }
+
+  // Check for general list of numbers following a colon or key label in tree/list/heap/array contexts
+  if (operations.length === 0) {
+    const listMatch = prompt.match(
+      /(?:keys?|values?|elements?|nodes?|numbers?|sequence)?[:\s]+((?:\d+[\s,]+){2,}\d+)/i,
+    );
+    if (listMatch && listMatch[1]) {
+      const numbers = listMatch[1].match(/\b\d+\b/g);
+      if (numbers && numbers.length > 1) {
+        for (const numStr of numbers) {
+          operations.push({
+            op: "insert",
+            value: Number(numStr),
+            arguments: { value: Number(numStr) },
+            order: ++orderCounter,
+            semanticRole: "operation",
+            metadata: { sequentialInsertion: true },
+          });
+        }
+        promptToProcess = prompt.slice(
+          (listMatch.index ?? 0) + listMatch[0].length,
+        );
+      }
     }
   }
 
   // Check for leading list of numbers before operations:
   // e.g. "10, 15, 30, 5, 25, 40, 8, 12, 3 After all insertions, remove the minimum element three times..."
-  let promptToProcess = prompt;
   if (operations.length === 0) {
     const leadingNumbersMatch = prompt.match(
       /^\s*((?:\d+[\s,]+){2,}\d+)\s*(?:after\s+(?:all\s+)?(?:insert(?:ion)?s?|additions?)|(?:into|in)\s+[^.;]+|[,.;]|\s|$)(.*)/i,
@@ -890,11 +926,23 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
             op: "delete",
             value: dVal,
             target: dVal,
-            arguments: { value: dVal, target: dVal, baselineChain, baselineArray },
-            inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+            arguments: {
+              value: dVal,
+              target: dVal,
+              baselineChain,
+              baselineArray,
+            },
+            inputs: baselineChain
+              ? [baselineChain]
+              : baselineArray
+              ? [baselineArray]
+              : undefined,
             order: ++orderCounter,
             semanticRole: "operation",
-            metadata: { rawClause: trimmed, baselineElements: baselineChain || baselineArray },
+            metadata: {
+              rawClause: trimmed,
+              baselineElements: baselineChain || baselineArray,
+            },
           });
         }
         continue;
@@ -922,7 +970,11 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
           op: "delete",
           target: targetDesc,
           arguments: { target: targetDesc, baselineChain, baselineArray },
-          inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+          inputs: baselineChain
+            ? [baselineChain]
+            : baselineArray
+            ? [baselineArray]
+            : undefined,
           order: ++orderCounter,
           semanticRole: "operation",
           metadata: {
@@ -954,11 +1006,25 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
             value: iVal,
             target: iVal,
             index: specifiedIndex,
-            arguments: { value: iVal, target: iVal, index: specifiedIndex, baselineChain, baselineArray },
-            inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+            arguments: {
+              value: iVal,
+              target: iVal,
+              index: specifiedIndex,
+              baselineChain,
+              baselineArray,
+            },
+            inputs: baselineChain
+              ? [baselineChain]
+              : baselineArray
+              ? [baselineArray]
+              : undefined,
             order: ++orderCounter,
             semanticRole: "operation",
-            metadata: { rawClause: trimmed, index: specifiedIndex, baselineElements: baselineChain || baselineArray },
+            metadata: {
+              rawClause: trimmed,
+              index: specifiedIndex,
+              baselineElements: baselineChain || baselineArray,
+            },
           });
         }
         continue;
@@ -970,16 +1036,29 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
       /\bswap(?:ping|s)?\s+(\d+|[A-Za-z0-9_-]+)\s+(?:and|with)\s+(\d+|[A-Za-z0-9_-]+)/i,
     );
     if (swapMatch) {
-      const aVal = !isNaN(Number(swapMatch[1])) ? Number(swapMatch[1]) : swapMatch[1];
-      const bVal = !isNaN(Number(swapMatch[2])) ? Number(swapMatch[2]) : swapMatch[2];
+      const aVal = !isNaN(Number(swapMatch[1]))
+        ? Number(swapMatch[1])
+        : swapMatch[1];
+      const bVal = !isNaN(Number(swapMatch[2]))
+        ? Number(swapMatch[2])
+        : swapMatch[2];
       operations.push({
         op: "swap",
         value: [aVal, bVal],
         arguments: { a: aVal, b: bVal, baselineChain, baselineArray },
-        inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+        inputs: baselineChain
+          ? [baselineChain]
+          : baselineArray
+          ? [baselineArray]
+          : undefined,
         order: ++orderCounter,
         semanticRole: "operation",
-        metadata: { rawClause: trimmed, a: aVal, b: bVal, baselineElements: baselineChain || baselineArray },
+        metadata: {
+          rawClause: trimmed,
+          a: aVal,
+          b: bVal,
+          baselineElements: baselineChain || baselineArray,
+        },
       });
       continue;
     }
@@ -989,10 +1068,17 @@ export function extractOrderedOperations(prompt: string): ParsedOperation[] {
       operations.push({
         op: "reverse",
         arguments: { baselineChain, baselineArray },
-        inputs: baselineChain ? [baselineChain] : baselineArray ? [baselineArray] : undefined,
+        inputs: baselineChain
+          ? [baselineChain]
+          : baselineArray
+          ? [baselineArray]
+          : undefined,
         order: ++orderCounter,
         semanticRole: "operation",
-        metadata: { rawClause: trimmed, baselineElements: baselineChain || baselineArray },
+        metadata: {
+          rawClause: trimmed,
+          baselineElements: baselineChain || baselineArray,
+        },
       });
       continue;
     }

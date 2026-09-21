@@ -342,6 +342,9 @@ export function compileVisualLesson(lesson: VisualLesson): CompiledTimeline {
     transformationId: meta[i]?.id || `t-${i}`,
     stepIndex: i,
     totalSteps: states.length,
+    worldVersion: i,
+    beforeWorldVersion: i > 0 ? i - 1 : 0,
+    afterWorldVersion: i,
     beforeState: i > 0 ? states[i - 1] : st,
     afterState: st,
     semanticChanges: {
@@ -365,12 +368,57 @@ export function compileVisualLesson(lesson: VisualLesson): CompiledTimeline {
     importance: "NORMAL",
   }));
 
+  const syntheticModel = {
+    id: lessonId,
+    topic: lesson.topic || lesson.title,
+    invariants: [],
+    states: states.map((st, i) => ({
+      id: `state-${i}`,
+      index: i,
+      entities: new Map(
+        Array.from(st.graph.entities.entries()).map(([k, e]) => [
+          k,
+          {
+            id: e.id,
+            label: e.label || String(e.value ?? k),
+            value: e.value,
+            state: "active" as const,
+            type: e.primitiveType,
+            properties: { ...e.properties } as any,
+          },
+        ]),
+      ),
+      relationships: new Map(
+        Array.from(st.graph.relationships.entries()).map(([k, r]) => [
+          k,
+          {
+            id: r.id,
+            type: r.type,
+            source: r.sourceEntityId,
+            target: r.targetEntityId,
+            label:
+              typeof r.properties?.label === "string"
+                ? r.properties.label
+                : undefined,
+            properties: { ...r.properties } as any,
+          },
+        ]),
+      ),
+      properties: {},
+      derivedValues: {},
+      conditions: [],
+      observations: [],
+    })),
+    transformations: [],
+  } as unknown as AuthoritativeSemanticModel;
+
   return {
     lessonId,
     topic: lesson.topic || lesson.title,
     states,
     meta,
     moments,
+    model: syntheticModel,
     currentIndex: 0,
   };
 }
@@ -612,6 +660,21 @@ function applyOperationToGraph(
             targetEntityId: rightId,
             properties: { directed: true },
           });
+        }
+      }
+
+      // Clean up orphaned tree entities belonging to this tree that are no longer present in tree.nodes
+      const currentTreeEntityIds = new Set(
+        tree.nodes.map((n) => normalizeEntityId(treeId, n.id)),
+      );
+      for (const [entId, ent] of graph.entities.entries()) {
+        if (
+          ent.primitiveType === "TreeNode" &&
+          ent.properties?.treeId === treeId
+        ) {
+          if (!currentTreeEntityIds.has(entId)) {
+            graph.entities.delete(entId);
+          }
         }
       }
       break;
